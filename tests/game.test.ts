@@ -1,6 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Simulation, parseCampaign } from '../src/game/simulation.ts';
+import type { CampaignSync, Upgrade } from '../src/game/simulation.ts';
+
+const recorder = () => {
+  const events: string[] = [];
+  const sync: CampaignSync = { deployed: () => events.push('deployed'), completed: () => events.push('completed'), bought: (t: Upgrade) => events.push(`bought:${t}`) };
+  return { events, sync };
+};
 import { clearLine, distance, EXTRACT, findPath, walkable } from '../src/game/world.ts';
 
 test('migrates the original canvas save and clamps corrupt values', () => {
@@ -29,7 +36,8 @@ test('pause freezes movement and combat; queued movement resumes', () => {
 });
 
 test('a full combat and extraction contract awards credits exactly once', () => {
-  const sim = new Simulation(); sim.deploy();
+  const { events, sync } = recorder();
+  const sim = new Simulation(undefined, sync); sim.deploy();
   for (const id of ['g1', 'g2', 'g3', 'target']) {
     sim.attack(id);
     for (let i = 0; i < 3600 && sim.units.find(u => u.id === id)!.hp > 0 && sim.phase === 'mission'; i++) sim.update(1 / 60);
@@ -40,14 +48,15 @@ test('a full combat and extraction contract awards credits exactly once', () => 
   for (let i = 0; i < 3600 && sim.phase === 'mission'; i++) sim.update(1 / 60);
   assert.equal(sim.result, 'success'); assert.equal(sim.campaign.cash, 500); assert.equal(sim.campaign.completed, 1);
   sim.update(.05); assert.equal(sim.campaign.cash, 500);
+  assert.deepEqual(events, ['deployed', 'completed']);
 });
 
-test('upgrades debit funds, preserve success state, persist, and apply on deployment', () => {
-  let saved = '';
-  const sim = new Simulation({ version: 2, cash: 500, weapon: 0, armor: 0, completed: 1 }, c => { saved = JSON.stringify(c); });
+test('upgrades debit funds, preserve success state, report, and apply on deployment', () => {
+  const { events, sync } = recorder();
+  const sim = new Simulation({ version: 2, cash: 500, weapon: 0, armor: 0, completed: 1 }, sync);
   sim.phase = 'headquarters'; sim.result = 'success';
   assert.ok(sim.buy('weapon')); assert.equal(sim.campaign.cash, 200); assert.equal(sim.result, 'success');
-  assert.equal(sim.buy('armor'), false); assert.equal(parseCampaign(saved).weapon, 1);
+  assert.equal(sim.buy('armor'), false); assert.deepEqual(events, ['bought:weapon']);
   sim.campaign.cash = 250; assert.ok(sim.buy('armor')); sim.deploy();
   assert.equal(sim.units[0].hp, 160); assert.equal(sim.campaign.weapon, 1);
   assert.equal(sim.buy('armor'), false);
@@ -60,8 +69,15 @@ test('squad loss grants no payout; restart restores agents without losing upgrad
   sim.deploy(); assert.equal(sim.units[0].hp, 160); assert.equal(sim.campaign.weapon, 2);
 });
 
-test('storage failure keeps the purchased upgrade and reports persistence limitation', () => {
-  const sim = new Simulation({ version: 2, cash: 500, weapon: 0, armor: 0, completed: 0 }, () => { throw new Error('disabled'); });
+test('sync failure keeps the purchased upgrade and reports persistence limitation', () => {
+  const fail = () => { throw new Error('offline'); };
+  const sim = new Simulation({ version: 2, cash: 500, weapon: 0, armor: 0, completed: 0 }, { deployed: fail, completed: fail, bought: fail });
   sim.phase = 'headquarters'; assert.ok(sim.buy('armor'));
   assert.equal(sim.campaign.armor, 1); assert.equal(sim.saveUnavailable, true);
+});
+
+test('a server campaign replaces local state and rebuilds agents outside missions', () => {
+  const sim = new Simulation();
+  sim.applyCampaign({ version: 2, cash: 750, weapon: 1, armor: 2, completed: 4 });
+  assert.equal(sim.getSnapshot().campaign.cash, 750); assert.equal(sim.units[0].maxHp, 200);
 });
