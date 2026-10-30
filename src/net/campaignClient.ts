@@ -37,51 +37,74 @@ export async function connectPlayer(): Promise<{ code: string; campaign: Campaig
   return created;
 }
 
+export const loadLegacyCampaign = () => parseCampaign(storage.get(LEGACY_KEY));
+
 export const rememberSaveCode = (code: string) => storage.set(CODE_KEY, code);
 
-// Sends simulation events to the player's Durable Object in order; each server reply replaces the local campaign.
+// Keep actions in order. A failed request blocks later actions so local progress is
+// never replaced by a server state that does not include those actions.
 export class CampaignClient implements CampaignSync {
   code: string | null = null;
   private sim: Simulation | null = null;
-  private missionId: Promise<string | null> = Promise.resolve(null);
-  private queue: Promise<unknown> = Promise.resolve();
+  private generation = 0;
+  private missionId: string | null = null;
+  private pending: Array<() => Promise<Campaign | null>> = [];
+  private running = false;
+  private failed = false;
 
-  attach(sim: Simulation, code: string) { this.sim = sim; this.code = code; this.missionId = Promise.resolve(null); }
+  attach(sim: Simulation, code: string) {
+    this.generation++;
+    this.sim = sim; this.code = code; this.missionId = null;
+    this.pending = []; this.running = false; this.failed = false;
+  }
 
   deployed() {
     const code = this.code; if (!code) return;
-    this.missionId = this.enqueue(() => api<{ missionId: string }>(`campaign/${code}/missions`, 'POST').then(r => r.missionId));
+    const generation = this.generation;
+    this.enqueue(async () => {
+      const { missionId } = await api<{ missionId: string }>(`campaign/${code}/missions`, 'POST');
+      if (generation === this.generation) this.missionId = missionId;
+      return null;
+    });
   }
   completed() {
     const code = this.code; if (!code) return;
-    const mission = this.missionId;
     this.enqueue(async () => {
-      const id = await mission; if (!id) return null;
-      return this.apply(api<{ campaign: Campaign }>(`campaign/${code}/missions/${id}/complete`, 'POST'));
+      if (!this.missionId) throw new Error('Mission has not been synchronized.');
+      const { campaign } = await api<{ campaign: Campaign }>(`campaign/${code}/missions/${this.missionId}/complete`, 'POST');
+      return campaign;
     });
   }
   bought(type: Upgrade) {
     const code = this.code; if (!code) return;
-    this.enqueue(() => this.apply(api<{ campaign: Campaign }>(`campaign/${code}/upgrades/${type}`, 'POST')));
+    this.enqueue(async () => (await api<{ campaign: Campaign }>(`campaign/${code}/upgrades/${type}`, 'POST')).campaign);
   }
 
-  private async apply(request: Promise<{ campaign: Campaign }>) {
-    const { campaign } = await request;
-    this.sim?.applyCampaign(campaign);
-    return campaign;
+  private enqueue(task: () => Promise<Campaign | null>) {
+    this.pending.push(task);
+    void this.flush(this.generation);
   }
-  private enqueue<T>(task: () => Promise<T>): Promise<T | null> {
-    const run = this.queue.then(task).then(
-      value => { this.sim?.setSaveUnavailable(false); return value; },
-      async error => {
-        // A rejected action means local state drifted; resync to the server's copy.
-        const resynced = error instanceof ApiError && error.status === 409 && this.code
-          ? await fetchCampaign(this.code).then(c => { this.sim?.applyCampaign(c); return true; }, () => false)
-          : false;
-        this.sim?.setSaveUnavailable(!resynced);
-        return null;
-      });
-    this.queue = run;
-    return run;
+
+  private async flush(generation: number) {
+    if (this.running || this.failed) return;
+    this.running = true;
+    while (generation === this.generation && this.pending.length) {
+      try {
+        const campaign = await this.pending[0]();
+        if (generation !== this.generation) return;
+        this.pending.shift();
+        // Intermediate replies predate later optimistic local actions.
+        if (campaign && this.pending.length === 0) this.sim?.applyCampaign(campaign);
+      } catch {
+        if (generation !== this.generation) return;
+        this.failed = true;
+        this.sim?.setSaveUnavailable(true);
+        break;
+      }
+    }
+    if (generation === this.generation) {
+      this.running = false;
+      if (!this.failed) this.sim?.setSaveUnavailable(false);
+    }
   }
 }

@@ -5,11 +5,11 @@ import { GameCanvas } from './scene/GameCanvas.tsx';
 import { Simulation } from './game/simulation.ts';
 import { MAX_LEVEL, PAYOUT, UPGRADE_COST } from './game/campaign.ts';
 import { formatSaveCode, normalizeSaveCode } from './game/saveCode.ts';
-import { ApiError, CampaignClient, connectPlayer, fetchCampaign, rememberSaveCode } from './net/campaignClient.ts';
+import { ApiError, CampaignClient, connectPlayer, fetchCampaign, loadLegacyCampaign, rememberSaveCode } from './net/campaignClient.ts';
 import './style.css';
 
 const client = new CampaignClient();
-const sim = new Simulation(undefined, client);
+const sim = new Simulation(loadLegacyCampaign(), client);
 // Module scope so StrictMode's double effects never create two players.
 const connection = connectPlayer().then(({ code, campaign }) => { client.attach(sim, code); sim.applyCampaign(campaign); return code; });
 
