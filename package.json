@@ -7,7 +7,7 @@
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
     "typecheck": "tsc --noEmit && tsc --noEmit -p worker",
-    "test": "node --test tests/*.test.ts",
+    "test": "node --test --experimental-transform-types tests/*.test.ts",
     "preview": "vite preview --host 0.0.0.0",
     "deploy": "vite build && wrangler deploy",
     "cf-typegen": "wrangler types --include-runtime=false worker/worker-configuration.d.ts"

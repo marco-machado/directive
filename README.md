@@ -4,7 +4,7 @@ A React Three Fiber squad-combat game served by one Cloudflare Worker. Campaign 
 
 ## Run
 
-Node.js 24 or newer. Install the locked dependencies with `npm ci`, then run `npm run dev`; the Cloudflare Vite plugin runs the Worker and Durable Object locally in workerd. `npm run build` bundles `dist/`; `npm run typecheck` runs the TypeScript compiler. `npm test` exercises navigation, combat/extraction, pause, save migration, upgrades, and failure recovery.
+Node.js 24 or newer. Install the locked dependencies with `npm ci`, then run `npm run dev`; the Cloudflare Vite plugin runs the Worker and Durable Object locally in workerd. `npm run build` bundles `dist/`; `npm run typecheck` runs the TypeScript compiler. `npm test` exercises navigation, combat/extraction, pause, save migration, upgrades, failure recovery, and the client holding a fast win's payout claim until the server's minimum mission time.
 
 `npm run typecheck` checks the browser code and, with `worker/tsconfig.json`, the Worker. After editing `wrangler.jsonc`, run `npm run cf-typegen` to regenerate `worker/worker-configuration.d.ts`.
 

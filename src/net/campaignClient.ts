@@ -1,4 +1,4 @@
-import { parseCampaign } from '../game/campaign.ts';
+import { MIN_MISSION_MS, parseCampaign } from '../game/campaign.ts';
 import type { Campaign, Upgrade } from '../game/campaign.ts';
 import { normalizeSaveCode } from '../game/saveCode.ts';
 import type { CampaignSync, Simulation } from '../game/simulation.ts';
@@ -48,6 +48,7 @@ export class CampaignClient implements CampaignSync {
   private sim: Simulation | null = null;
   private generation = 0;
   private missionId: string | null = null;
+  private missionRegisteredAt = 0;
   private pending: Array<() => Promise<Campaign | null>> = [];
   private running = false;
   private failed = false;
@@ -63,15 +64,20 @@ export class CampaignClient implements CampaignSync {
     const generation = this.generation;
     this.enqueue(async () => {
       const { missionId } = await api<{ missionId: string }>(`campaign/${code}/missions`, 'POST');
-      if (generation === this.generation) this.missionId = missionId;
+      if (generation === this.generation) { this.missionId = missionId; this.missionRegisteredAt = performance.now(); }
       return null;
     });
   }
   completed() {
     const code = this.code; if (!code) return;
     this.enqueue(async () => {
-      if (!this.missionId) throw new Error('Mission has not been synchronized.');
-      const { campaign } = await api<{ campaign: Campaign }>(`campaign/${code}/missions/${this.missionId}/complete`, 'POST');
+      const { generation, missionId } = this;
+      if (!missionId) throw new Error('Mission has not been synchronized.');
+      // A fast win can beat the server's minimum mission time; hold the claim until it would be accepted.
+      const wait = this.missionRegisteredAt + MIN_MISSION_MS - performance.now();
+      if (wait > 0) await new Promise(resolve => setTimeout(resolve, wait));
+      if (generation !== this.generation) return null;
+      const { campaign } = await api<{ campaign: Campaign }>(`campaign/${code}/missions/${missionId}/complete`, 'POST');
       return campaign;
     });
   }
