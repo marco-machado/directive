@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Simulation, parseCampaign, COVER_FACTOR, HACK_SECONDS, REINFORCE_CAP, REINFORCE_SECONDS, REVIVE_SECONDS } from '../src/game/simulation.ts';
+import { Simulation, parseCampaign, COVER_FACTOR, HACK_SECONDS, QUEUE_SPACING, REINFORCE_CAP, REINFORCE_SECONDS, REVIVE_SECONDS } from '../src/game/simulation.ts';
 import type { CampaignSync, Unit, Upgrade } from '../src/game/simulation.ts';
 import { contractPayout, freshCampaign, MAX_TIER } from '../src/game/campaign.ts';
 import type { Campaign, ContractType } from '../src/game/campaign.ts';
@@ -9,6 +9,7 @@ import { mapSize, planMission } from '../src/game/mapgen.ts';
 import type { EnemyKind } from '../src/game/mapgen.ts';
 import { mulberry32 } from '../src/game/rng.ts';
 import { distance, World } from '../src/game/world.ts';
+import type { Point } from '../src/game/world.ts';
 
 const recorder = () => {
   const events: string[] = [];
@@ -319,4 +320,110 @@ test('the sync flag reaches the snapshot and notifies only when it changes', () 
   sim.setSyncing(false);
   assert.equal(sim.getSnapshot().syncing, false);
   assert.equal(notified, 2);
+});
+
+// ---- Squad movement through narrow streets ----
+const FOUR: Partial<Campaign> = { roster: [{ id: 'vex', name: 'VEX', cls: 'assault' }, { id: 'rook', name: 'ROOK', cls: 'support' }, { id: 'kai', name: 'KAI', cls: 'recon' }, { id: 'nova', name: 'NOVA', cls: 'tech' }] };
+const block = (x0: number, x1: number, z0: number, z1: number) => ({ x: (x0 + x1) / 2, z: (z0 + z1) / 2, w: x1 - x0, d: z1 - z0, h: 3, name: 'B', accent: '#fff' });
+// A 1.4 m alley along z at x = 0, too narrow for the side-by-side spread.
+const ALLEY = [block(-6, -.7, -2, 10), block(.7, 6, -2, 10)];
+// A walled-in room around (15, 15) that nothing outside can reach.
+const POCKET = [block(12, 18, 17.5, 18.5), block(12, 18, 11.5, 12.5), block(11.5, 12.5, 11.5, 18.5), block(17.5, 18.5, 11.5, 18.5)];
+function streets(buildings = ALLEY, type: ContractType = 'heist') {
+  const a = arena(type, FOUR);
+  a.sim.plan = { ...a.sim.plan!, world: new World(a.world.bounds, buildings, []) };
+  a.squad.forEach((u, i) => { u.x = i - 1.5; u.z = -5; });
+  return a;
+}
+const settle = (sim: Simulation, units: Unit[]) => {
+  step(sim, 30, () => units.every(u => !u.path.length));
+  assert.equal(sim.phase, 'mission'); assert.ok(units.every(u => !u.path.length), 'still walking');
+};
+const spaced = (units: Point[]) => units.every((u, i) => units.every((v, j) => i === j || distance(u, v) >= QUEUE_SPACING - 1e-3));
+
+test('the squad queues single file into an alley too narrow to stand abreast', () => {
+  const { sim, squad } = streets();
+  sim.move({ x: 0, z: 8 });
+  assert.ok(squad.every(u => u.path.length), 'someone ignored the order');
+  settle(sim, squad);
+  const byZ = [...squad].sort((a, b) => b.z - a.z);
+  assert.ok(distance(byZ[0], { x: 0, z: 8 }) < 1e-6);
+  for (const u of squad) { assert.ok(sim.plan!.world.walkable(u)); assert.ok(Math.abs(u.x) < .32 && u.z > -2, JSON.stringify(u)); }
+  for (let i = 1; i < byZ.length; i++) assert.ok(byZ[i - 1].z - byZ[i].z >= QUEUE_SPACING - 1e-3, `gap ${i}`);
+});
+
+test('a leader already on the point still gets a queue behind it, not a pile', () => {
+  const { sim, squad } = streets();
+  squad[0].x = 0; squad[0].z = 8;
+  sim.move({ x: 0, z: 8 }); settle(sim, squad);
+  assert.ok(spaced(squad), JSON.stringify(squad.map(u => [u.x, u.z])));
+});
+
+test('operatives bunched on the point all still move, stacking where the route runs out', () => {
+  const { sim, squad } = streets();
+  squad.forEach((u, i) => { u.x = 0; u.z = 7.9 + i * .05; });
+  sim.move({ x: 0, z: 8 });
+  for (const u of squad) assert.deepEqual(u.path.at(-1), { x: 0, z: 8 });
+});
+
+test('the queue follows a bent alley around its corner', () => {
+  // The alley runs north at x = 0, then turns east along z = 7.
+  const { sim, squad } = streets([block(-6, -.7, -2, 10), block(.7, 6, -2, 6.3), block(.7, 6, 7.7, 10)]);
+  sim.move({ x: 5, z: 7 }); settle(sim, squad);
+  for (const u of squad) assert.ok(sim.plan!.world.walkable(u), JSON.stringify(u));
+  assert.ok(spaced(squad));
+});
+
+test('an operative who cannot reach the point keeps its orders; the rest queue', () => {
+  const { sim, squad } = streets([...ALLEY, ...POCKET]);
+  const stuck = squad[3]; stuck.x = 15; stuck.z = 15; stuck.path = [{ x: 16, z: 15 }];
+  sim.move({ x: 0, z: 8 });
+  assert.deepEqual(stuck.path, [{ x: 16, z: 15 }]);
+  const rest = squad.slice(0, 3); settle(sim, rest);
+  assert.ok(spaced(rest)); assert.ok(rest.every(u => Math.abs(u.x) < .32));
+});
+
+test('when only some fit abreast, the whole squad queues instead', () => {
+  // 2.2 m wide: the inner pair could stand abreast, the outer pair could not.
+  const { sim, squad } = streets([block(-6, -1.1, -2, 10), block(1.1, 6, -2, 10)]);
+  sim.move({ x: 0, z: 8 }); settle(sim, squad);
+  const zs = squad.map(u => u.z).sort((a, b) => b - a);
+  for (let i = 1; i < zs.length; i++) assert.ok(zs[i - 1] - zs[i] >= QUEUE_SPACING - 1e-3, String(zs));
+});
+
+test('in the open the squad still spreads side by side', () => {
+  const { sim, squad } = streets([]);
+  sim.move({ x: 10, z: 10 });
+  squad.forEach((u, i) => assert.deepEqual(u.path.at(-1), { x: 10 + (i - 1.5) * QUEUE_SPACING, z: 10 }));
+});
+
+test('a point nobody can reach is refused and leaves every order alone', () => {
+  const { sim, squad } = streets([...ALLEY, ...POCKET]);
+  squad.forEach(u => { u.path = [{ x: -10, z: -10 }]; });
+  sim.move({ x: 15, z: 15 });
+  assert.match(sim.message, /Route blocked/); assert.equal(sim.commandPoint, null);
+  for (const u of squad) assert.deepEqual(u.path, [{ x: -10, z: -10 }]);
+});
+
+test('a click on the VIP sends the squad to where the VIP stood', () => {
+  const { sim, squad } = streets(ALLEY, 'escort');
+  const vip = sim.units.find(u => u.faction === 'vip')!; vip.x = 0; vip.z = 8;
+  sim.unitClick(vip.id);
+  vip.x = 0; vip.z = 3;
+  assert.ok(squad.every(u => u.path.length));
+  assert.ok(squad.some(u => u.path.at(-1)!.z === 8)); assert.ok(squad.every(u => u.path.at(-1) !== vip));
+});
+
+test('a move order cancels attack and revive orders, abreast or in a queue', () => {
+  for (const buildings of [[], ALLEY]) {
+    const { sim, squad } = streets(buildings);
+    squad.forEach(u => { u.targetId = 'h0'; u.reviveTarget = 'rook'; u.revive = 1; });
+    sim.move({ x: 0, z: 8 });
+    for (const u of squad) { assert.equal(u.targetId, null); assert.equal(u.reviveTarget, null); assert.equal(u.revive, 0); }
+  }
+});
+
+test('the same order in the same alley gives the same queue', () => {
+  const runs = [streets(), streets()].map(({ sim, squad }) => { sim.move({ x: 0, z: 8 }); return squad.map(u => u.path); });
+  assert.deepEqual(runs[0], runs[1]);
 });

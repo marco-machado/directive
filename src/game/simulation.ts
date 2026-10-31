@@ -63,9 +63,20 @@ export const HACK_SECONDS = 12;
 export const PLANT_SECONDS = 3;
 export const COVER_FACTOR = .5;
 export const WEAPON_BONUS = 12, ARMOR_BONUS = 40;
+export const QUEUE_SPACING = .9;    // gap between operatives, side by side or in single file
 
 const angleDiff = (a: number, b: number) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
 const headingTo = (a: Point, b: Point) => Math.atan2(b.x - a.x, b.z - a.z);
+const routeLength = (from: Point, path: Point[]) => path.reduce((sum, p, i) => sum + distance(i ? path[i - 1] : from, p), 0);
+// The point `d` back from the end of a route, walking toward its start.
+const pointBack = (route: Point[], d: number): Point => {
+  for (let i = route.length - 1; i > 0; i--) {
+    const a = route[i], b = route[i - 1], len = distance(a, b);
+    if (!len || len < d) { d -= len; continue; }
+    return { x: a.x + (b.x - a.x) * d / len, z: a.z + (b.z - a.z) * d / len };
+  }
+  return { x: route[0].x, z: route[0].z };
+};
 
 export class Simulation {
   campaign: Campaign;
@@ -223,16 +234,39 @@ export class Simulation {
   togglePause = () => { if (this.phase === 'mission') { this.paused = !this.paused; this.emit(); } };
   pause = () => { if (this.phase === 'mission' && !this.paused) { this.paused = true; this.emit(); } };
   private orderable() { return this.selected.map(id => this.unit(id)).filter((u): u is Unit => !!u && u.hp > 0); }
-  move(point: Point) {
+  // Operatives line up side by side; where the street is too narrow for that, they queue in single file.
+  move(click: Point) {
     if (this.phase !== 'mission' || !this.plan) return;
-    let moved = false;
-    const units = this.orderable();
-    units.forEach((u, i) => {
-      const path = this.plan!.world.findPath(u, { x: point.x + (i - (units.length - 1) / 2) * .9, z: point.z });
-      if (path.length) { u.path = path; u.targetId = null; u.reviveTarget = null; u.revive = 0; moved = true; }
-    });
-    this.commandPoint = moved ? { x: point.x, z: point.z } : null;
+    const world = this.plan.world, point = { x: click.x, z: click.z }, units = this.orderable();
+    const line = units.map((u, i) => world.findPath(u, { x: point.x + (i - (units.length - 1) / 2) * QUEUE_SPACING, z: point.z }));
+    const orders = line.every(path => path.length) ? new Map(units.map((u, i) => [u, line[i]])) : this.queue(units, point);
+    orders.forEach((path, u) => { u.path = path; u.targetId = null; u.reviveTarget = null; u.revive = 0; });
+    const moved = orders.size > 0;
+    this.commandPoint = moved ? point : null;
     this.message = moved ? (this.alarm ? 'Move order confirmed. Weapons free.' : 'Move order confirmed. Holding fire until ordered.') : 'Route blocked. Choose an open street.'; this.emit();
+  }
+  // The first to arrive takes the point; the rest take slots back along the longest approach route.
+  // Units do not collide, so the queue forms on arrival; followers that run out of route stack on the point.
+  private queue(units: Unit[], point: Point) {
+    const world = this.plan!.world, orders = new Map<Unit, Point[]>();
+    const reach = units.map(u => ({ u, path: world.findPath(u, point) })).filter(r => r.path.length).map(r => ({ ...r, length: routeLength(r.u, r.path) }));
+    if (!reach.length) return orders;
+    const leader = [...reach].sort((a, b) => a.length - b.length)[0];
+    const approach = reach.reduce((a, b) => b.length > a.length ? b : a);
+    const route = [{ x: approach.u.x, z: approach.u.z }, ...approach.path], slots = [point];
+    let free = reach.filter(r => r !== leader);
+    orders.set(leader.u, leader.path);
+    for (let d = QUEUE_SPACING; free.length && d <= approach.length; d += .3) {
+      const slot = pointBack(route, d);
+      if (!world.walkable(slot) || slots.some(s => distance(s, slot) < QUEUE_SPACING - 1e-3)) continue;
+      const best = free.map(f => ({ f, path: world.findPath(f.u, slot) })).filter(c => c.path.length)
+        .map(c => ({ ...c, length: routeLength(c.f.u, c.path) })).sort((a, b) => a.length - b.length)[0];
+      if (!best) continue;
+      orders.set(best.f.u, best.path); slots.push(slot); free = free.filter(f => f !== best.f);
+      d += QUEUE_SPACING - .3;
+    }
+    free.forEach(f => orders.set(f.u, f.path));
+    return orders;
   }
   attack(id: string) {
     if (this.phase !== 'mission' || !this.plan) return;
