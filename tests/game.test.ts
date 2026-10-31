@@ -183,6 +183,8 @@ test('sabotage needs both charges before extraction pays', () => {
   squad[1].x = a.x; squad[1].z = a.z; step(sim, 3.2);
   assert.equal(a.done, true); assert.equal(sim.phase, 'mission');
   squad[1].x = b.x; squad[1].z = b.z; step(sim, 3.2);
+  assert.equal(b.done, true); assert.equal(sim.phase, 'mission');
+  squad[1].x = sim.plan!.extract.x; squad[1].z = sim.plan!.extract.z; sim.update(1 / 60);
   assert.equal(sim.result, 'success');
   assert.equal(sim.payout, Math.round(contractPayout(1) * 1.25));
   assert.equal(sim.campaign.cash, sim.payout);
@@ -196,7 +198,52 @@ test('an alarmed contract pays without the stealth bonus', () => {
   squad[1].x = -18; squad[1].z = -18;
   sim.plan && (sim as unknown as { raiseAlarm(p: object, r: string): void }).raiseAlarm({ x: 0, z: 0 }, 'test');
   step(sim, HACK_SECONDS + 1);
+  assert.equal(terminal.done, true); assert.equal(sim.phase, 'mission');
+  squad[0].x = -18; squad[0].z = -18; sim.update(1 / 60);
   assert.equal(sim.result, 'success'); assert.equal(sim.payout, contractPayout(1));
+});
+
+test('extraction waits for every operative, downed ones included', () => {
+  const { sim, squad } = arena('heist');
+  const [terminal, extract] = sim.objectives, [medic, down] = squad;
+  terminal.done = true;
+  medic.x = extract.x; medic.z = extract.z; sim.update(1 / 60);
+  assert.equal(sim.phase, 'mission'); assert.equal(extract.progress, 1 / squad.length);
+  down.x = extract.x + .5; down.z = extract.z; down.hp = 0; sim.update(1 / 60);
+  assert.equal(sim.phase, 'mission'); assert.equal(sim.message, `${down.name} is down. Revive them before extracting.`);
+  sim.selected = [medic.id]; sim.unitClick(down.id);
+  step(sim, REVIVE_SECONDS + .5);
+  assert.equal(sim.result, 'success'); assert.equal(extract.done, true);
+});
+
+const fullRoster = ['assault', 'support', 'recon', 'tech'].map((cls, i) => ({ id: `o${i}`, name: `OP${i}`, cls })) as Campaign['roster'];
+
+test('a select-all move brings a full squad to a generated extraction corner', () => {
+  const roster = fullRoster;
+  for (let seed = 1; seed <= 8; seed++) {
+    const sim = new Simulation(campaignWith('heist', { roster, offers: [contract('heist', 1, seed)] }));
+    sim.deploy();
+    const squad = sim.units.filter(u => u.faction === 'squad'), extract = sim.objectives.at(-1)!;
+    assert.equal(squad.length, 4);
+    sim.units = [...squad]; sim.objectives[0].done = true;
+    squad.forEach(u => { u.x += (extract.x > 0 ? -6 : 6); u.z += (extract.z > 0 ? -6 : 6); u.path = []; });
+    sim.selectAll(); sim.move({ x: extract.x, z: extract.z });
+    assert.ok(squad.every(u => u.path.length), `seed ${seed}: an operative got no route`);
+    step(sim, 20);
+    assert.equal(sim.result, 'success', `seed ${seed}: ${squad.map(u => distance(u, extract).toFixed(2)).join(' ')}`);
+  }
+});
+
+test('escort completes once the squad and the VIP are in the zone', () => {
+  // Four abreast, the formation's ends sit 1.35 from the beacon, where a VIP trailing them would stop short.
+  const { sim, squad } = arena('escort', { roster: fullRoster });
+  const vip = sim.units.find(u => u.faction === 'vip')!, extract = sim.objectives.at(-1)!;
+  assert.equal(squad.length, 4);
+  vip.x = 1; vip.z = 2;
+  step(sim, .5); assert.equal(sim.objectives[0].done, true);
+  sim.selectAll(); sim.move({ x: extract.x, z: extract.z });
+  step(sim, 30);
+  assert.equal(sim.result, 'success', `VIP ${distance(vip, extract).toFixed(2)} from extraction`);
 });
 
 test('the escort VIP joins, follows, and its death fails the contract', () => {

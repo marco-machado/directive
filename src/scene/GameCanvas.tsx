@@ -1,14 +1,15 @@
-import { memo, useEffect, useLayoutEffect, useRef, useSyncExternalStore } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 import type { ComponentRef, RefObject } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
-import { DirectionalLight, MOUSE } from 'three';
+import { DirectionalLight, MOUSE, TOUCH, Vector3 } from 'three';
 import type { Mesh } from 'three';
 import type { MissionPlan } from '../game/mapgen.ts';
 import type { Bounds } from '../game/world.ts';
 import type { Simulation } from '../game/simulation.ts';
 import { setAudioCamera } from '../ui/audio.ts';
 import { City } from './city.tsx';
+import { dragged, trackDrags } from './drag.ts';
 import { Effects, Targeting } from './effects.tsx';
 import type { Pointer } from './effects.tsx';
 import { Objectives } from './objectives.tsx';
@@ -25,10 +26,15 @@ const planKey = (plan: MissionPlan) => { let key = planKeys.get(plan); if (key =
 const extent = (b: Bounds) => ({ cx: (b.minX + b.maxX) / 2, cz: (b.minZ + b.maxZ) / 2, w: b.maxX - b.minX, d: b.maxZ - b.minZ });
 
 // Fits the district into the HUD's free frame (the .view-frame element) and offsets the projection
-// so the district centers there; the attract mode orbits it slowly on the title screen.
+// so the district centers there. The player orbits it with left-drag; the attract mode orbits it
+// slowly on the title screen.
 function CameraRig({ reset, bounds, layout, attract, frame, insets }: { reset: number; bounds: Bounds; layout: string; attract: boolean; frame: RefObject<HTMLDivElement | null>; insets: RefObject<Insets> }) {
-  const ref = useRef<ComponentRef<typeof OrbitControls>>(null), camera = useThree(s => s.camera), size = useThree(s => s.size), gl = useThree(s => s.gl);
+  const ref = useRef<ComponentRef<typeof OrbitControls>>(null), camera = useThree(s => s.camera), size = useThree(s => s.size), gl = useThree(s => s.gl), look = useMemo(() => new Vector3(), []);
+  useEffect(() => trackDrags(gl.domElement), [gl]);
   useEffect(() => {
+    // Without damping, one update applies the rest of a drag's glide, so it can't carry on past the reset.
+    const c = ref.current;
+    if (c) { c.enableDamping = false; c.update(); c.enableDamping = true; }
     const { cx, cz, w, d } = extent(bounds), box = gl.domElement.getBoundingClientRect(), f = frame.current?.getBoundingClientRect() ?? box;
     const l = Math.max(0, f.left - box.left), t = Math.max(0, f.top - box.top), r = Math.max(0, box.right - f.right), b = Math.max(0, box.bottom - f.bottom);
     insets.current = { l, t, r, b };
@@ -40,8 +46,17 @@ function CameraRig({ reset, bounds, layout, attract, frame, insets }: { reset: n
   }, [camera, gl, reset, size.width, size.height, bounds, layout, frame, insets]);
   // Positional sound is panned and faded by where its source sits in this view.
   useEffect(() => { setAudioCamera(camera); return () => setAudioCamera(null); }, [camera]);
-  return <OrbitControls ref={ref} makeDefault enableRotate={false} autoRotate={attract} autoRotateSpeed={.35} minZoom={4} maxZoom={65} enableDamping dampingFactor={.12}
-    mouseButtons={{ LEFT: undefined, MIDDLE: MOUSE.DOLLY, RIGHT: MOUSE.PAN }} />;
+  // Screen-space panning lifts the pivot off the street; slide it back along the view ray before each
+  // drag. The orthographic image doesn't change, and rotation then turns around the street.
+  const ground = () => {
+    const c = ref.current;
+    if (!c || !c.target.y) return;
+    const k = -c.target.y / camera.getWorldDirection(look).y;
+    c.target.addScaledVector(look, k); camera.position.addScaledVector(look, k);
+  };
+  return <OrbitControls ref={ref} makeDefault autoRotate={attract} autoRotateSpeed={.35} minZoom={4} maxZoom={65} enableDamping dampingFactor={.12} onStart={ground}
+    rotateSpeed={.7} minPolarAngle={Math.PI / 6} maxPolarAngle={Math.PI * 13 / 36}
+    mouseButtons={{ LEFT: MOUSE.ROTATE, MIDDLE: MOUSE.DOLLY, RIGHT: MOUSE.PAN }} touches={{ ONE: TOUCH.ROTATE, TWO: TOUCH.DOLLY_PAN }} />;
 }
 
 function Sun({ bounds }: { bounds: Bounds }) {
@@ -87,7 +102,7 @@ function World({ sim, reset, layout, attract, frame, labels }: Props & { labels:
     {plan ? <>
       <City key={planKey(plan)} plan={plan} />
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[cx, .04, cz]} visible={false}
-        onClick={e => { if (e.delta <= 5) { e.stopPropagation(); sim.groundClick({ x: e.point.x, z: e.point.z }); } }}
+        onClick={e => { if (!dragged()) { e.stopPropagation(); sim.groundClick({ x: e.point.x, z: e.point.z }); } }}
         onPointerMove={e => { pointer.current.x = e.point.x; pointer.current.z = e.point.z; pointer.current.on = true; }}
         onPointerOut={() => { pointer.current.on = false; }}>
         <planeGeometry args={[w, d]} />

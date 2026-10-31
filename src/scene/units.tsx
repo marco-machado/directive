@@ -7,6 +7,7 @@ import { CircleGeometry, MeshBasicMaterial, PlaneGeometry, RingGeometry } from '
 import type { Group, Mesh } from 'three';
 import { REVIVE_SECONDS } from '../game/simulation.ts';
 import type { Faction, Simulation, Unit, UnitKind } from '../game/simulation.ts';
+import { dragged } from './drag.ts';
 import { BOX, Box, CYLINDER, DIAMOND, dim, glow, ProgressRing, solid, STILL } from './parts.tsx';
 
 type Vec3 = [number, number, number];
@@ -159,7 +160,7 @@ function Agent({ sim, unit, selected, slot, tagged, labels, hitboxes }: { sim: S
     const u = sim.units.find(v => v.id === id);
     // Hidden or dead hostiles let the click fall through to the ground.
     if (!u || (u.faction === 'hostile' && (u.hp <= 0 || !u.visible))) return;
-    e.stopPropagation(); if (e.delta > 5) return;
+    e.stopPropagation(); if (dragged()) return;
     sim.unitClick(id, e.shiftKey);
   };
   const label = kind === 'target' ? (unit.hp > 0 && unit.visible ? 'TARGET' : null) : kind === 'vip' ? (unit.hp > 0 ? 'VIP' : null) : tagged && faction === 'squad' && selected && unit.hp > 0 ? String(slot + 1) : null;

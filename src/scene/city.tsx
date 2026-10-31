@@ -16,11 +16,11 @@ function buildingParts(b: Building, bi: number, lit: Part[], light: Part[]) {
   add(lit, 0, .65, b.d / 2 + .03, 1.2, .8, .08, '#162b30');
   add(lit, -b.w * .28, b.h + .6, -b.d * .2, .5, .5, .8, '#73807c');
   add(light, 0, 1.2, b.d / 2 + .08, b.w * .7, .09, .1, b.accent);
-  add(light, b.w / 2 + .015, b.h * .45, 0, .06, .1, b.d * .7, b.accent);
-  // Windows only on the two faces the isometric camera sees.
-  for (let y = 1.8; y < b.h - .3; y += .72) {
-    for (let x = -b.w / 2 + .5; x < b.w / 2 - .3; x += .75) add(light, x, y, b.d / 2 + .016, .35, .28, .018, ((Math.round(y * 10 + x) + bi) % 4) ? '#89a9a2' : '#e6b981');
-    for (let z = -b.d / 2 + .5; z < b.d / 2 - .3; z += .75) add(light, b.w / 2 + .016, y, z, .018, .28, .35, '#6e9b98');
+  for (const side of [1, -1]) add(light, side * (b.w / 2 + .015), b.h * .45, 0, .06, .1, b.d * .7, b.accent);
+  // Windows on all four faces, since the camera orbits.
+  for (let y = 1.8; y < b.h - .3; y += .72) for (const side of [1, -1]) {
+    for (let x = -b.w / 2 + .5; x < b.w / 2 - .3; x += .75) add(light, x, y, side * (b.d / 2 + .016), .35, .28, .018, ((Math.round(y * 10 + x) + bi) % 4) ? '#89a9a2' : '#e6b981');
+    for (let z = -b.d / 2 + .5; z < b.d / 2 - .3; z += .75) add(light, side * (b.w / 2 + .016), y, z, .018, .28, .35, '#6e9b98');
   }
 }
 
