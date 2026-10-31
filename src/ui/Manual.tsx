@@ -16,6 +16,7 @@ const CONTROLS: [ReactNode, string][] = [
   ['Click a downed operative', 'The nearest selected teammate revives them'],
   [<><kbd>S</kbd></>, 'Hold position'],
   [<><kbd>Space</kbd></>, 'Pause and queue orders'],
+  ['Drag / one-finger drag', 'Rotate and tilt the view'],
   ['Scroll / pinch', 'Zoom the view'],
   ['Right-drag / two-finger drag', 'Pan the view'],
   [<><kbd>R</kbd></>, 'Recenter the view'],

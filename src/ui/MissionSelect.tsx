@@ -35,7 +35,7 @@ export function MissionSelect({ state, titleRef, onChoose, onDeploy, onRecenter,
 
     <div className="select-center">
       {contract ? <div className="sector-tag" aria-hidden="true"><small>Sector {pad(contract.sector)}</small><strong>{contract.district}</strong></div> : null}
-      <div className="map-hint"><button className="icon-button" aria-label="Recenter the map" title="Recenter the map" onClick={onRecenter}><Icon name="recenter" /></button><span>Scroll to zoom · right-drag to pan</span></div>
+      <div className="map-hint"><button className="icon-button" aria-label="Recenter the map" title="Recenter the map" onClick={onRecenter}><Icon name="recenter" /></button><span>Drag to rotate · scroll to zoom · right-drag to pan</span></div>
     </div>
 
     <section className="select-brief panel" aria-label="Briefing">
