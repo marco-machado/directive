@@ -1,5 +1,5 @@
 import { isUpgrade } from '../src/game/campaign.ts';
-import { generateSaveCode, normalizeSaveCode } from '../src/game/saveCode.ts';
+import { normalizeSaveCode } from '../src/game/saveCode.ts';
 import type { Result } from './player.ts';
 export { PlayerCampaign } from './player.ts';
 
@@ -19,15 +19,14 @@ export default {
     if (parts[0] !== 'api') return env.ASSETS.fetch(request);
     const { method } = request;
 
-    // POST /api/players  { legacy?: Campaign }
+    // POST /api/players  { code, legacy?: Campaign }
+    // The browser picks and stores the code first, so a retry after a lost reply reaches the same player.
     if (parts.length === 2 && parts[1] === 'players' && method === 'POST') {
-      const { legacy } = await body(request);
-      for (let attempt = 0; attempt < 3; attempt++) {
-        const code = generateSaveCode();
-        const r = await env.PLAYERS.getByName(code).init(legacy);
-        if (r.ok) return json({ code, campaign: r.campaign }, 201);
-      }
-      return json({ error: 'Could not allocate a save code.' }, 503);
+      const { code: requested, legacy } = await body(request);
+      const code = typeof requested === 'string' ? normalizeSaveCode(requested) : null;
+      if (!code) return json({ error: 'Expected a save code.' }, 400);
+      const { campaign } = await env.PLAYERS.getByName(code).init(legacy);
+      return json({ code, campaign }, 201);
     }
 
     if (parts[1] !== 'campaign' || !parts[2]) return notFound();

@@ -308,3 +308,15 @@ test('a server campaign replaces local state and rebuilds the briefing', () => {
   assert.equal(sim.contract?.id, server.offers[0].id);
   assert.equal(sim.units.find(u => u.id === 'vex')!.maxHp, CLASS_STATS.assault.hp + 80);
 });
+
+test('the sync flag reaches the snapshot and notifies only when it changes', () => {
+  const sim = new Simulation();
+  let notified = 0;
+  sim.subscribe(() => notified++);
+  sim.setSyncing(true);
+  assert.equal(sim.getSnapshot().syncing, true);
+  sim.setSyncing(true);
+  sim.setSyncing(false);
+  assert.equal(sim.getSnapshot().syncing, false);
+  assert.equal(notified, 2);
+});
