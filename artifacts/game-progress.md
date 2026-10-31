@@ -79,3 +79,24 @@ Player orders the squad to complete the contract objective while patrols, camera
 - [x] rules review (fixed: equal-tier offers, brief text, footer label, test-only rng param, redundant guard, EMP test)
 - [x] code review findings (fixed 1,2,3,4,6,8 + readability; open: 5 failed-contract replay via forged client, 7 loading a save code during the payout wait drops that payout)
 - [x] final browser pass after fixes
+
+# Audio pass
+
+## Decisions (user-approved)
+- Source: ElevenLabs samples. The Music API needs a paid plan (HTTP 402 on the free account), so music loops and stingers also come from the sound-effects endpoint.
+- Scope: rework all existing cues; new combat events (squad vs hostile vs turret gunfire, impacts, hostile killed / machine destroyed, guard turning suspicious); city ambience; music.
+- Positional: stereo pan and off-screen falloff from the camera view.
+- Controls: Audio dialog (sound icon on title and top bar, Audio item in the mission menu) with mute and master/music/ambience/effects/interface sliders.
+- Music: menu loop, stealth mission loop, combat loop crossfaded in on alarm, success/failure stingers; dark synthwave.
+- Ambience: city bed through the mission; distant sirens fade in after the alarm.
+- Pause: music and ambience duck and muffle; no combat sounds.
+- Suspicion: one-shot sting when a guard or heavy crosses 30% detection.
+
+## Lead calls (report to user)
+- Hidden page suspends the audio context; visible resumes it.
+- Pitch varies ±6% on cues with variants or a repeat gap; repeat gaps: shots 60 ms, turret 90 ms, impacts 50 ms, suspicion 400 ms.
+- Defaults: master 80%, music 50%, ambience 60%, effects 90%, interface 70%; the old `ndMuted` flag carries over.
+- Per-file gains set from measured RMS/peak in the browser (no ffmpeg on this machine for offline normalization).
+
+## Assets
+37 files in `public/audio/` (sfx 30, ambience 2, music 5 incl. stingers), prompts in `artifacts/generate-audio.py`.

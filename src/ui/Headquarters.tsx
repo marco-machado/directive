@@ -7,7 +7,7 @@ import { ARMOR_BONUS, WEAPON_BONUS } from '../game/simulation.ts';
 import { credits, Credits, LoadSaveCode, OperativeLabel, Pips, SaveCode, secs } from './common.tsx';
 import { Icon } from './icons.tsx';
 import type { IconName } from './icons.tsx';
-import { play } from './sfx.ts';
+import { play } from './audio.ts';
 
 function Upgrade({ icon, title, detail, stat, now, next, level, cost, cash, cls, onBuy }: {
   icon: IconName; title: string; detail: string; stat: string; now: string; next: string; level: number; cost: number; cash: number; cls?: string; onBuy: () => boolean;
