@@ -104,6 +104,7 @@ export class Simulation {
   pending: Pending = null;
   private reinforced = 0;
   private vipJoined = false;
+  private holdup = '';
   private casts: { unitId: string; ability: AbilityId; point: Point; targetId: string | null }[] = [];
   private hitThisFrame = new Set<Unit>();
   private rng: Rng = Math.random;
@@ -181,7 +182,7 @@ export class Simulation {
   private resetUnits() {
     const plan = this.plan;
     this.units = []; this.objectives = []; this.shots = []; this.blasts = []; this.casts = []; this.hitThisFrame.clear();
-    this.alarm = false; this.reinforceIn = 0; this.reinforced = 0; this.vipJoined = false; this.pending = null; this.commandPoint = null;
+    this.alarm = false; this.reinforceIn = 0; this.reinforced = 0; this.vipJoined = false; this.holdup = ''; this.pending = null; this.commandPoint = null;
     if (!plan) { this.squad = []; this.selected = []; return; }
     this.rng = mulberry32(plan.contract.seed ^ 0x5bd1e995);
     this.squad = this.squadPick.filter(id => this.campaign.roster.some(o => o.id === id));
@@ -203,7 +204,7 @@ export class Simulation {
     if (t === 'heist') this.objectives.push(o('terminal', 'Download the vault data', plan.sites[0]));
     if (t === 'sabotage') plan.sites.forEach((s, i) => this.objectives.push(o('charge', `Plant charge ${'AB'[i]}`, s)));
     if (t === 'escort' && plan.vip) this.objectives.push(o('vip', 'Reach the VIP', plan.vip));
-    this.objectives.push(o('extract', t === 'escort' ? 'Escort the VIP to extraction' : 'Reach extraction', plan.extract));
+    this.objectives.push(o('extract', t === 'escort' ? 'Escort the VIP and the whole squad to extraction' : 'Get the whole squad to extraction', plan.extract));
     this.updateVisibility();
   }
   deploy = () => {
@@ -238,7 +239,11 @@ export class Simulation {
   move(click: Point) {
     if (this.phase !== 'mission' || !this.plan) return;
     const world = this.plan.world, point = { x: click.x, z: click.z }, units = this.orderable();
-    const line = units.map((u, i) => world.findPath(u, { x: point.x + (i - (units.length - 1) / 2) * QUEUE_SPACING, z: point.z }));
+    const line = units.map((u, i) => {
+      // A formation slot off the map (extraction sits by the edge) falls back to the clicked point itself.
+      const slot = { x: point.x + (i - (units.length - 1) / 2) * QUEUE_SPACING, z: point.z }, path = world.findPath(u, slot);
+      return path.length || world.inBounds(slot) ? path : world.findPath(u, point);
+    });
     const orders = line.every(path => path.length) ? new Map(units.map((u, i) => [u, line[i]])) : this.queue(units, point);
     orders.forEach((path, u) => { u.path = path; u.targetId = null; u.reviveTarget = null; u.revive = 0; });
     const moved = orders.size > 0;
@@ -507,10 +512,12 @@ export class Simulation {
       if (distance(u, leader) > 3) return;
       this.vipJoined = true; this.message = 'VIP secured. Escort them to extraction.';
     }
-    // The VIP follows the nearest operative but freezes while under fire.
-    if (u.hurt > 0 || distance(u, leader) <= 1.6) { u.path = []; return; }
+    // The VIP follows the nearest operative but freezes while under fire; at an open extraction it walks into the zone.
+    const extract = this.objectives.at(-1)!;
+    const goal = this.extractReady && distance(leader, extract) < 2 ? extract : leader;
+    if (u.hurt > 0 || distance(u, goal) <= (goal === leader ? 1.6 : .5)) { u.path = []; return; }
     u.repath -= dt;
-    if (u.repath <= 0 || !u.path.length) { u.repath = .5; u.path = this.plan!.world.findPath(u, leader); }
+    if (u.repath <= 0 || !u.path.length) { u.repath = .5; u.path = this.plan!.world.findPath(u, { x: goal.x, z: goal.z }); }
     this.walk(u, VIP_SPEED, dt);
   }
   private updateObjectives(dt: number, squad: Unit[]) {
@@ -526,8 +533,17 @@ export class Simulation {
       }
       if (o.kind === 'target' && o.done) this.message = 'Target neutralized. Return to the extraction zone.';
     }
-    const extract = this.objectives.at(-1)!;
-    if (this.extractReady && squad.some(s => distance(s, extract) < 2) && (!vip || distance(vip, extract) < 2.4)) { extract.done = true; this.finish(true); }
+    // Extraction counts only with every deployed operative standing in the zone; the downed must be revived first.
+    const extract = this.objectives.at(-1)!, team = this.units.filter(u => u.faction === 'squad');
+    const inZone = (s: Unit) => distance(s, extract) < 2;
+    extract.progress = team.filter(s => s.hp > 0 && inZone(s)).length / team.length;
+    if (!this.extractReady) return;
+    const vipIn = !vip || distance(vip, extract) < 2.4;
+    if (extract.progress === 1 && vipIn) { extract.done = true; this.finish(true); return; }
+    const down = team.find(s => s.hp <= 0);
+    const holdup = !squad.every(inZone) ? '' : down ? `${down.name} is down. Revive them before extracting.` : vipIn ? '' : 'Bring the VIP into the zone.';
+    if (holdup && holdup !== this.holdup) this.message = holdup;
+    this.holdup = holdup;
   }
   private reinforce(dt: number) {
     if (!this.alarm || this.reinforced >= REINFORCE_CAP || !this.plan) return;
