@@ -476,6 +476,20 @@ test('a fleeing target keeps running after a stand-down', () => {
   assert.equal(sim.result, 'failure'); assert.equal(sim.failReason, 'The target escaped.');
 });
 
+test('a second alarm does not make a fleeing target hesitate again', () => {
+  const { sim, squad, hostile, raise } = alarmed('assassination');
+  sim.plan = { ...sim.plan!, exits: [{ x: -19, z: 19 }] };
+  squad.forEach((u, i) => { u.x = 15 + i; u.z = 15; });
+  const target = hostile('target', 19, -19, 0, 1e6);
+  raise(target);
+  step(sim, CALM_SECONDS + .5); assert.equal(sim.alarm, false);
+  const exit = target.exit;
+  raise(target); assert.equal(sim.alarm, true);
+  assert.equal(target.exit, exit); assert.ok(target.wait <= 0);
+  const left = distance(target, exit!);
+  step(sim, 1); assert.ok(distance(target, exit!) < left);
+});
+
 test('restarting clears the detection; pausing holds the countdown', () => {
   const { sim, raise } = alarmed();
   raise(); step(sim, 2);

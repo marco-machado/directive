@@ -351,7 +351,8 @@ export class Simulation {
       if (u.faction !== 'hostile' || u.hp <= 0) continue;
       u.detect = 1;
       if ((u.kind === 'guard' || u.kind === 'heavy') && distance(u, at) <= CONVERGE_RADIUS) { u.hunting = true; u.repath = 0; }
-      if (u.kind === 'target') {
+      // A target already running from an earlier alarm keeps its exit and does not hesitate again.
+      if (u.kind === 'target' && !u.exit) {
         const exits = [...this.plan.exits].sort((a, b) => distance(u, a) - distance(u, b));
         u.exit = [...exits.filter(e => distance(u, e) >= FLEE_MIN_EXIT), ...exits].find(e => this.plan!.world.findPath(u, e).length) ?? null;
         u.wait = FLEE_DELAY;
