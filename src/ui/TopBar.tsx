@@ -1,5 +1,5 @@
 import { sim } from '../app.ts';
-import { REINFORCE_CAP } from '../game/simulation.ts';
+import { CALM_SECONDS, REINFORCE_CAP } from '../game/simulation.ts';
 import type { Snapshot } from '../game/simulation.ts';
 import { AudioButton, clock, Credits } from './common.tsx';
 import { Icon, Logo } from './icons.tsx';
@@ -14,10 +14,11 @@ export function Uplink({ connecting, offline }: { connecting: boolean; offline: 
 
 function Status({ state }: { state: Snapshot }) {
   return <div className={`status${state.alarm ? ' alarm' : ''}`}>
-    <span className="status-state"><Icon name={state.alarm ? 'alert' : 'eye'} /><strong>{state.alarm ? 'Alarm' : 'Undetected'}</strong></span>
+    <span className="status-state"><Icon name={state.alarm ? 'alert' : 'eye'} /><strong>{state.alarm ? 'Alarm' : state.stealth ? 'Undetected' : 'Evaded'}</strong></span>
     <span className="status-detail">{state.alarm
-      ? state.reinforced >= REINFORCE_CAP ? 'No more reinforcements' : <>Reinforcements <b>{Math.ceil(state.reinforceIn)} s</b></>
-      : 'Stealth bonus intact'}</span>
+      ? state.calmIn < CALM_SECONDS - 1 ? <>Contact lost · standing down <b>{Math.ceil(state.calmIn)} s</b></>
+      : state.reinforced >= REINFORCE_CAP ? 'No more reinforcements' : <>Reinforcements <b>{Math.ceil(state.reinforceIn)} s</b></>
+      : state.stealth ? 'Stealth bonus intact' : 'Stealth bonus lost'}</span>
     <span className="status-clock" role="timer" aria-label="Mission time">{clock(state.time)}</span>
   </div>;
 }

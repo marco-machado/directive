@@ -26,7 +26,7 @@ export type Phase = 'briefing' | 'mission' | 'headquarters';
 export type Pending = { unitId: string; ability: AbilityId } | null;
 export type Snapshot = {
   phase: Phase; paused: boolean; selected: string[]; squad: string[]; squadPick: string[]; units: Unit[]; campaign: Campaign;
-  contract: Contract | null; plan: MissionPlan | null; objectives: Objective[]; alarm: boolean; reinforceIn: number; reinforced: number;
+  contract: Contract | null; plan: MissionPlan | null; objectives: Objective[]; alarm: boolean; calmIn: number; reinforceIn: number; reinforced: number;
   result: 'success' | 'failure' | null; failReason: string; payout: number; stealth: boolean; time: number; message: string;
   saveUnavailable: boolean; syncing: boolean; pending: Pending;
 };
@@ -56,6 +56,8 @@ export const SIGHT_RANGE = 10;      // fog of war: hostiles beyond this or behin
 export const CONVERGE_RADIUS = 14;  // guards this close to the alarm hunt the squad
 export const SUSPICIOUS = .3;       // detection above this makes a guard stop and stare
 export const REINFORCE_SECONDS = 20;
+export const CALM_SECONDS = 25;     // the alarm stands down after this long without contact
+export const SEARCH_TURN = 1.5;     // a hunter at the last known position turns this fast (rad/s)
 export const REINFORCE_CAP = 8;
 export const REVIVE_SECONDS = 3;
 export const REVIVE_HP = .4;
@@ -92,6 +94,8 @@ export class Simulation {
   plan: MissionPlan | null = null;
   contract: Contract | null = null;
   alarm = false;
+  detected = false; // stays set once the alarm has sounded, even after it stands down
+  calmIn = 0;
   reinforceIn = 0;
   result: Snapshot['result'] = null;
   failReason = '';
@@ -104,6 +108,7 @@ export class Simulation {
   pending: Pending = null;
   private reinforced = 0;
   private vipJoined = false;
+  private lastKnown: Point | null = null;
   private holdup = '';
   private casts: { unitId: string; ability: AbilityId; point: Point; targetId: string | null }[] = [];
   private hitThisFrame = new Set<Unit>();
@@ -123,8 +128,8 @@ export class Simulation {
     this.snapshot = {
       phase: this.phase, paused: this.paused, selected: [...this.selected], squad: [...this.squad], squadPick: [...this.squadPick],
       units: this.units.map(u => ({ ...u })), campaign: this.campaign, contract: this.contract, plan: this.plan,
-      objectives: this.objectives.map(o => ({ ...o })), alarm: this.alarm, reinforceIn: this.reinforceIn, reinforced: this.reinforced, result: this.result,
-      failReason: this.failReason, payout: this.payout, stealth: !this.alarm, time: this.time, message: this.message,
+      objectives: this.objectives.map(o => ({ ...o })), alarm: this.alarm, calmIn: this.calmIn, reinforceIn: this.reinforceIn, reinforced: this.reinforced, result: this.result,
+      failReason: this.failReason, payout: this.payout, stealth: !this.detected, time: this.time, message: this.message,
       saveUnavailable: this.saveUnavailable, syncing: this.syncing, pending: this.pending,
     };
     this.listeners.forEach(fn => fn());
@@ -182,7 +187,8 @@ export class Simulation {
   private resetUnits() {
     const plan = this.plan;
     this.units = []; this.objectives = []; this.shots = []; this.blasts = []; this.casts = []; this.hitThisFrame.clear();
-    this.alarm = false; this.reinforceIn = 0; this.reinforced = 0; this.vipJoined = false; this.holdup = ''; this.pending = null; this.commandPoint = null;
+    this.alarm = false; this.detected = false; this.calmIn = 0; this.lastKnown = null;
+    this.reinforceIn = 0; this.reinforced = 0; this.vipJoined = false; this.holdup = ''; this.pending = null; this.commandPoint = null;
     if (!plan) { this.squad = []; this.selected = []; return; }
     this.rng = mulberry32(plan.contract.seed ^ 0x5bd1e995);
     this.squad = this.squadPick.filter(id => this.campaign.roster.some(o => o.id === id));
@@ -334,20 +340,37 @@ export class Simulation {
   }
 
   // ---- Combat rules ----
-  private raiseAlarm(at: Point, reason: string) {
-    if (this.alarm || !this.plan) return;
-    this.alarm = true; this.reinforceIn = REINFORCE_SECONDS;
+  private raiseAlarm(at: Point, reason: string, seen?: Point) {
+    if (!this.plan) return;
+    // A fresh trigger during the alarm only restarts the stand-down countdown.
+    this.contact(null);
+    if (this.alarm) return;
+    this.alarm = true; this.detected = true; this.reinforceIn = REINFORCE_SECONDS; this.calmIn = CALM_SECONDS;
+    const known = seen ?? at; this.lastKnown = { x: known.x, z: known.z };
     for (const u of this.units) {
       if (u.faction !== 'hostile' || u.hp <= 0) continue;
       u.detect = 1;
       if ((u.kind === 'guard' || u.kind === 'heavy') && distance(u, at) <= CONVERGE_RADIUS) { u.hunting = true; u.repath = 0; }
-      if (u.kind === 'target') {
+      // A target already running from an earlier alarm keeps its exit and does not hesitate again.
+      if (u.kind === 'target' && !u.exit) {
         const exits = [...this.plan.exits].sort((a, b) => distance(u, a) - distance(u, b));
         u.exit = [...exits.filter(e => distance(u, e) >= FLEE_MIN_EXIT), ...exits].find(e => this.plan!.world.findPath(u, e).length) ?? null;
         u.wait = FLEE_DELAY;
       }
     }
     this.message = `ALARM: ${reason}. Weapons free.`;
+  }
+  // While alarmed, anything that gives the squad away restarts the countdown; a sighting or gunfire also updates where hunters search.
+  private contact(seen: Point | null) {
+    if (!this.alarm) return;
+    this.calmIn = CALM_SECONDS;
+    if (seen) this.lastKnown = { x: seen.x, z: seen.z };
+  }
+  private standDown() {
+    this.alarm = false; this.calmIn = 0; this.lastKnown = null;
+    // A fleeing target keeps running for its exit.
+    for (const u of this.units) if (u.faction === 'hostile' && u.hp > 0) { u.detect = 0; u.hunting = false; if (!u.exit) u.path = []; }
+    this.message = 'Contact lost. Alarm standing down. Holding fire.';
   }
   private damage(target: Unit, amount: number, from: Point | null) {
     if (target.hp <= 0) return;
@@ -362,6 +385,7 @@ export class Simulation {
   }
   private shoot(from: Unit, to: Unit, amount: number, kind: Shot['kind'] = 'bullet') {
     this.damage(to, amount, from);
+    this.contact(from.faction === 'hostile' ? to : from);
     this.shots.push({ id: this.nextId++, from: { x: from.x, z: from.z }, to: { x: to.x, z: to.z }, faction: from.faction, shooter: from.kind, kind, ttl: kind === 'snipe' ? .35 : .12 });
   }
   private resolveCast(c: Simulation['casts'][number]) {
@@ -393,7 +417,7 @@ export class Simulation {
     if (this.phase !== 'mission' || !this.contract) return;
     this.phase = 'headquarters'; this.result = success ? 'success' : 'failure'; this.failReason = reason; this.pending = null;
     if (success) {
-      const stealth = !this.alarm;
+      const stealth = !this.detected;
       this.payout = missionPayout(this.contract, stealth);
       this.campaign = applyPayout(this.campaign, this.contract, stealth); this.report(s => s.completed(stealth));
     }
@@ -423,16 +447,17 @@ export class Simulation {
     if (u.stunned > 0) { u.stunned -= dt; return; }
     u.cooldown -= dt;
     const mobile = u.kind === 'guard' || u.kind === 'heavy';
-    if (!this.alarm) {
-      if (u.kind === 'camera' || u.kind === 'turret') u.heading = u.sweep + Math.sin(this.time * .6 + u.x) * (u.kind === 'camera' ? .7 : 1);
-      const seen = intruders.filter(v => distance(u, v) <= stats.vision && angleDiff(headingTo(u, v), u.heading) <= stats.fov && world.sightClear(u, v))
-        .sort((a, b) => distance(u, a) - distance(u, b))[0];
-      if (seen) {
-        u.detect = Math.min(1, u.detect + dt / (.35 + .12 * distance(u, seen)));
-        if (u.detect >= 1) { this.raiseAlarm(u, `${stats.name} spotted the squad`); return; }
-        // A suspicious guard stops and stares instead of walking on.
-        if (u.detect > SUSPICIOUS && mobile) { u.heading = headingTo(u, seen); return; }
-      } else u.detect = Math.max(0, u.detect - .25 * dt);
+    if (u.kind === 'camera' || u.kind === 'turret') u.heading = u.sweep + Math.sin(this.time * .6 + u.x) * (u.kind === 'camera' ? .7 : 1);
+    const seen = intruders.filter(v => distance(u, v) <= stats.vision && angleDiff(headingTo(u, v), u.heading) <= stats.fov && world.sightClear(u, v))
+      .sort((a, b) => distance(u, a) - distance(u, b))[0];
+    if (this.alarm) { if (seen) this.contact(seen); }
+    else if (seen) {
+      u.detect = Math.min(1, u.detect + dt / (.35 + .12 * distance(u, seen)));
+      if (u.detect >= 1) { this.raiseAlarm(u, `${stats.name} spotted the squad`, seen); return; }
+    } else u.detect = Math.max(0, u.detect - .25 * dt);
+    if (!this.alarm && !(u.kind === 'target' && u.exit)) {
+      // A suspicious guard stops and stares instead of walking on.
+      if (seen && u.detect > SUSPICIOUS && mobile) { u.heading = headingTo(u, seen); return; }
       if (mobile) this.patrol(u, stats.speed, dt);
       return;
     }
@@ -454,13 +479,13 @@ export class Simulation {
       return;
     }
     if (!mobile) return;
-    if (u.hunting) {
+    // Hunters close on where the squad was last seen, then turn on the spot to search.
+    const goal = this.lastKnown;
+    if (u.hunting && goal) {
+      if (distance(u, goal) <= 1) { u.path = []; u.heading += SEARCH_TURN * dt; return; }
+      const end = u.path.at(-1);
       u.repath -= dt;
-      if (u.repath <= 0) {
-        u.repath = 1;
-        const prey = [...intruders].sort((a, b) => distance(u, a) - distance(u, b))[0];
-        if (prey) u.path = world.findPath(u, prey);
-      }
+      if (u.repath <= 0 && !(end && end.x === goal.x && end.z === goal.z)) { u.repath = 1; u.path = world.findPath(u, goal); }
       this.walk(u, stats.alertSpeed, dt);
     } else this.patrol(u, stats.speed, dt);
   }
@@ -584,6 +609,7 @@ export class Simulation {
     if (!squad.length) return this.finish(false, 'The squad was wiped out.');
     this.updateObjectives(dt, squad);
     this.reinforce(dt);
+    if (this.alarm && (this.calmIn -= dt) <= 0) this.standDown();
     this.updateVisibility();
     this.uiTimer += dt;
     if (this.uiTimer >= .1 || this.alarm !== wasAlarm) { this.uiTimer = 0; this.emit(); }
