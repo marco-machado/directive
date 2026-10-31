@@ -1,4 +1,18 @@
-.unit-label.vip{border-color:#d9c27e;color:#ffeab0}
-.objective-label{background:#1a2420d9;border:1px solid #976e55;padding:2px 6px;white-space:nowrap;font:8px 'IBM Plex Mono',monospace;letter-spacing:1.5px;color:#ffc590}
-.objective-label.done{border-color:#5f9d84;color:#a4e8ca}
-@media(max-width:700px){.objective-label{font-size:7px}}
+.unit-label { display: block; padding: 2px 7px; border: 1px solid rgb(94 242 192 / .6); border-left-width: 3px; background: rgb(3 10 10 / .86); white-space: nowrap; font: 700 11px/1.2 var(--f-ui); letter-spacing: .14em; color: #c9fbe8 }
+.unit-label.hostile { border-color: #ff8a5b; color: #ffd0b8 }
+.unit-label.hostile::before { content: '◆ '; color: #ff8a5b }
+.unit-label.vip { border-color: var(--gold); color: #fff0c4 }
+.unit-label.squad { min-width: 20px; padding: 2px 5px; border: 1px solid var(--cls); border-bottom-width: 2px; color: var(--cls); text-align: center; letter-spacing: 0 }
+.objective-label { padding: 2px 7px; border: 1px solid rgb(255 180 84 / .7); background: rgb(20 13 4 / .86); white-space: nowrap; font: 700 11px/1.2 var(--f-ui); letter-spacing: .16em; color: #ffd8a8 }
+.objective-label.done { border-color: rgb(94 242 192 / .6); color: #a8f5d8 }
+.extract-label { white-space: nowrap; font: 700 11px var(--f-ui); letter-spacing: .3em; color: #8ff5cf; text-shadow: 0 0 8px rgb(94 242 192 / .6), 0 1px 3px #000 }
+/* Off-screen objective arrows, positioned by scene/pointers.tsx. */
+.pointer { --c: var(--amber); position: absolute; left: 0; top: 0; width: 0; height: 0 }
+.pointer[hidden] { display: none }
+.pointer[data-kind=extract] { --c: var(--mint) }
+.pointer[data-kind=vip] { --c: var(--gold) }
+.pointer-dot { position: absolute; left: -6px; top: -6px; width: 12px; height: 12px; border: 2px solid var(--c); background: rgb(3 8 10 / .85); box-shadow: 0 0 10px var(--c); transform: rotate(45deg) }
+.pointer-arrow { position: absolute; left: -18px; top: -18px; width: 36px; height: 36px }
+.pointer-arrow::before { content: ''; position: absolute; right: -4px; top: 50%; margin-top: -6px; border: 6px solid transparent; border-left: 10px solid var(--c); filter: drop-shadow(0 0 4px var(--c)) }
+.pointer-label { position: absolute; top: 14px; left: 0; padding: 1px 5px; background: rgb(3 8 10 / .86); white-space: nowrap; font: 700 10px var(--f-ui); letter-spacing: .16em; color: var(--c); transform: translateX(-50%) }
+@media (max-width: 700px) { .unit-label, .objective-label { font-size: 10px } }

@@ -3,16 +3,26 @@ import type { ReactNode, RefObject } from 'react';
 import { useFrame } from '@react-three/fiber';
 import type { ThreeEvent } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
+import { CircleGeometry, MeshBasicMaterial, PlaneGeometry, RingGeometry } from 'three';
 import type { Group, Mesh } from 'three';
 import { REVIVE_SECONDS } from '../game/simulation.ts';
 import type { Faction, Simulation, Unit, UnitKind } from '../game/simulation.ts';
-import { BOX, Box, CYLINDER, DIAMOND, dim, glow, ProgressRing, solid } from './parts.tsx';
+import { BOX, Box, CYLINDER, DIAMOND, dim, glow, ProgressRing, solid, STILL } from './parts.tsx';
 
 type Vec3 = [number, number, number];
 const TOP: Record<UnitKind, number> = { assault: 1.3, support: 1.3, recon: 1.3, tech: 1.3, guard: 1.3, heavy: 1.55, camera: 2.15, turret: .75, target: 1.3, vip: 1.3 };
 const HITBOX: Record<UnitKind, Vec3> = { assault: [.95, 1.5, .95], support: [.95, 1.5, .95], recon: [.95, 1.5, .95], tech: [.95, 1.5, .95], guard: [.95, 1.5, .95], heavy: [1.15, 1.8, 1.15], camera: [.7, 2.3, .7], turret: [1.1, 1, 1.1], target: [.95, 1.5, .95], vip: [.95, 1.5, .95] };
 const ACCENT: Record<UnitKind, string> = { assault: '#9ff7d1', support: '#9ff7d1', recon: '#9ff7d1', tech: '#8ff0e6', guard: '#ed7e70', heavy: '#ff6d5c', camera: '#ff5a4a', turret: '#ff6d5c', target: '#ffbd83', vip: '#ffe7a8' };
 const GROUND: Record<Faction, string> = { squad: '#9ff7d1', hostile: '#ed7e70', vip: '#ffe7a8' };
+
+// Health bars billboard toward the camera and draw over buildings so a unit behind a wall still reads.
+const PLANE = new PlaneGeometry(1, 1), BAR_W = 1, BAR_H = .14;
+const overlay = (color: string, opacity = 1) => new MeshBasicMaterial({ color, transparent: true, opacity, depthTest: false, depthWrite: false, toneMapped: false });
+const BAR_BACK = overlay('#04090b', .8), BAR = { mint: overlay('#5ef2c0'), amber: overlay('#ffb454'), red: overlay('#ff5148'), gold: overlay('#ffd77a') };
+// Selection: four rotating arc segments over a faint disc.
+const ARCS = [0, 1, 2, 3].map(k => new RingGeometry(.5, .57, 10, 1, k * Math.PI / 2 + .2, Math.PI / 2 - .4)), DISC = new CircleGeometry(.5, 32);
+const RING = new MeshBasicMaterial({ color: '#5ef2c0', transparent: true, opacity: .95, depthWrite: false, toneMapped: false });
+const RING_FILL = new MeshBasicMaterial({ color: '#5ef2c0', transparent: true, opacity: .12, depthWrite: false });
 
 function Humanoid({ body, head, visor, legs, legColor = '#192f33', torso = [.47, .62, .32], children }: { body: string; head: string; visor: string; legs: RefObject<Group | null>; legColor?: string; torso?: Vec3; children?: ReactNode }) {
   return <>
@@ -102,14 +112,15 @@ const Model = memo(function Model({ kind, legs, downed }: { kind: UnitKind; legs
   }
 });
 
-function Agent({ sim, unit, selected, labels }: { sim: Simulation; unit: Unit; selected: boolean; labels: RefObject<HTMLDivElement> }) {
+function Agent({ sim, unit, selected, slot, tagged, labels }: { sim: Simulation; unit: Unit; selected: boolean; slot: number; tagged: boolean; labels: RefObject<HTMLDivElement> }) {
   const { id, kind, faction } = unit;
-  const root = useRef<Group>(null), model = useRef<Group>(null), pose = useRef<Group>(null), legs = useRef<Group>(null), ring = useRef<Mesh>(null);
+  const root = useRef<Group>(null), model = useRef<Group>(null), pose = useRef<Group>(null), legs = useRef<Group>(null), ring = useRef<Group>(null), spin = useRef<Group>(null);
+  const bar = useRef<Group>(null), fill = useRef<Mesh>(null);
   const stun = useRef<Group>(null), mark = useRef<Mesh>(null), revive = useRef<Group>(null);
   const downed = faction === 'squad' && unit.hp <= 0, top = TOP[kind], hitbox = HITBOX[kind];
   const c = (color: string) => downed ? dim(color) : color;
   const reviveProgress = () => { let p = 0; for (const v of sim.units) if (v.reviveTarget === id) p = Math.max(p, v.revive / REVIVE_SECONDS); return p; };
-  useFrame(({ clock }) => {
+  useFrame(({ clock, camera }) => {
     const u = sim.units.find(v => v.id === id);
     if (!root.current || !model.current || !pose.current) return;
     const hidden = !u || (u.faction === 'hostile' && (u.hp <= 0 || !u.visible));
@@ -122,6 +133,16 @@ function Agent({ sim, unit, selected, labels }: { sim: Simulation; unit: Unit; s
     pose.current.rotation.x = down ? -Math.PI / 2 : 0; pose.current.position.y = down ? .2 : 0;
     if (legs.current) legs.current.rotation.x = walking ? Math.sin(t * 17) * .4 : 0;
     if (ring.current) ring.current.visible = sim.selected.includes(id);
+    if (spin.current && !STILL) spin.current.rotation.z = t * .9;
+    if (bar.current && fill.current) {
+      const health = Math.max(0, Math.min(1, u.hp / u.maxHp)), show = u.hp > 0 && (u.faction !== 'hostile' || health < 1);
+      bar.current.visible = show;
+      if (show) {
+        bar.current.quaternion.copy(camera.quaternion);
+        fill.current.scale.x = Math.max(.001, BAR_W * health); fill.current.position.x = -BAR_W * (1 - health) / 2;
+        fill.current.material = u.faction === 'hostile' ? BAR.red : u.faction === 'vip' ? BAR.gold : health > .5 ? BAR.mint : health > .25 ? BAR.amber : BAR.red;
+      }
+    }
     if (stun.current) {
       stun.current.visible = u.stunned > 0; stun.current.rotation.y = t * 5;
       stun.current.children.forEach((spark, k) => { spark.visible = Math.sin(t * 31 + k * 2.1) > -.3; });
@@ -136,7 +157,7 @@ function Agent({ sim, unit, selected, labels }: { sim: Simulation; unit: Unit; s
     e.stopPropagation(); if (e.delta > 5) return;
     sim.unitClick(id, e.shiftKey);
   };
-  const label = kind === 'target' ? (unit.hp > 0 && unit.visible ? '◇ TARGET' : null) : kind === 'vip' ? (unit.hp > 0 ? 'VIP' : null) : faction === 'squad' && selected && unit.hp > 0 ? unit.name : null;
+  const label = kind === 'target' ? (unit.hp > 0 && unit.visible ? 'TARGET' : null) : kind === 'vip' ? (unit.hp > 0 ? 'VIP' : null) : tagged && faction === 'squad' && selected && unit.hp > 0 ? String(slot + 1) : null;
   const ground = c(kind === 'target' ? ACCENT.target : GROUND[faction]);
   return <group ref={root} position={[unit.x, 0, unit.z]}>
     <group ref={model}>
@@ -145,7 +166,14 @@ function Agent({ sim, unit, selected, labels }: { sim: Simulation; unit: Unit; s
         <Model kind={kind} legs={legs} downed={downed} />
       </group>
     </group>
-    <mesh ref={ring} rotation={[-Math.PI / 2, 0, 0]} position={[0, .045, 0]} visible={false}><ringGeometry args={[.48, .53, 32]} /><meshBasicMaterial color="#9ff7d1" transparent opacity={.9} /></mesh>
+    {faction === 'squad' ? <group ref={ring} rotation={[-Math.PI / 2, 0, 0]} position={[0, .045, 0]} visible={false}>
+      <group ref={spin}>{ARCS.map((g, k) => <mesh key={k} geometry={g} material={RING} />)}</group>
+      <mesh geometry={DISC} material={RING_FILL} />
+    </group> : null}
+    <group ref={bar} position={[0, top + .22, 0]} visible={false}>
+      <mesh geometry={PLANE} material={BAR_BACK} scale={[BAR_W + .06, BAR_H + .06, 1]} renderOrder={20} />
+      <mesh ref={fill} geometry={PLANE} material={BAR.mint} scale={[BAR_W, BAR_H, 1]} position={[0, 0, .001]} renderOrder={21} />
+    </group>
     {kind !== 'camera' ? <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, .035, 0]}><circleGeometry args={[kind === 'heavy' || kind === 'turret' ? .45 : .32, 20]} /><meshBasicMaterial color={ground} transparent opacity={.18} depthWrite={false} /></mesh> : null}
     {faction === 'hostile' ? <>
       <group ref={stun} position={[0, top - .1, 0]} visible={false}>
@@ -154,10 +182,12 @@ function Agent({ sim, unit, selected, labels }: { sim: Simulation; unit: Unit; s
       <mesh ref={mark} geometry={DIAMOND} material={glow('#ffb17d')} scale={[1, 1.5, 1]} visible={false} />
     </> : null}
     {downed ? <group ref={revive} visible={false}><ProgressRing radius={.7} color="#9ff7d1" value={reviveProgress} segments={24} /></group> : null}
-    {label ? <Html portal={labels} center position={[0, top + .45, 0]} style={{ pointerEvents: 'none' }}><span className={`unit-label${kind === 'target' ? ' hostile' : kind === 'vip' ? ' vip' : ''}`}>{label}</span></Html> : null}
+    {label ? <Html portal={labels} center position={[0, top + .62, 0]} style={{ pointerEvents: 'none' }}><span className={`unit-label${kind === 'target' ? ' hostile' : kind === 'vip' ? ' vip' : ` squad cls-${kind}`}`}>{label}</span></Html> : null}
   </group>;
 }
 
-export function Units({ sim, units, selected, labels }: { sim: Simulation; units: Unit[]; selected: string[]; labels: RefObject<HTMLDivElement> }) {
-  return <>{units.map(u => <Agent key={`${u.id}:${u.kind}`} sim={sim} unit={u} selected={selected.includes(u.id)} labels={labels} />)}</>;
+export function Units({ sim, units, selected, squad, live, labels }: { sim: Simulation; units: Unit[]; selected: string[]; squad: string[]; live: boolean; labels: RefObject<HTMLDivElement> }) {
+  // Hotkey tags mark a partial selection; with the whole squad selected they would only stack up over the group.
+  const partial = live && units.some(u => u.faction === 'squad' && u.hp > 0 && !selected.includes(u.id));
+  return <>{units.map(u => <Agent key={`${u.id}:${u.kind}`} sim={sim} unit={u} selected={selected.includes(u.id)} slot={squad.indexOf(u.id)} tagged={partial} labels={labels} />)}</>;
 }

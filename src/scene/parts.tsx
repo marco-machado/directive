@@ -2,6 +2,9 @@ import { useLayoutEffect, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { BoxGeometry, Color, CylinderGeometry, InstancedMesh, MeshBasicMaterial, MeshStandardMaterial, Object3D, OctahedronGeometry } from 'three';
 
+// Decorative motion (spins, pulses, the title orbit) stops for players who ask for reduced motion.
+export const STILL = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
 // Shared geometry and materials keep the many small boxes cheap: each Box only scales a unit cube.
 export const BOX = new BoxGeometry();
 export const CYLINDER = new CylinderGeometry(1, 1, 1, 12);

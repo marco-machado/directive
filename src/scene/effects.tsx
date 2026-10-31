@@ -6,6 +6,8 @@ import { ABILITY_STATS } from '../game/classes.ts';
 import { HOSTILE_STATS } from '../game/simulation.ts';
 import type { Blast, Faction, Pending, Simulation } from '../game/simulation.ts';
 import type { EnemyKind } from '../game/mapgen.ts';
+import type { Point } from '../game/world.ts';
+import { play } from '../ui/sfx.ts';
 
 const UP = new Vector3(0, 1, 0);
 const BEAM = new CylinderGeometry(1, 1, 1, 6), RING = new RingGeometry(.9, 1, 48), DISC = new CircleGeometry(1, 40), FLASH = new SphereGeometry(1, 16, 10);
@@ -15,8 +17,9 @@ const FLAT: [number, number, number] = [-Math.PI / 2, 0, 0];
 const TRACER: Record<Faction, Color> = { squad: new Color('#c4ffe4'), hostile: new Color('#ffb08a'), vip: new Color('#ffe1a1') };
 const SNIPE = new Color('#f4fdff');
 function Shots({ sim }: { sim: Simulation }) {
-  const beams = useRef<(Mesh | null)[]>([]), direction = useMemo(() => new Vector3(), []);
+  const beams = useRef<(Mesh | null)[]>([]), direction = useMemo(() => new Vector3(), []), heard = useRef(-1);
   useFrame(() => {
+    for (const shot of sim.shots) if (shot.id > heard.current) { heard.current = shot.id; play(shot.kind === 'snipe' ? 'snipe' : 'shot'); }
     beams.current.forEach((mesh, i) => {
       if (!mesh) return;
       const shot = sim.shots[i];
@@ -38,8 +41,9 @@ function Shots({ sim }: { sim: Simulation }) {
 // Blasts
 const BLAST: Record<Blast['kind'], { color: Color; ttl: number }> = { grenade: { color: new Color('#ffa25c'), ttl: .7 }, heal: { color: new Color('#8ff5c8'), ttl: .8 }, emp: { color: new Color('#7fc8ff'), ttl: .8 } };
 function Blasts({ sim }: { sim: Simulation }) {
-  const groups = useRef<(Group | null)[]>([]);
+  const groups = useRef<(Group | null)[]>([]), heard = useRef(-1);
   useFrame(() => {
+    for (const blast of sim.blasts) if (blast.id > heard.current) { heard.current = blast.id; play(blast.kind); }
     groups.current.forEach((group, i) => {
       if (!group) return;
       const blast = sim.blasts[i];
@@ -90,14 +94,25 @@ function VisionCones({ sim }: { sim: Simulation }) {
   return <>{Array.from({ length: 40 }, (_, i) => <mesh ref={el => { cones.current[i] = el; }} key={i} geometry={FANS.guard} visible={false} renderOrder={1}><meshBasicMaterial transparent depthWrite={false} /></mesh>)}</>;
 }
 
+// The move order's destination, with a ping that expands each time a new order lands.
 function CommandMarker({ sim }: { sim: Simulation }) {
-  const marker = useRef<Mesh>(null);
-  useFrame(() => {
-    if (!marker.current) return;
-    marker.current.visible = !!sim.commandPoint && sim.phase === 'mission';
-    if (sim.commandPoint) marker.current.position.set(sim.commandPoint.x, .06, sim.commandPoint.z);
+  const marker = useRef<Group>(null), ping = useRef<Mesh>(null), last = useRef<Point | null>(null), age = useRef(0);
+  useFrame((_, dt) => {
+    const point = sim.commandPoint;
+    if (!marker.current || !ping.current) return;
+    if (point !== last.current) { last.current = point; age.current = 0; if (point && sim.phase === 'mission') play('order'); }
+    age.current += dt;
+    marker.current.visible = !!point && sim.phase === 'mission';
+    if (!point) return;
+    marker.current.position.set(point.x, .06, point.z);
+    const k = Math.min(1, age.current / .45);
+    ping.current.visible = k < 1; ping.current.scale.setScalar(.3 + k * .9);
+    (ping.current.material as MeshBasicMaterial).opacity = (1 - k) * .9;
   });
-  return <mesh ref={marker} rotation={FLAT} visible={false}><ringGeometry args={[.25, .3, 4]} /><meshBasicMaterial color="#def6cc" /></mesh>;
+  return <group ref={marker} visible={false}>
+    <mesh rotation={FLAT}><ringGeometry args={[.22, .29, 4]} /><meshBasicMaterial color="#5ef2c0" toneMapped={false} /></mesh>
+    <mesh ref={ping} rotation={FLAT} geometry={RING}><meshBasicMaterial color="#5ef2c0" transparent toneMapped={false} depthWrite={false} /></mesh>
+  </group>;
 }
 
 export function Effects({ sim }: { sim: Simulation }) {

@@ -61,7 +61,7 @@ export const REVIVE_HP = .4;
 export const HACK_SECONDS = 12;
 export const PLANT_SECONDS = 3;
 export const COVER_FACTOR = .5;
-const WEAPON_BONUS = 12, ARMOR_BONUS = 40;
+export const WEAPON_BONUS = 12, ARMOR_BONUS = 40;
 
 const angleDiff = (a: number, b: number) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
 const headingTo = (a: Point, b: Point) => Math.atan2(b.x - a.x, b.z - a.z);
@@ -278,6 +278,8 @@ export class Simulation {
     caster.abilityCd = this.cooldownFor(caster);
     this.pending = null; this.message = `${caster.name}: ${stats.name} away.`; this.emit();
   }
+  // Extraction opens once every other objective is done.
+  get extractReady() { return this.objectives.every(o => o.kind === 'extract' || o.done); }
   // Pointer entry points for the scene.
   groundClick(point: Point) { if (this.pending) this.aim(point, null); else this.move(point); }
   unitClick(id: string, additive = false) {
@@ -487,9 +489,8 @@ export class Simulation {
       }
       if (o.kind === 'target' && o.done) this.message = 'Target neutralized. Return to the extraction zone.';
     }
-    const ready = this.objectives.every(o => o.kind === 'extract' || o.done);
     const extract = this.objectives.at(-1)!;
-    if (ready && squad.some(s => distance(s, extract) < 2) && (!vip || distance(vip, extract) < 2.4)) { extract.done = true; this.finish(true); }
+    if (this.extractReady && squad.some(s => distance(s, extract) < 2) && (!vip || distance(vip, extract) < 2.4)) { extract.done = true; this.finish(true); }
   }
   private reinforce(dt: number) {
     if (!this.alarm || this.reinforced >= REINFORCE_CAP || !this.plan) return;
