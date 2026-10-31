@@ -67,7 +67,8 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .btn:disabled { opacity: .4 }
 .btn:focus-visible { outline: none; --edge: var(--amber) }
 .btn:focus-visible::before { inset: 2px }
-.btn.primary { --edge: var(--amber); --fill: var(--amber); color: #1d1205 }
+/* clip-path only hides the moving sheen; overflow keeps it from widening a scrolling parent. */
+.btn.primary { --edge: var(--amber); --fill: var(--amber); color: #1d1205; overflow: clip }
 .btn.primary:hover:not(:disabled) { --edge: #ffd59a; --fill: #ffc56f }
 .btn.primary:focus-visible { --edge: #fff }
 .btn.primary::after { content: ''; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(100deg, transparent 35%, rgb(255 255 255 / .38) 50%, transparent 65%); transform: translateX(-120%) }
