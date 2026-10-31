@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import { play, sound } from './audio.ts';
+import { preview, sound } from './audio.ts';
 import type { Cue, Volume } from './audio.ts';
 import { Dialog } from './common.tsx';
 import { Icon } from './icons.tsx';
@@ -17,12 +17,12 @@ export function AudioDialog({ onClose }: { onClose: () => void }) {
       <span className="menu-item-copy"><strong>Sound</strong><small>{settings.muted ? 'Off' : 'On'}</small></span><Icon name={settings.muted ? 'soundOff' : 'soundOn'} />
     </button>
     <div className="volumes">
-      {VOLUMES.map(([volume, label, preview]) => {
+      {VOLUMES.map(([volume, label, cue]) => {
         const percent = Math.round(settings[volume] * 100);
         return <label className="volume" key={volume}>
           <span>{label}</span>
           <input type="range" min={0} max={100} step={5} value={percent} disabled={settings.muted}
-            onChange={e => { sound.setVolume(volume, Number(e.target.value) / 100); if (preview) play(preview); }} />
+            onChange={e => { sound.setVolume(volume, Number(e.target.value) / 100); if (cue) preview(cue); }} />
           <output>{percent}%</output>
         </label>;
       })}

@@ -72,8 +72,8 @@ let graph: Graph | null = null;
 const buffers = new Map<string, AudioBuffer>(), loading = new Map<string, Promise<void>>();
 const loops = new Map<Loop, { src: AudioBufferSourceNode; gain: GainNode }>();
 const lastPlayed = new Map<Cue, number>();
-// Combat sounds still ringing, cut when the mission pauses; and the stinger, cut when a mission starts.
-const combat = new Set<AudioBufferSourceNode>();
+// Mission effects still ringing, cut when the mission pauses; and the stinger, cut when a mission starts.
+const effects = new Set<AudioBufferSourceNode>();
 let playingStinger: AudioBufferSourceNode | null = null;
 let mood: Mood = { mission: false, alarm: false, paused: false }, stingerUntil = 0, camera: Camera | null = null;
 
@@ -123,11 +123,19 @@ function placement(at: Point | undefined) {
 }
 export const setAudioCamera = (next: Camera | null) => { camera = next; };
 
+// A paused mission plays no effects (the sfx group); interface cues still play.
 export function play(cue: Cue, at?: Point) {
+  const effect = CUES[cue].group === 'sfx';
+  if (effect && mood.paused) return;
+  const src = start(cue, at);
+  if (src && effect) { effects.add(src); src.onended = () => effects.delete(src); }
+}
+// A volume slider's preview plays even while the mission is paused behind the Audio dialog.
+export const preview = (cue: Cue) => { start(cue); };
+
+function start(cue: Cue, at?: Point) {
   const spec = CUES[cue];
-  // A paused mission makes no combat sounds (positional effects); previews and interface cues still play.
-  const isCombat = spec.group === 'sfx' && !!at;
-  if (settings.muted || (isCombat && mood.paused)) return;
+  if (settings.muted) return;
   if (spec.gap) {
     const now = performance.now();
     if (now - (lastPlayed.get(cue) ?? -Infinity) < spec.gap) return;
@@ -140,7 +148,7 @@ export function play(cue: Cue, at?: Point) {
   src.buffer = buffer; src.playbackRate.value = spec.files.length > 1 || spec.gap ? .94 + Math.random() * .12 : 1;
   gain.gain.value = spec.gain * level; panner.pan.value = pan;
   src.connect(gain).connect(panner).connect(g.groups[spec.group]); src.start();
-  if (isCombat) { combat.add(src); src.onended = () => combat.delete(src); }
+  return src;
 }
 
 // The end-of-mission stinger; the menu music waits for it to finish.
@@ -164,7 +172,7 @@ function applyMood() {
   const t = graph.ctx.currentTime, { mission, alarm, paused } = mood;
   graph.duck.gain.setTargetAtTime(paused ? .4 : 1, t, .15);
   graph.muffle.frequency.setTargetAtTime(paused ? 700 : 20000, t, .15);
-  if (paused) { combat.forEach(src => src.stop()); combat.clear(); }
+  if (paused) { effects.forEach(src => src.stop()); effects.clear(); }
   const wait = Math.max(0, (stingerUntil - performance.now()) / 1000);
   setLoop('music/menu', !mission, wait);
   setLoop('music/stealth', mission && !alarm);
