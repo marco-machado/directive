@@ -83,7 +83,7 @@ export const GameCanvas = memo(function GameCanvas(props: Props) {
   // Labels need a fixed parent: drei's Html rebuilds its React root whenever its parent changes,
   // and R3F swaps the default parent once events connect, which blanked the first label.
   const labels = useRef<HTMLDivElement>(null!);
-  return <><Canvas shadows orthographic camera={{ position: [29, 34, 32], zoom: 24, near: .1, far: 150 }} dpr={[1, 1.5]} gl={{ antialias: true, alpha: false }} fallback={<div className="render-error">WebGL is unavailable. Enable hardware acceleration or try a WebGL-capable browser.</div>}>
+  return <><Canvas shadows="percentage" orthographic camera={{ position: [29, 34, 32], zoom: 24, near: .1, far: 150 }} dpr={[1, 1.5]} gl={{ antialias: true, alpha: false }} fallback={<div className="render-error">WebGL is unavailable. Enable hardware acceleration or try a WebGL-capable browser.</div>}>
     <World {...props} labels={labels} />
   </Canvas><div ref={labels} className="scene-labels" /></>;
 });

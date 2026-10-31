@@ -1,0 +1,177 @@
+diff --git a/node_modules/@react-three/fiber/dist/events-0dab3c53.cjs.dev.js b/node_modules/@react-three/fiber/dist/events-0dab3c53.cjs.dev.js
+index 705fbd5..dc9be54 100644
+--- a/node_modules/@react-three/fiber/dist/events-0dab3c53.cjs.dev.js
++++ b/node_modules/@react-three/fiber/dist/events-0dab3c53.cjs.dev.js
+@@ -1161,6 +1161,45 @@ function attempt$1(step) {
+ }
+ 
+ const context = /* @__PURE__ */React__namespace.createContext(null);
++// THREE.Clock is deprecated since r183. This keeps the Clock interface the store exposes, backed by THREE.Timer.
++class TimerClock {
++  constructor(autoStart = true) {
++    this.timer = new THREE__namespace.Timer();
++    this.autoStart = autoStart;
++    this.startTime = 0;
++    this.oldTime = 0;
++    this.elapsedTime = 0;
++    this.running = false;
++  }
++  start() {
++    this.timer.reset();
++    this.startTime = performance.now();
++    this.oldTime = this.startTime;
++    this.elapsedTime = 0;
++    this.running = true;
++  }
++  stop() {
++    this.getElapsedTime();
++    this.running = false;
++    this.autoStart = false;
++  }
++  getElapsedTime() {
++    this.getDelta();
++    return this.elapsedTime;
++  }
++  getDelta() {
++    if (this.autoStart && !this.running) {
++      this.start();
++      return 0;
++    }
++    if (!this.running) return 0;
++    this.timer.update();
++    const delta = this.timer.getDelta();
++    this.oldTime = performance.now();
++    this.elapsedTime += delta;
++    return delta;
++  }
++}
+ const createStore = (invalidate, advance) => {
+   const rootStore = traditional.createWithEqualityFn((set, get) => {
+     const position = new THREE__namespace.Vector3();
+@@ -1229,7 +1268,7 @@ const createStore = (invalidate, advance) => {
+       linear: false,
+       flat: false,
+       controls: null,
+-      clock: new THREE__namespace.Clock(),
++      clock: new TimerClock(),
+       pointer,
+       mouse: pointer,
+       frameloop: 'always',
+diff --git a/node_modules/@react-three/fiber/dist/events-98e95d43.cjs.prod.js b/node_modules/@react-three/fiber/dist/events-98e95d43.cjs.prod.js
+index c265e9e..a4a14c3 100644
+--- a/node_modules/@react-three/fiber/dist/events-98e95d43.cjs.prod.js
++++ b/node_modules/@react-three/fiber/dist/events-98e95d43.cjs.prod.js
+@@ -1161,6 +1161,45 @@ function attempt$1(step) {
+ }
+ 
+ const context = /* @__PURE__ */React__namespace.createContext(null);
++// THREE.Clock is deprecated since r183. This keeps the Clock interface the store exposes, backed by THREE.Timer.
++class TimerClock {
++  constructor(autoStart = true) {
++    this.timer = new THREE__namespace.Timer();
++    this.autoStart = autoStart;
++    this.startTime = 0;
++    this.oldTime = 0;
++    this.elapsedTime = 0;
++    this.running = false;
++  }
++  start() {
++    this.timer.reset();
++    this.startTime = performance.now();
++    this.oldTime = this.startTime;
++    this.elapsedTime = 0;
++    this.running = true;
++  }
++  stop() {
++    this.getElapsedTime();
++    this.running = false;
++    this.autoStart = false;
++  }
++  getElapsedTime() {
++    this.getDelta();
++    return this.elapsedTime;
++  }
++  getDelta() {
++    if (this.autoStart && !this.running) {
++      this.start();
++      return 0;
++    }
++    if (!this.running) return 0;
++    this.timer.update();
++    const delta = this.timer.getDelta();
++    this.oldTime = performance.now();
++    this.elapsedTime += delta;
++    return delta;
++  }
++}
+ const createStore = (invalidate, advance) => {
+   const rootStore = traditional.createWithEqualityFn((set, get) => {
+     const position = new THREE__namespace.Vector3();
+@@ -1229,7 +1268,7 @@ const createStore = (invalidate, advance) => {
+       linear: false,
+       flat: false,
+       controls: null,
+-      clock: new THREE__namespace.Clock(),
++      clock: new TimerClock(),
+       pointer,
+       mouse: pointer,
+       frameloop: 'always',
+diff --git a/node_modules/@react-three/fiber/dist/events-e51d7528.esm.js b/node_modules/@react-three/fiber/dist/events-e51d7528.esm.js
+index 6c801a2..187eb2d 100644
+--- a/node_modules/@react-three/fiber/dist/events-e51d7528.esm.js
++++ b/node_modules/@react-three/fiber/dist/events-e51d7528.esm.js
+@@ -1136,6 +1136,45 @@ function attempt$1(step) {
+ }
+ 
+ const context = /* @__PURE__ */React.createContext(null);
++// THREE.Clock is deprecated since r183. This keeps the Clock interface the store exposes, backed by THREE.Timer.
++class TimerClock {
++  constructor(autoStart = true) {
++    this.timer = new THREE.Timer();
++    this.autoStart = autoStart;
++    this.startTime = 0;
++    this.oldTime = 0;
++    this.elapsedTime = 0;
++    this.running = false;
++  }
++  start() {
++    this.timer.reset();
++    this.startTime = performance.now();
++    this.oldTime = this.startTime;
++    this.elapsedTime = 0;
++    this.running = true;
++  }
++  stop() {
++    this.getElapsedTime();
++    this.running = false;
++    this.autoStart = false;
++  }
++  getElapsedTime() {
++    this.getDelta();
++    return this.elapsedTime;
++  }
++  getDelta() {
++    if (this.autoStart && !this.running) {
++      this.start();
++      return 0;
++    }
++    if (!this.running) return 0;
++    this.timer.update();
++    const delta = this.timer.getDelta();
++    this.oldTime = performance.now();
++    this.elapsedTime += delta;
++    return delta;
++  }
++}
+ const createStore = (invalidate, advance) => {
+   const rootStore = createWithEqualityFn((set, get) => {
+     const position = new THREE.Vector3();
+@@ -1204,7 +1243,7 @@ const createStore = (invalidate, advance) => {
+       linear: false,
+       flat: false,
+       controls: null,
+-      clock: new THREE.Clock(),
++      clock: new TimerClock(),
+       pointer,
+       mouse: pointer,
+       frameloop: 'always',
