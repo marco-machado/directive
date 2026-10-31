@@ -1,17 +1,44 @@
 import { Component, StrictMode, useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import type { ErrorInfo, ReactNode } from 'react';
+import type { ErrorInfo, FormEvent, ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { GameCanvas } from './scene/GameCanvas.tsx';
-import { parseCampaign, Simulation } from './game/simulation.ts';
-import type { Campaign } from './game/simulation.ts';
+import { Simulation } from './game/simulation.ts';
+import { MAX_LEVEL, PAYOUT, UPGRADE_COST } from './game/campaign.ts';
+import { formatSaveCode, normalizeSaveCode } from './game/saveCode.ts';
+import { ApiError, CampaignClient, connectPlayer, fetchCampaign, loadLegacyCampaign, rememberSaveCode } from './net/campaignClient.ts';
 import './style.css';
 
-function createGame() {
-  let campaign: Campaign | undefined, unavailable = false;
-  try { campaign = parseCampaign(localStorage.getItem('ndSave')); } catch { unavailable = true; }
-  const sim = new Simulation(campaign, c => localStorage.setItem('ndSave', JSON.stringify(c)));
-  sim.saveUnavailable = unavailable;
-  return sim;
+const client = new CampaignClient();
+const sim = new Simulation(loadLegacyCampaign(), client);
+// Module scope so StrictMode's double effects never create two players.
+const connection = connectPlayer().then(({ code, campaign }) => { client.attach(sim, code); sim.applyCampaign(campaign); return code; });
+
+function SaveCode({ code }: { code: string }) {
+  const [copied, setCopied] = useState(false);
+  const pretty = formatSaveCode(code);
+  const copy = () => navigator.clipboard.writeText(pretty).then(() => setCopied(true), () => setCopied(false));
+  return <div className="save-code"><span>SAVE CODE</span><strong>{pretty}</strong><button className="text-button" onClick={copy}>{copied ? 'COPIED' : 'COPY'}</button></div>;
+}
+
+function LoadSaveCode({ onLoaded, busy, setBusy }: { onLoaded: (code: string) => void; busy: boolean; setBusy: (busy: boolean) => void }) {
+  const [value, setValue] = useState(''), [error, setError] = useState('');
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    const code = normalizeSaveCode(value);
+    if (!code) { setError('Save codes have 12 letters and digits, like 7KQ2-M9XD-4TRB.'); return; }
+    setBusy(true); setError('');
+    try {
+      const campaign = await fetchCampaign(code);
+      rememberSaveCode(code); client.attach(sim, code); sim.applyCampaign(campaign); sim.setSaveUnavailable(false);
+      setValue(''); onLoaded(code);
+    } catch (err) { setError(err instanceof ApiError && err.status === 404 ? 'No campaign uses that code.' : 'Server unreachable. Try again.'); }
+    finally { setBusy(false); }
+  };
+  return <form className="load-code" onSubmit={submit}>
+    <label htmlFor="load-code-input">Continue on this device</label>
+    <div><input id="load-code-input" value={value} onChange={e => setValue(e.target.value)} placeholder="XXXX-XXXX-XXXX" autoComplete="off" spellCheck={false} /><button type="submit" disabled={busy || !value.trim()}>{busy ? 'Loading…' : 'Load'}</button></div>
+    {error ? <p className="save-warning" role="alert">{error}</p> : null}
+  </form>;
 }
 
 class RenderBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
@@ -30,8 +57,9 @@ function Dialog({ children, onClose, dismissible = false }: { children: ReactNod
 }
 
 function App() {
-  const [sim] = useState(createGame);
   const state = useSyncExternalStore(sim.subscribe, sim.getSnapshot);
+  const [saveCode, setSaveCode] = useState<string | null>(null), [connecting, setConnecting] = useState(true), [loadingCode, setLoadingCode] = useState(false);
+  useEffect(() => { connection.then(setSaveCode, () => sim.setSaveUnavailable(true)).finally(() => setConnecting(false)); }, []);
   const [cameraReset, setCameraReset] = useState(0), [help, setHelp] = useState(false), [confirmRestart, setConfirmRestart] = useState(false);
   const resetCamera = () => setCameraReset(n => n + 1);
   useEffect(() => {
@@ -48,7 +76,7 @@ function App() {
     const visibility = () => { if (document.hidden) sim.pause(); };
     window.addEventListener('keydown', key); document.addEventListener('visibilitychange', visibility);
     return () => { window.removeEventListener('keydown', key); document.removeEventListener('visibilitychange', visibility); };
-  }, [sim, help, confirmRestart]);
+  }, [help, confirmRestart]);
   const campaign = state.campaign, active = state.phase === 'mission';
   const guards = state.units.filter(u => u.enemy && !u.executive && u.hp > 0).length;
   const deploy = () => { sim.deploy(); resetCamera(); };
@@ -60,7 +88,7 @@ function App() {
       <div className="header-right"><span className="credit"><small>CORPORATE FUNDS</small>₡ {campaign.cash.toLocaleString()}</span><button className="icon-button" aria-label="Open controls" onClick={() => { sim.pause(); setHelp(true); }}>?</button></div>
     </header>
     <section className="mission-panel">
-      <div className="eyebrow">CONTRACT {String(campaign.completed + 1).padStart(2, '0')} <span>₡ 500</span></div>
+      <div className="eyebrow">CONTRACT {String(campaign.completed + 1).padStart(2, '0')} <span>₡ {PAYOUT}</span></div>
       <h1>The Glass District</h1>
       <ol className="objectives"><li className={state.targetDown ? 'done' : 'current'}><span>{state.targetDown ? '✓' : '01'}</span>Neutralize the executive</li><li className={state.targetDown ? 'current' : ''}><span>02</span>Reach extraction</li></ol>
       <div className="intel"><span>{guards} SECURITY UNITS</span><span className="threat">ARMED</span></div>
@@ -80,11 +108,11 @@ function App() {
       <div className="mission-clock"><span className="eyebrow">ELAPSED</span><strong>{String(Math.floor(state.time / 60)).padStart(2, '0')}:{String(Math.floor(state.time % 60)).padStart(2, '0')}</strong></div>
     </footer>
     <div className="bottom-strip"><span>REACT THREE FIBER <b>3D</b></span><span>CLICK TO SELECT · STREET TO MOVE · HOSTILE TO ATTACK</span><span>TACTICAL PROTOTYPE / 02</span></div>
-    {state.phase === 'briefing' ? <Dialog><div className="modal-topline">NEON DIRECTIVE <span>OPERATIONS BRIEF</span></div><div className="modal-body"><div className="eyebrow orange">CONTRACT {String(campaign.completed + 1).padStart(2, '0')} / KESSLER INDUSTRIES</div><h2 id="dialog-title">A hostile<br />takeover<span>.</span></h2><p>Two augmented agents. One corporate executive. Eliminate the target in the Glass District, then return to extraction.</p><div className="brief-stats"><div><small>CONTRACT VALUE</small><strong>₡ 500</strong></div><div><small>TEAM SIZE</small><strong>02 agents</strong></div><div><small>ENGAGEMENT</small><strong>Real time</strong></div></div><div className="quick-guide"><span><b>01</b>Select your squad</span><span><b>02</b>Click to command</span><span><b>03</b>Extract & upgrade</span></div><button className="primary" onClick={deploy}>Deploy squad <span>↗</span></button><small className="modal-footnote">Progress saves in this browser. Existing upgrades carry over.</small></div></Dialog> : null}
-    {state.phase === 'headquarters' ? <Dialog><div className="modal-topline">CORPORATE HEADQUARTERS <span>AFTER-ACTION REPORT</span></div><div className="modal-body"><div className={`eyebrow ${state.result === 'success' ? 'mint' : 'orange'}`}>{state.result === 'success' ? 'CONTRACT COMPLETE / +₡ 500' : 'OPERATION FAILED / NO PAYOUT'}</div><h2 id="dialog-title">{state.result === 'success' ? 'Business is good.' : 'Recover. Refit.'}</h2><p>{state.result === 'success' ? 'Payment received. Invest in the squad before the next contract.' : 'Your squad was lost. Replacements retain purchased equipment; retry at no cost.'}</p><div className="balance"><span>AVAILABLE FUNDS</span><strong>₡ {campaign.cash.toLocaleString()}</strong></div>
-      {(['weapon', 'armor'] as const).map(type => <div className="upgrade" key={type}><div className="upgrade-symbol">{type === 'weapon' ? '⌁' : '◈'}</div><div className="upgrade-copy"><h3>{type === 'weapon' ? 'Smart ammunition' : 'Dermal plating'}</h3><p>{type === 'weapon' ? '+12 damage per level' : '+40 health per agent / level'}</p><div className="level-pips" aria-label={`Level ${campaign[type]} of 3`}>{[1, 2, 3].map(n => <i className={campaign[type] >= n ? 'filled' : ''} key={n} />)}<small>{campaign[type]} / 3</small></div></div><button onClick={() => sim.buy(type)} disabled={campaign[type] >= 3 || campaign.cash < (type === 'weapon' ? 300 : 250)}>{campaign[type] >= 3 ? 'MAXED' : `₡ ${type === 'weapon' ? 300 : 250}`}</button></div>)}
-      <button className="primary" onClick={deploy}>{state.result === 'success' ? 'Deploy next contract' : 'Retry contract'} <span>↗</span></button><small className="modal-footnote">Prototype campaign: replay the district with persistent upgrades.</small>{state.saveUnavailable ? <p className="save-warning">Browser storage is unavailable. Progress will last only for this session.</p> : null}</div></Dialog> : null}
-    {help ? <Dialog dismissible onClose={() => setHelp(false)}><div className="modal-body"><div className="eyebrow">OPERATOR MANUAL</div><h2 id="dialog-title">Take command.</h2><dl className="controls-list"><dt>Click agent / 1 / 2</dt><dd>Select an operative</dd><dt>Shift + click</dt><dd>Add or remove from selection</dd><dt>A / Select all</dt><dd>Select the surviving squad</dd><dt>Click street</dt><dd>Move around buildings; auto-fire at threats</dd><dt>Click hostile</dt><dd>Approach and concentrate fire</dd><dt>S / Hold</dt><dd>Stop movement; keep firing</dd><dt>Space / Pause</dt><dd>Pause and queue orders</dd><dt>Scroll / two-finger pinch</dt><dd>Zoom the view</dd><dt>Right-drag / two-finger drag</dt><dd>Pan the view</dd><dt>R / ⌖</dt><dd>Reset camera</dd></dl><button className="primary" onClick={() => setHelp(false)}>Close manual</button></div></Dialog> : null}
+    {state.phase === 'briefing' ? <Dialog><div className="modal-topline">NEON DIRECTIVE <span>OPERATIONS BRIEF</span></div><div className="modal-body"><div className="eyebrow orange">CONTRACT {String(campaign.completed + 1).padStart(2, '0')} / KESSLER INDUSTRIES</div><h2 id="dialog-title">A hostile<br />takeover<span>.</span></h2><p>Two augmented agents. One corporate executive. Eliminate the target in the Glass District, then return to extraction.</p><div className="brief-stats"><div><small>CONTRACT VALUE</small><strong>₡ {PAYOUT}</strong></div><div><small>TEAM SIZE</small><strong>02 agents</strong></div><div><small>ENGAGEMENT</small><strong>Real time</strong></div></div><div className="quick-guide"><span><b>01</b>Select your squad</span><span><b>02</b>Click to command</span><span><b>03</b>Extract & upgrade</span></div><button className="primary" onClick={deploy} disabled={connecting || loadingCode}>{connecting ? 'Connecting…' : 'Deploy squad'} <span>↗</span></button>{saveCode ? <SaveCode code={saveCode} /> : null}{state.saveUnavailable ? <p className="save-warning">Server unreachable. Progress from this session is not saved.</p> : null}{connecting ? null : <LoadSaveCode onLoaded={setSaveCode} busy={loadingCode} setBusy={setLoadingCode} />}<small className="modal-footnote">Progress saves to your save code. Enter it on another device to continue there.</small></div></Dialog> : null}
+    {state.phase === 'headquarters' ? <Dialog><div className="modal-topline">CORPORATE HEADQUARTERS <span>AFTER-ACTION REPORT</span></div><div className="modal-body"><div className={`eyebrow ${state.result === 'success' ? 'mint' : 'orange'}`}>{state.result === 'success' ? `CONTRACT COMPLETE / +₡ ${PAYOUT}` : 'OPERATION FAILED / NO PAYOUT'}</div><h2 id="dialog-title">{state.result === 'success' ? 'Business is good.' : 'Recover. Refit.'}</h2><p>{state.result === 'success' ? 'Payment received. Invest in the squad before the next contract.' : 'Your squad was lost. Replacements retain purchased equipment; retry at no cost.'}</p><div className="balance"><span>AVAILABLE FUNDS</span><strong>₡ {campaign.cash.toLocaleString()}</strong></div>
+      {(['weapon', 'armor'] as const).map(type => <div className="upgrade" key={type}><div className="upgrade-symbol">{type === 'weapon' ? '⌁' : '◈'}</div><div className="upgrade-copy"><h3>{type === 'weapon' ? 'Smart ammunition' : 'Dermal plating'}</h3><p>{type === 'weapon' ? '+12 damage per level' : '+40 health per agent / level'}</p><div className="level-pips" aria-label={`Level ${campaign[type]} of ${MAX_LEVEL}`}>{Array.from({ length: MAX_LEVEL }, (_, i) => <i className={campaign[type] > i ? 'filled' : ''} key={i} />)}<small>{campaign[type]} / {MAX_LEVEL}</small></div></div><button onClick={() => sim.buy(type)} disabled={campaign[type] >= MAX_LEVEL || campaign.cash < UPGRADE_COST[type]}>{campaign[type] >= MAX_LEVEL ? 'MAXED' : `₡ ${UPGRADE_COST[type]}`}</button></div>)}
+      <button className="primary" onClick={deploy}>{state.result === 'success' ? 'Deploy next contract' : 'Retry contract'} <span>↗</span></button><small className="modal-footnote">Prototype campaign: replay the district with persistent upgrades.</small>{saveCode ? <SaveCode code={saveCode} /> : null}{state.saveUnavailable ? <p className="save-warning">Server unreachable. Progress from this session is not saved.</p> : null}</div></Dialog> : null}
+    {help ? <Dialog dismissible onClose={() => setHelp(false)}><div className="modal-body"><div className="eyebrow">OPERATOR MANUAL</div><h2 id="dialog-title">Take command.</h2><dl className="controls-list"><dt>Click agent / 1 / 2</dt><dd>Select an operative</dd><dt>Shift + click</dt><dd>Add or remove from selection</dd><dt>A / Select all</dt><dd>Select the surviving squad</dd><dt>Click street</dt><dd>Move around buildings; auto-fire at threats</dd><dt>Click hostile</dt><dd>Approach and concentrate fire</dd><dt>S / Hold</dt><dd>Stop movement; keep firing</dd><dt>Space / Pause</dt><dd>Pause and queue orders</dd><dt>Scroll / two-finger pinch</dt><dd>Zoom the view</dd><dt>Right-drag / two-finger drag</dt><dd>Pan the view</dd><dt>R / ⌖</dt><dd>Reset camera</dd></dl>{saveCode ? <SaveCode code={saveCode} /> : null}<button className="primary" onClick={() => setHelp(false)}>Close manual</button></div></Dialog> : null}
     {confirmRestart ? <Dialog dismissible onClose={() => setConfirmRestart(false)}><div className="modal-body"><h2 id="dialog-title">Restart this contract?</h2><p>The current mission resets. Credits and purchased upgrades are kept.</p><button className="primary" onClick={() => { deploy(); setConfirmRestart(false); }}>Restart mission</button><button className="secondary full" onClick={() => setConfirmRestart(false)}>Keep playing</button></div></Dialog> : null}
   </main>;
 }

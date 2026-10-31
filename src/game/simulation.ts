@@ -1,19 +1,16 @@
 import { clearLine, distance, EXTRACT, findPath } from './world.ts';
 import type { Point } from './world.ts';
+import { applyPayout, applyPurchase, freshCampaign } from './campaign.ts';
+import type { Campaign, Upgrade } from './campaign.ts';
+export { freshCampaign, parseCampaign } from './campaign.ts';
+export type { Campaign, Upgrade } from './campaign.ts';
 
-export type Campaign = { version: 2; cash: number; weapon: number; armor: number; completed: number };
 export type Unit = Point & { id: string; name: string; enemy: boolean; executive: boolean; hp: number; maxHp: number; cooldown: number; path: Point[]; targetId: string | null; heading: number; moving: boolean };
 export type Shot = { id: number; from: Point; to: Point; enemy: boolean; ttl: number };
 export type Phase = 'briefing' | 'mission' | 'headquarters';
 export type Snapshot = { phase: Phase; paused: boolean; selected: string[]; units: Unit[]; campaign: Campaign; result: 'success' | 'failure' | null; targetDown: boolean; time: number; message: string; saveUnavailable: boolean };
-export const freshCampaign = (): Campaign => ({ version: 2, cash: 0, weapon: 0, armor: 0, completed: 0 });
-export function parseCampaign(text: string | null): Campaign {
-  try {
-    const data = JSON.parse(text || '{}');
-    const n = (v: unknown, max: number) => typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.min(max, Math.floor(v))) : 0;
-    return { version: 2, cash: n(data.cash, 1e8), weapon: n(data.weapon, 3), armor: n(data.armor, 3), completed: n(data.completed ?? ((data.mission || 1) - 1), 1e6) };
-  } catch { return freshCampaign(); }
-}
+// Reports campaign events to the server; the server answers through applyCampaign.
+export type CampaignSync = { deployed(): void; completed(): void; bought(type: Upgrade): void };
 export class Simulation {
   campaign: Campaign;
   phase: Phase = 'briefing';
@@ -30,10 +27,10 @@ export class Simulation {
   private snapshot!: Snapshot;
   private nextShot = 0;
   private uiTimer = 0;
-  private save: ((campaign: Campaign) => void) | undefined;
+  private sync: CampaignSync | undefined;
 
-  constructor(campaign = freshCampaign(), save?: (campaign: Campaign) => void) {
-    this.campaign = campaign; this.save = save; this.resetUnits(); this.emit();
+  constructor(campaign = freshCampaign(), sync?: CampaignSync) {
+    this.campaign = campaign; this.sync = sync; this.resetUnits(); this.emit();
   }
   subscribe = (callback: () => void) => { this.listeners.add(callback); return () => { this.listeners.delete(callback); }; };
   getSnapshot = () => this.snapshot;
@@ -42,7 +39,9 @@ export class Simulation {
     this.snapshot = { phase: this.phase, paused: this.paused, selected: [...this.selected], units: this.units.map(u => ({ ...u })), campaign: { ...this.campaign }, result: this.result, targetDown: this.targetDown, time: this.time, message: this.message, saveUnavailable: this.saveUnavailable };
     this.listeners.forEach(fn => fn());
   }
-  private persist() { try { this.save?.(this.campaign); } catch { this.saveUnavailable = true; } }
+  private report(send: (sync: CampaignSync) => void) { if (this.sync) try { send(this.sync); } catch { this.saveUnavailable = true; } }
+  applyCampaign(campaign: Campaign) { this.campaign = campaign; if (this.phase !== 'mission') this.resetUnits(); this.emit(); }
+  setSaveUnavailable(unavailable: boolean) { if (this.saveUnavailable !== unavailable) { this.saveUnavailable = unavailable; this.emit(); } }
   private resetUnits() {
     const unit = (id: string, name: string, x: number, z: number, enemy = false, executive = false): Unit => {
       const maxHp = enemy ? (executive ? 110 : 75) : 120 + this.campaign.armor * 40;
@@ -54,7 +53,8 @@ export class Simulation {
   deploy = () => {
     this.phase = 'mission'; this.result = null; this.paused = false; this.time = 0;
     this.selected = ['vex', 'rook']; this.shots = []; this.commandPoint = null;
-    this.resetUnits(); this.message = 'Squad deployed. Locate and neutralize the executive.'; this.emit();
+    this.resetUnits(); this.message = 'Squad deployed. Locate and neutralize the executive.';
+    this.report(s => s.deployed()); this.emit();
   };
   select(id: string, additive = false) {
     const unit = this.units.find(u => u.id === id);
@@ -82,17 +82,15 @@ export class Simulation {
     this.message = target.executive ? 'Executive marked. Eliminate the target.' : 'Hostile marked. Concentrate fire.'; this.emit();
   }
   hold = () => { this.units.filter(u => this.selected.includes(u.id)).forEach(u => { u.path = []; u.targetId = null; }); this.message = 'Holding position. Weapons free.'; this.emit(); };
-  buy(type: 'weapon' | 'armor'): boolean {
-    if (this.phase !== 'headquarters' || this.campaign[type] >= 3) return false;
-    const cost = type === 'weapon' ? 300 : 250;
-    if (this.campaign.cash < cost) return false;
-    this.campaign = { ...this.campaign, cash: this.campaign.cash - cost, [type]: this.campaign[type] + 1 };
-    this.persist(); this.emit(); return true;
+  buy(type: Upgrade): boolean {
+    if (this.phase !== 'headquarters') return false;
+    const next = applyPurchase(this.campaign, type); if (!next) return false;
+    this.campaign = next; this.report(s => s.bought(type)); this.emit(); return true;
   }
   private finish(success: boolean) {
     if (this.phase !== 'mission') return;
     this.phase = 'headquarters'; this.result = success ? 'success' : 'failure';
-    if (success) { this.campaign = { ...this.campaign, cash: this.campaign.cash + 500, completed: this.campaign.completed + 1 }; this.persist(); }
+    if (success) { this.campaign = applyPayout(this.campaign); this.report(s => s.completed()); }
     this.emit();
   }
   update(dt: number) {

@@ -1,5 +1,5 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore } from 'react';
-import type { ComponentRef } from 'react';
+import type { ComponentRef, RefObject } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import type { ThreeEvent } from '@react-three/fiber';
 import { Html, OrbitControls } from '@react-three/drei';
@@ -67,7 +67,7 @@ const City = memo(function City() {
   </group>;
 });
 
-function Agent({ sim, id }: { sim: Simulation; id: string }) {
+function Agent({ sim, id, labels }: { sim: Simulation; id: string; labels: RefObject<HTMLDivElement> }) {
   const root = useRef<Group>(null), model = useRef<Group>(null), ring = useRef<Mesh>(null), leg = useRef<Group>(null);
   const state = useSyncExternalStore(sim.subscribe, sim.getSnapshot);
   const u = state.units.find(v => v.id === id)!;
@@ -102,11 +102,11 @@ function Agent({ sim, id }: { sim: Simulation; id: string }) {
     </group>
     <mesh ref={ring} rotation={[-Math.PI / 2, 0, 0]} position={[0, .045, 0]}><ringGeometry args={[.48, .53, 32]} /><meshBasicMaterial color={color} transparent opacity={.9} /></mesh>
     <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, .035, 0]}><circleGeometry args={[.32, 20]} /><meshBasicMaterial color={color} transparent opacity={.18} /></mesh>
-    {u.hp > 0 && (selected || u.executive) ? <Html center position={[0, 1.75, 0]} style={{ pointerEvents: 'none' }}><span className={`unit-label ${u.enemy ? 'hostile' : ''}`}>{u.executive ? '◇ TARGET' : u.name}</span></Html> : null}
+    {u.hp > 0 && (selected || u.executive) ? <Html portal={labels} center position={[0, 1.75, 0]} style={{ pointerEvents: 'none' }}><span className={`unit-label ${u.enemy ? 'hostile' : ''}`}>{u.executive ? '◇ TARGET' : u.name}</span></Html> : null}
   </group>;
 }
 
-function Effects({ sim }: { sim: Simulation }) {
+function Effects({ sim, labels }: { sim: Simulation; labels: RefObject<HTMLDivElement> }) {
   const beams = useRef<(Mesh | null)[]>([]), marker = useRef<Mesh>(null), extract = useRef<Mesh>(null);
   const direction = useMemo(() => new Vector3(), []);
   useFrame(({ clock }) => {
@@ -128,7 +128,7 @@ function Effects({ sim }: { sim: Simulation }) {
     <group position={[EXTRACT.x, .05, EXTRACT.z]}>
       <mesh ref={extract} rotation={[-Math.PI / 2, 0, 0]}><ringGeometry args={[1.7, 1.77, 6]} /><meshBasicMaterial color="#83e5c4" transparent opacity={.8} /></mesh>
       <mesh rotation={[-Math.PI / 2, 0, 0]}><circleGeometry args={[1.7, 40]} /><meshBasicMaterial color="#68e7bf" transparent opacity={.06} depthWrite={false} /></mesh>
-      <Html center position={[0, .05, 1.9]} style={{ pointerEvents: 'none' }}><span className="extract-label">EXTRACTION</span></Html>
+      <Html portal={labels} center position={[0, .05, 1.9]} style={{ pointerEvents: 'none' }}><span className="extract-label">EXTRACTION</span></Html>
     </group>
   </>;
 }
@@ -143,7 +143,7 @@ function CameraRig({ reset }: { reset: number }) {
   return <OrbitControls ref={ref} makeDefault enableRotate={false} minZoom={4} maxZoom={65} enableDamping dampingFactor={.12} mouseButtons={{ LEFT: undefined, MIDDLE: MOUSE.DOLLY, RIGHT: MOUSE.PAN }} />;
 }
 
-function World({ sim, reset }: { sim: Simulation; reset: number }) {
+function World({ sim, reset, labels }: { sim: Simulation; reset: number; labels: RefObject<HTMLDivElement> }) {
   useFrame((_, dt) => sim.update(dt), -1);
   return <>
     <color attach="background" args={['#101c21']} />
@@ -155,13 +155,16 @@ function World({ sim, reset }: { sim: Simulation; reset: number }) {
     <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, .04, 0]} onClick={(e) => { if (e.delta <= 5) { e.stopPropagation(); sim.move({ x: e.point.x, z: e.point.z }); } }}>
       <planeGeometry args={[32, 24]} /><meshBasicMaterial transparent opacity={0} depthWrite={false} />
     </mesh>
-    {['vex', 'rook', 'g1', 'g2', 'g3', 'target'].map(id => <Agent sim={sim} key={id} id={id} />)}
-    <Effects sim={sim} />
+    {['vex', 'rook', 'g1', 'g2', 'g3', 'target'].map(id => <Agent sim={sim} key={id} id={id} labels={labels} />)}
+    <Effects sim={sim} labels={labels} />
   </>;
 }
 
 export const GameCanvas = memo(function GameCanvas({ sim, reset }: { sim: Simulation; reset: number }) {
-  return <Canvas shadows orthographic camera={{ position: [29, 34, 32], zoom: 24, near: .1, far: 150 }} dpr={[1, 1.5]} gl={{ antialias: true, alpha: false }} fallback={<div className="render-error">WebGL is unavailable. Enable hardware acceleration or try a WebGL-capable browser.</div>}>
-    <World sim={sim} reset={reset} />
-  </Canvas>;
+  // Labels need a fixed parent: drei's Html rebuilds its React root whenever its parent changes,
+  // and R3F swaps the default parent once events connect, which blanked the first label.
+  const labels = useRef<HTMLDivElement>(null!);
+  return <><Canvas shadows orthographic camera={{ position: [29, 34, 32], zoom: 24, near: .1, far: 150 }} dpr={[1, 1.5]} gl={{ antialias: true, alpha: false }} fallback={<div className="render-error">WebGL is unavailable. Enable hardware acceleration or try a WebGL-capable browser.</div>}>
+    <World sim={sim} reset={reset} labels={labels} />
+  </Canvas><div ref={labels} className="scene-labels" /></>;
 });
