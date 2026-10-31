@@ -1,7 +1,7 @@
 import { sim } from '../app.ts';
 import { REINFORCE_CAP } from '../game/simulation.ts';
 import type { Snapshot } from '../game/simulation.ts';
-import { clock, Credits, SoundToggle } from './common.tsx';
+import { AudioButton, clock, Credits } from './common.tsx';
 import { Icon, Logo } from './icons.tsx';
 
 export type Screen = 'title' | 'select' | 'hq' | 'mission' | 'debrief';
@@ -22,8 +22,8 @@ function Status({ state }: { state: Snapshot }) {
   </div>;
 }
 
-export function TopBar({ state, screen, tab, setTab, connecting, onManual, onMenu }: {
-  state: Snapshot; screen: Screen; tab: Tab; setTab: (tab: Tab) => void; connecting: boolean; onManual: () => void; onMenu: () => void;
+export function TopBar({ state, screen, tab, setTab, connecting, onManual, onAudio, onMenu }: {
+  state: Snapshot; screen: Screen; tab: Tab; setTab: (tab: Tab) => void; connecting: boolean; onManual: () => void; onAudio: () => void; onMenu: () => void;
 }) {
   const mission = screen === 'mission';
   return <header className="topbar">
@@ -37,7 +37,7 @@ export function TopBar({ state, screen, tab, setTab, connecting, onManual, onMen
     <div className="topbar-right">
       {mission ? null : <><Uplink connecting={connecting} offline={state.saveUnavailable} /><span className="funds"><small>Funds</small><Credits value={state.campaign.cash} /></span></>}
       {mission ? <button className="icon-button" aria-label={state.paused ? 'Resume' : 'Pause'} aria-keyshortcuts="Space" onClick={sim.togglePause}><Icon name={state.paused ? 'play' : 'pause'} /></button> : null}
-      <SoundToggle className="optional" />
+      <AudioButton className="optional" onOpen={onAudio} />
       <button className="icon-button optional" aria-label="Operator manual" onClick={onManual}><Icon name="help" /></button>
       {mission ? <button className="icon-button" aria-label="Mission menu" onClick={onMenu}><Icon name="menu" /></button> : null}
     </div>

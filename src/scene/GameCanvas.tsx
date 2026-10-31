@@ -6,6 +6,7 @@ import { DirectionalLight, MOUSE } from 'three';
 import type { MissionPlan } from '../game/mapgen.ts';
 import type { Bounds } from '../game/world.ts';
 import type { Simulation } from '../game/simulation.ts';
+import { setAudioCamera } from '../ui/audio.ts';
 import { City } from './city.tsx';
 import { Effects, Targeting } from './effects.tsx';
 import type { Pointer } from './effects.tsx';
@@ -35,6 +36,8 @@ function CameraRig({ reset, bounds, layout, attract, frame, insets }: { reset: n
     camera.updateProjectionMatrix();
     ref.current?.target.set(cx, 0, cz); ref.current?.update();
   }, [camera, gl, reset, size.width, size.height, bounds, layout, frame, insets]);
+  // Positional sound is panned and faded by where its source sits in this view.
+  useEffect(() => { setAudioCamera(camera); return () => setAudioCamera(null); }, [camera]);
   return <OrbitControls ref={ref} makeDefault enableRotate={false} autoRotate={attract} autoRotateSpeed={.35} minZoom={4} maxZoom={65} enableDamping dampingFactor={.12}
     mouseButtons={{ LEFT: undefined, MIDDLE: MOUSE.DOLLY, RIGHT: MOUSE.PAN }} />;
 }

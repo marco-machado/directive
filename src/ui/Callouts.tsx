@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { REINFORCE_CAP, REINFORCE_SECONDS } from '../game/simulation.ts';
 import type { Snapshot } from '../game/simulation.ts';
 import { CONTRACTS } from './common.tsx';
-import { play } from './sfx.ts';
-import type { Cue } from './sfx.ts';
+import { play, stinger } from './audio.ts';
+import type { Cue } from './audio.ts';
 
 type Callout = { id: number; tone: 'info' | 'danger' | 'good' | 'objective'; kicker: string; title: string; detail?: string };
 const SHOW_MS = 2600;
@@ -22,7 +22,7 @@ export function useCallouts(state: Snapshot) {
       add({ tone: 'info', kicker: 'Contract live', title: CONTRACTS[state.contract.type].title, detail: `${state.contract.district} · Tier ${state.contract.tier}` }, 'deploy');
       return;
     }
-    if (p.phase === 'mission' && state.phase === 'headquarters') { setQueue([]); play(state.result === 'success' ? 'success' : 'failure'); return; }
+    if (p.phase === 'mission' && state.phase === 'headquarters') { setQueue([]); stinger(state.result === 'success' ? 'success' : 'failure'); return; }
     if (p.phase !== 'mission' || state.phase !== 'mission') return;
     if (state.pending && !p.pending) play('aim');
     if (state.alarm && !p.alarm) add({ tone: 'danger', kicker: 'Alarm raised', title: 'Weapons free', detail: `Reinforcements in ${REINFORCE_SECONDS} s` }, 'alarm');

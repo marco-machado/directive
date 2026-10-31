@@ -67,7 +67,8 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .btn:disabled { opacity: .4 }
 .btn:focus-visible { outline: none; --edge: var(--amber) }
 .btn:focus-visible::before { inset: 2px }
-.btn.primary { --edge: var(--amber); --fill: var(--amber); color: #1d1205 }
+/* clip-path only hides the moving sheen; overflow keeps it from widening a scrolling parent. */
+.btn.primary { --edge: var(--amber); --fill: var(--amber); color: #1d1205; overflow: clip }
 .btn.primary:hover:not(:disabled) { --edge: #ffd59a; --fill: #ffc56f }
 .btn.primary:focus-visible { --edge: #fff }
 .btn.primary::after { content: ''; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(100deg, transparent 35%, rgb(255 255 255 / .38) 50%, transparent 65%); transform: translateX(-120%) }
@@ -442,6 +443,11 @@ dialog::backdrop { overflow: hidden; overscroll-behavior: contain; background: r
 .dialog-actions { display: flex; gap: 10px }
 .dialog-actions .btn { flex: 1 }
 .menu-list { display: grid; gap: 8px }
+.volumes { display: grid; gap: 4px; margin-top: 18px }
+.volume { display: grid; grid-template-columns: 96px minmax(0, 1fr) 48px; align-items: center; gap: 14px; min-height: 44px; font: 600 14px var(--f-ui); letter-spacing: .06em; text-transform: uppercase }
+.volume input { width: 100%; height: 24px; margin: 0; accent-color: var(--mint); cursor: pointer }
+.volume input:disabled { opacity: .4; cursor: not-allowed }
+.volume output { text-align: right; font-variant-numeric: tabular-nums; color: var(--dim) }
 .manual { width: min(880px, calc(100vw - 32px)) }
 .manual-grid { display: grid; grid-template-columns: 1.15fr 1fr; gap: 28px }
 .manual .section-title { margin: 0 0 8px }

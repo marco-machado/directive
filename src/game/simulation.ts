@@ -19,7 +19,7 @@ export type Unit = Point & {
   ability: AbilityId | null; abilityCd: number; reviveTarget: string | null; revive: number; hurt: number;
   patrol: Point[]; patrolIndex: number; exit: Point | null; wait: number; detect: number; stunned: number; marked: number; visible: boolean; hunting: boolean; sweep: number;
 };
-export type Shot = { id: number; from: Point; to: Point; faction: Faction; kind: 'bullet' | 'snipe'; ttl: number };
+export type Shot = { id: number; from: Point; to: Point; faction: Faction; shooter: UnitKind; kind: 'bullet' | 'snipe'; ttl: number };
 export type Blast = { id: number; kind: 'grenade' | 'heal' | 'emp'; x: number; z: number; radius: number; ttl: number };
 export type Objective = Point & { kind: 'target' | 'terminal' | 'charge' | 'vip' | 'extract'; label: string; progress: number; done: boolean };
 export type Phase = 'briefing' | 'mission' | 'headquarters';
@@ -54,6 +54,7 @@ export const FLEE_DELAY = 5;        // the target hesitates before running for a
 export const FLEE_MIN_EXIT = 16;    // and picks an exit at least this far away
 export const SIGHT_RANGE = 10;      // fog of war: hostiles beyond this or behind buildings are hidden
 export const CONVERGE_RADIUS = 14;  // guards this close to the alarm hunt the squad
+export const SUSPICIOUS = .3;       // detection above this makes a guard stop and stare
 export const REINFORCE_SECONDS = 20;
 export const REINFORCE_CAP = 8;
 export const REVIVE_SECONDS = 3;
@@ -322,7 +323,7 @@ export class Simulation {
   }
   private shoot(from: Unit, to: Unit, amount: number, kind: Shot['kind'] = 'bullet') {
     this.damage(to, amount, from);
-    this.shots.push({ id: this.nextId++, from: { x: from.x, z: from.z }, to: { x: to.x, z: to.z }, faction: from.faction, kind, ttl: kind === 'snipe' ? .35 : .12 });
+    this.shots.push({ id: this.nextId++, from: { x: from.x, z: from.z }, to: { x: to.x, z: to.z }, faction: from.faction, shooter: from.kind, kind, ttl: kind === 'snipe' ? .35 : .12 });
   }
   private resolveCast(c: Simulation['casts'][number]) {
     const caster = this.unit(c.unitId);
@@ -391,7 +392,7 @@ export class Simulation {
         u.detect = Math.min(1, u.detect + dt / (.35 + .12 * distance(u, seen)));
         if (u.detect >= 1) { this.raiseAlarm(u, `${stats.name} spotted the squad`); return; }
         // A suspicious guard stops and stares instead of walking on.
-        if (u.detect > .3 && mobile) { u.heading = headingTo(u, seen); return; }
+        if (u.detect > SUSPICIOUS && mobile) { u.heading = headingTo(u, seen); return; }
       } else u.detect = Math.max(0, u.detect - .25 * dt);
       if (mobile) this.patrol(u, stats.speed, dt);
       return;

@@ -8,7 +8,7 @@ import type { ClassId } from '../game/classes.ts';
 import type { Pending, Snapshot, Unit } from '../game/simulation.ts';
 import { clock, CONTRACTS, Credits, threat } from './common.tsx';
 import { Icon, Portrait } from './icons.tsx';
-import { play } from './sfx.ts';
+import { play } from './audio.ts';
 
 function Tracker({ state }: { state: Snapshot }) {
   const c = state.contract!, current = state.objectives.findIndex(o => !o.done);

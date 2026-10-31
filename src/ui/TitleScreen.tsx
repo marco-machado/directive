@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Campaign } from '../game/campaign.ts';
-import { credits, LoadSaveCode, pad, SaveCode, SoundToggle } from './common.tsx';
+import { AudioButton, credits, LoadSaveCode, pad, SaveCode } from './common.tsx';
 import { Icon, Logo } from './icons.tsx';
 import { Uplink } from './TopBar.tsx';
 
-export function TitleScreen({ campaign, connecting, offline, syncing, saveCode, loadingCode, setLoadingCode, onLoaded, onContinue, onManual }: {
+export function TitleScreen({ campaign, connecting, offline, syncing, saveCode, loadingCode, setLoadingCode, onLoaded, onContinue, onManual, onAudio }: {
   campaign: Campaign; connecting: boolean; offline: boolean; syncing: boolean; saveCode: string | null;
-  loadingCode: boolean; setLoadingCode: (busy: boolean) => void; onLoaded: (code: string) => void; onContinue: () => void; onManual: () => void;
+  loadingCode: boolean; setLoadingCode: (busy: boolean) => void; onLoaded: (code: string) => void; onContinue: () => void; onManual: () => void; onAudio: () => void;
 }) {
   const [loading, setLoading] = useState(false), start = useRef<HTMLButtonElement>(null);
   useEffect(() => { start.current?.focus(); }, []);
@@ -35,7 +35,7 @@ export function TitleScreen({ campaign, connecting, offline, syncing, saveCode, 
     <footer className="title-foot">
       <Uplink connecting={connecting} offline={offline} />
       {saveCode ? <SaveCode code={saveCode} /> : null}
-      <SoundToggle />
+      <AudioButton onOpen={onAudio} />
     </footer>
   </section>;
 }

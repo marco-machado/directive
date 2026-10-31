@@ -7,7 +7,7 @@ import { formatSaveCode, normalizeSaveCode } from '../game/saveCode.ts';
 import { HACK_SECONDS } from '../game/simulation.ts';
 import { ApiError, fetchCampaign, rememberSaveCode } from '../net/campaignClient.ts';
 import { Icon, Portrait } from './icons.tsx';
-import { sound } from './sfx.ts';
+import { sound } from './audio.ts';
 
 export const CONTRACTS: Record<ContractType, { title: string; brief: string }> = {
   assassination: { title: 'Assassination', brief: 'Neutralize the target, then extract. Once the alarm sounds, the target runs for an exit.' },
@@ -31,9 +31,9 @@ export const Pips = ({ value, max, label, className = '' }: { value: number; max
 
 export const SaveWarning = () => <p className="warning"><Icon name="alert" />Server unreachable. Progress from this session is not saved.</p>;
 
-export function SoundToggle({ className = '' }: { className?: string }) {
-  const muted = useSyncExternalStore(sound.subscribe, sound.muted);
-  return <button className={`icon-button ${className}`} aria-label={muted ? 'Unmute sound' : 'Mute sound'} onClick={sound.toggle}><Icon name={muted ? 'soundOff' : 'soundOn'} /></button>;
+export function AudioButton({ onOpen, className = '' }: { onOpen: () => void; className?: string }) {
+  const { muted } = useSyncExternalStore(sound.subscribe, sound.settings);
+  return <button className={`icon-button ${className}`} aria-label={muted ? 'Audio settings, sound off' : 'Audio settings'} aria-haspopup="dialog" onClick={onOpen}><Icon name={muted ? 'soundOff' : 'soundOn'} /></button>;
 }
 
 export const OperativeLabel = ({ op }: { op: Operative }) =>

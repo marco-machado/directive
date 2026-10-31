@@ -3,11 +3,12 @@ import type { RefObject } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { BufferGeometry, CircleGeometry, Color, CylinderGeometry, Float32BufferAttribute, Group, Mesh, MeshBasicMaterial, RingGeometry, SphereGeometry, Vector3 } from 'three';
 import { ABILITY_STATS } from '../game/classes.ts';
-import { HOSTILE_STATS } from '../game/simulation.ts';
-import type { Blast, Faction, Pending, Simulation } from '../game/simulation.ts';
+import { HOSTILE_STATS, SUSPICIOUS } from '../game/simulation.ts';
+import type { Blast, Faction, Pending, Shot, Simulation } from '../game/simulation.ts';
 import type { EnemyKind } from '../game/mapgen.ts';
 import type { Point } from '../game/world.ts';
-import { play } from '../ui/sfx.ts';
+import { play } from '../ui/audio.ts';
+import type { Cue } from '../ui/audio.ts';
 
 const UP = new Vector3(0, 1, 0);
 const BEAM = new CylinderGeometry(1, 1, 1, 6), RING = new RingGeometry(.9, 1, 48), DISC = new CircleGeometry(1, 40), FLASH = new SphereGeometry(1, 16, 10);
@@ -16,10 +17,11 @@ const FLAT: [number, number, number] = [-Math.PI / 2, 0, 0];
 // Shots
 const TRACER: Record<Faction, Color> = { squad: new Color('#c4ffe4'), hostile: new Color('#ffb08a'), vip: new Color('#ffe1a1') };
 const SNIPE = new Color('#f4fdff');
+const gunfire = (shot: Shot): Cue => shot.kind === 'snipe' ? 'snipe' : shot.shooter === 'turret' ? 'turretShot' : shot.faction === 'squad' ? 'shot' : 'hostileShot';
 function Shots({ sim }: { sim: Simulation }) {
   const beams = useRef<(Mesh | null)[]>([]), direction = useMemo(() => new Vector3(), []), heard = useRef(-1);
   useFrame(() => {
-    for (const shot of sim.shots) if (shot.id > heard.current) { heard.current = shot.id; play(shot.kind === 'snipe' ? 'snipe' : 'shot'); }
+    for (const shot of sim.shots) if (shot.id > heard.current) { heard.current = shot.id; play(gunfire(shot), shot.from); play('impact', shot.to); }
     beams.current.forEach((mesh, i) => {
       if (!mesh) return;
       const shot = sim.shots[i];
@@ -43,7 +45,7 @@ const BLAST: Record<Blast['kind'], { color: Color; ttl: number }> = { grenade: {
 function Blasts({ sim }: { sim: Simulation }) {
   const groups = useRef<(Group | null)[]>([]), heard = useRef(-1);
   useFrame(() => {
-    for (const blast of sim.blasts) if (blast.id > heard.current) { heard.current = blast.id; play(blast.kind); }
+    for (const blast of sim.blasts) if (blast.id > heard.current) { heard.current = blast.id; play(blast.kind, blast); }
     groups.current.forEach((group, i) => {
       if (!group) return;
       const blast = sim.blasts[i];
@@ -100,7 +102,7 @@ function CommandMarker({ sim }: { sim: Simulation }) {
   useFrame((_, dt) => {
     const point = sim.commandPoint;
     if (!marker.current || !ping.current) return;
-    if (point !== last.current) { last.current = point; age.current = 0; if (point && sim.phase === 'mission') play('order'); }
+    if (point !== last.current) { last.current = point; age.current = 0; if (point && sim.phase === 'mission') play('order', point); }
     age.current += dt;
     marker.current.visible = !!point && sim.phase === 'mission';
     if (!point) return;
@@ -115,8 +117,24 @@ function CommandMarker({ sim }: { sim: Simulation }) {
   </group>;
 }
 
+// Hostile kills and a guard turning suspicious, heard where they happen.
+function CombatAudio({ sim }: { sim: Simulation }) {
+  const before = useRef(new Map<string, { hp: number; detect: number }>());
+  useFrame(() => {
+    for (const u of sim.units) {
+      if (u.faction !== 'hostile') continue;
+      const was = before.current.get(u.id);
+      before.current.set(u.id, { hp: u.hp, detect: u.detect });
+      if (!was || sim.phase !== 'mission') continue;
+      if (was.hp > 0 && u.hp <= 0) play(u.kind === 'camera' || u.kind === 'turret' ? 'destroy' : 'kill', u);
+      else if (!sim.alarm && u.visible && (u.kind === 'guard' || u.kind === 'heavy') && was.detect <= SUSPICIOUS && u.detect > SUSPICIOUS) play('suspicious', u);
+    }
+  });
+  return null;
+}
+
 export function Effects({ sim }: { sim: Simulation }) {
-  return <><VisionCones sim={sim} /><Shots sim={sim} /><Blasts sim={sim} /><CommandMarker sim={sim} /></>;
+  return <><VisionCones sim={sim} /><Shots sim={sim} /><Blasts sim={sim} /><CommandMarker sim={sim} /><CombatAudio sim={sim} /></>;
 }
 
 // Ability targeting: reach around the caster, plus the blast area under the pointer for grenade and EMP.
