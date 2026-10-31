@@ -10,7 +10,7 @@ Gameplay depth for the existing R3F squad-tactics game. Procedural visuals in th
 - Fog of war: enemies outside squad line of sight hidden; Recon mark reveals for 6 s.
 - Vision cones always drawn on the ground, filling toward red with detection.
 - Cover: low barriers; reduced damage from the far side.
-- Contracts: assassination, data heist (hold terminal 12 s within 1.5 m, pauses when empty), sabotage (plant 2 charges, 3 s each), escort (VIP follows nearest operative, stops under fire, dies = fail, must reach extraction). All end with extraction (one operative is enough).
+- Contracts: assassination, data heist (hold terminal 12 s within 1.5 m, pauses when empty), sabotage (plant 2 charges, 3 s each), escort (VIP follows nearest operative, stops under fire, dies = fail, must reach extraction). All end with extraction (every deployed operative must be standing in the zone; downed ones are revived first).
 - Maps: procedural city blocks from the contract seed; size grows with tier, 32x24 to ~44x32. District names generated ("SECTOR 07 / CHROME QUARTER").
 - Roster: 4 classes. Assault (grenade 90 dmg r2.2 cd18), Support (heal +60 r3 cd20), Recon (sniper 130 dmg range 14 cd15, mark 6 s), Tech (EMP r2.5: stun guards/turrets 5 s, cameras 10 s, cd20).
   Stats HP/dmg/range: Assault 140/28/6.2, Support 120/20/6.2, Recon 100/30/8 (slower fire), Tech 110/20/6.2.
