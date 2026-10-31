@@ -18,15 +18,17 @@ export class PlayerCampaign extends DurableObject<Env> {
     await this.ctx.storage.put(KEY, upgraded);
     return upgraded;
   }
-  private async save(ledger: Ledger): Promise<Result> { await this.ctx.storage.put(KEY, ledger); return { ok: true, campaign: ledger.campaign }; }
+  private async save(ledger: Ledger): Promise<Extract<Result, { ok: true }>> { await this.ctx.storage.put(KEY, ledger); return { ok: true, campaign: ledger.campaign }; }
   private async update(change: (c: Campaign) => Campaign | null, error: string): Promise<Result> {
     const ledger = await this.load(); if (!ledger) return unknown;
     const campaign = change(ledger.campaign);
     return campaign ? this.save({ ...ledger, campaign }) : { ok: false, status: 409, error };
   }
 
-  async init(legacy?: unknown): Promise<Result> {
-    if (await this.load()) return { ok: false, status: 409, error: 'Save code already in use.' };
+  // Creating a player that already exists returns it unchanged, so a retried create is harmless.
+  async init(legacy?: unknown): Promise<Extract<Result, { ok: true }>> {
+    const existing = await this.load();
+    if (existing) return { ok: true, campaign: existing.campaign };
     // Browser saves predate rosters and contracts, so only their v1/v2 fields are imported.
     const old = legacy && typeof legacy === 'object' ? legacy as Record<string, unknown> : null;
     const imported = old ? clampCampaign({ cash: old.cash, weapon: old.weapon, armor: old.armor, completed: old.completed, mission: old.mission }, random) : null;

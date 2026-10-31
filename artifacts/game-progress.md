@@ -77,5 +77,5 @@ Player orders the squad to complete the contract objective while patrols, camera
 - [x] typecheck, build, wrangler dry-run, API checks against local Worker
 - [x] headless browser QA desktop 1440x900 + iPhone 15 (board, deploy, move, aim/cancel, pause, alarm, VIP death -> after-action)
 - [x] rules review (fixed: equal-tier offers, brief text, footer label, test-only rng param, redundant guard, EMP test)
-- [x] code review findings (fixed 1,2,3,4,6,8 + readability; open: 5 failed-contract replay via forged client, 7 loading a save code during the payout wait drops that payout)
+- [x] code review findings (fixed 1,2,3,4,6,7,8 + readability; open: 5 failed-contract replay via forged client)
 - [x] final browser pass after fixes
