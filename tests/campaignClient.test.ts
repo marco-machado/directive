@@ -12,12 +12,13 @@ test('a fast win waits for the minimum mission time after the server registers t
   t.mock.method(performance, 'now', () => Date.now());
   const startLatency = 3000;
   const calls: string[] = [];
-  const paid = { ...freshCampaign(), cash: 500, completed: 1 };
+  const started = freshCampaign();
+  const paid = { ...started, cash: 500, completed: 1 };
   t.mock.method(globalThis, 'fetch', async (url: string) => {
     calls.push(url);
     if (url.endsWith('/missions')) {
       await new Promise(resolve => setTimeout(resolve, startLatency));
-      return { ok: true, status: 201, json: async () => ({ missionId: 'm1' }) };
+      return { ok: true, status: 201, json: async () => ({ missionId: 'm1', campaign: started }) };
     }
     return { ok: true, status: 200, json: async () => ({ campaign: paid }) };
   });
@@ -26,8 +27,8 @@ test('a fast win waits for the minimum mission time after the server registers t
   const client = new CampaignClient();
   client.attach(sim, 'CODE');
 
-  client.deployed();
-  client.completed();
+  client.deployed('c1', ['vex']);
+  client.completed(false);
   await settle();
   mock.timers.tick(startLatency);
   await settle();

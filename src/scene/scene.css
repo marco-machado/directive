@@ -1,0 +1,4 @@
+.unit-label.vip{border-color:#d9c27e;color:#ffeab0}
+.objective-label{background:#1a2420d9;border:1px solid #976e55;padding:2px 6px;white-space:nowrap;font:8px 'IBM Plex Mono',monospace;letter-spacing:1.5px;color:#ffc590}
+.objective-label.done{border-color:#5f9d84;color:#a4e8ca}
+@media(max-width:700px){.objective-label{font-size:7px}}

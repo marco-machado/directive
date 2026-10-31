@@ -6,6 +6,11 @@ export { PlayerCampaign } from './player.ts';
 const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { 'cache-control': 'no-store' } });
 const reply = (r: Result | { ok: false; status: number; error: string }) => r.ok ? json({ campaign: r.campaign }) : json({ error: r.error }, r.status);
 const notFound = () => json({ error: 'Not found.' }, 404);
+const body = async (request: Request): Promise<Record<string, unknown>> => {
+  const data: unknown = await request.json().catch(() => null);
+  return data && typeof data === 'object' ? data as Record<string, unknown> : {};
+};
+const isId = (v: unknown): v is string => typeof v === 'string' && /^[a-z0-9-]{1,24}$/.test(v);
 
 export default {
   async fetch(request, env): Promise<Response> {
@@ -16,10 +21,10 @@ export default {
 
     // POST /api/players  { legacy?: Campaign }
     if (parts.length === 2 && parts[1] === 'players' && method === 'POST') {
-      const body = await request.json().catch(() => ({})) as { legacy?: unknown };
+      const { legacy } = await body(request);
       for (let attempt = 0; attempt < 3; attempt++) {
         const code = generateSaveCode();
-        const r = await env.PLAYERS.getByName(code).init(body?.legacy);
+        const r = await env.PLAYERS.getByName(code).init(legacy);
         if (r.ok) return json({ code, campaign: r.campaign }, 201);
       }
       return json({ error: 'Could not allocate a save code.' }, 503);
@@ -32,14 +37,29 @@ export default {
     const rest = parts.slice(3);
 
     if (rest.length === 0 && method === 'GET') return reply(await player.get());
+    // POST /missions  { contractId, squad: string[] }
     if (rest.length === 1 && rest[0] === 'missions' && method === 'POST') {
-      const r = await player.startMission();
-      return r.ok ? json({ missionId: r.missionId }, 201) : json({ error: r.error }, r.status);
+      const { contractId, squad } = await body(request);
+      if (!isId(contractId) || !Array.isArray(squad) || !squad.every(isId)) return json({ error: 'Expected a contractId and a squad.' }, 400);
+      const r = await player.startMission(contractId, squad);
+      return r.ok ? json({ missionId: r.missionId, campaign: r.campaign }, 201) : json({ error: r.error }, r.status);
     }
-    if (rest.length === 3 && rest[0] === 'missions' && rest[2] === 'complete' && method === 'POST') return reply(await player.completeMission(rest[1]));
+    // POST /missions/:id/complete  { stealth: boolean }
+    if (rest.length === 3 && rest[0] === 'missions' && rest[2] === 'complete' && method === 'POST') {
+      const { stealth } = await body(request);
+      return reply(await player.completeMission(rest[1], stealth === true));
+    }
     if (rest.length === 2 && rest[0] === 'upgrades' && method === 'POST') {
       if (!isUpgrade(rest[1])) return json({ error: 'Unknown upgrade.' }, 400);
       return reply(await player.buy(rest[1]));
+    }
+    if (rest.length === 2 && rest[0] === 'recruits' && method === 'POST') {
+      if (!isId(rest[1])) return json({ error: 'Unknown recruit.' }, 400);
+      return reply(await player.recruit(rest[1]));
+    }
+    if (rest.length === 2 && rest[0] === 'roster' && method === 'DELETE') {
+      if (!isId(rest[1])) return json({ error: 'Unknown operative.' }, 400);
+      return reply(await player.dismiss(rest[1]));
     }
     return notFound();
   },

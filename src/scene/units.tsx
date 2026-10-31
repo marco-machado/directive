@@ -1,0 +1,163 @@
+import { memo, useRef } from 'react';
+import type { ReactNode, RefObject } from 'react';
+import { useFrame } from '@react-three/fiber';
+import type { ThreeEvent } from '@react-three/fiber';
+import { Html } from '@react-three/drei';
+import type { Group, Mesh } from 'three';
+import { REVIVE_SECONDS } from '../game/simulation.ts';
+import type { Faction, Simulation, Unit, UnitKind } from '../game/simulation.ts';
+import { BOX, Box, CYLINDER, DIAMOND, dim, glow, ProgressRing, solid } from './parts.tsx';
+
+type Vec3 = [number, number, number];
+const TOP: Record<UnitKind, number> = { assault: 1.3, support: 1.3, recon: 1.3, tech: 1.3, guard: 1.3, heavy: 1.55, camera: 2.15, turret: .75, target: 1.3, vip: 1.3 };
+const HITBOX: Record<UnitKind, Vec3> = { assault: [.95, 1.5, .95], support: [.95, 1.5, .95], recon: [.95, 1.5, .95], tech: [.95, 1.5, .95], guard: [.95, 1.5, .95], heavy: [1.15, 1.8, 1.15], camera: [.7, 2.3, .7], turret: [1.1, 1, 1.1], target: [.95, 1.5, .95], vip: [.95, 1.5, .95] };
+const ACCENT: Record<UnitKind, string> = { assault: '#9ff7d1', support: '#9ff7d1', recon: '#9ff7d1', tech: '#8ff0e6', guard: '#ed7e70', heavy: '#ff6d5c', camera: '#ff5a4a', turret: '#ff6d5c', target: '#ffbd83', vip: '#ffe7a8' };
+const GROUND: Record<Faction, string> = { squad: '#9ff7d1', hostile: '#ed7e70', vip: '#ffe7a8' };
+
+function Humanoid({ body, head, visor, legs, legColor = '#192f33', torso = [.47, .62, .32], children }: { body: string; head: string; visor: string; legs: RefObject<Group | null>; legColor?: string; torso?: Vec3; children?: ReactNode }) {
+  return <>
+    <Box position={[0, .65, 0]} size={torso} color={body} castShadow />
+    <Box position={[0, 1.12, .02]} size={[.29, .32, .3]} color={head} castShadow />
+    <Box position={[0, 1.16, .18]} size={[.29, .07, .035]} color={visor} emissive={visor} />
+    <group ref={legs} position={[0, .35, 0]}>
+      <Box position={[-.13, -.15, 0]} size={[.15, .35, .2]} color={legColor} castShadow />
+      <Box position={[.13, -.15, 0]} size={[.15, .35, .2]} color={legColor} castShadow />
+    </group>
+    {children}
+  </>;
+}
+
+// Forward is +z: rotation.y = heading turns the model toward (sin h, cos h). Round bases hide that turn for fixed hostiles.
+const Model = memo(function Model({ kind, legs, downed }: { kind: UnitKind; legs: RefObject<Group | null>; downed: boolean }) {
+  const c = (color: string) => downed ? dim(color) : color;
+  const accent = c(ACCENT[kind]), gun = c('#122429'), arm = c('#526b66'), body = c('#466766'), head = c('#697e7a'), pack = c('#3e5c5a');
+  switch (kind) {
+    case 'assault': return <Humanoid body={body} head={head} visor={accent} legs={legs} torso={[.56, .66, .38]}>
+      <Box position={[.33, .93, 0]} size={[.18, .12, .4]} color={c('#3b5a58')} castShadow />
+      <Box position={[-.33, .93, 0]} size={[.18, .12, .4]} color={c('#3b5a58')} castShadow />
+      <Box position={[.36, .72, .2]} size={[.15, .18, .42]} color={gun} castShadow />
+      <Box position={[-.36, .72, .03]} size={[.12, .4, .13]} color={arm} />
+      <Box position={[0, .84, .2]} size={[.26, .04, .02]} color={accent} emissive={accent} />
+    </Humanoid>;
+    case 'support': return <Humanoid body={body} head={head} visor={accent} legs={legs}>
+      <Box position={[0, .76, -.26]} size={[.38, .44, .2]} color={pack} castShadow />
+      <Box position={[0, .8, -.365]} size={[.2, .06, .02]} color={accent} emissive={accent} />
+      <Box position={[0, .8, -.365]} size={[.06, .2, .02]} color={accent} emissive={accent} />
+      <Box position={[.31, .72, .24]} size={[.13, .15, .59]} color={gun} castShadow />
+      <Box position={[-.31, .72, .03]} size={[.12, .4, .13]} color={arm} />
+    </Humanoid>;
+    case 'recon': return <Humanoid body={body} head={head} visor={accent} legs={legs} torso={[.4, .6, .28]}>
+      <Box position={[.27, .74, .34]} size={[.09, .11, .98]} color={gun} castShadow />
+      <Box position={[.27, .83, .22]} size={[.06, .07, .22]} color={c('#2a4044')} />
+      <Box position={[-.27, .72, .03]} size={[.11, .4, .12]} color={arm} />
+      <Box position={[0, .8, -.17]} size={[.3, .3, .06]} color={pack} />
+    </Humanoid>;
+    case 'tech': return <Humanoid body={body} head={head} visor={accent} legs={legs}>
+      <Box position={[0, .82, -.25]} size={[.32, .26, .2]} color={pack} castShadow />
+      <Box position={[0, .97, -.25]} size={[.46, .03, .07]} color={c('#2a4044')} />
+      <Box position={[0, .97, -.25]} size={[.07, .03, .46]} color={c('#2a4044')} />
+      <Box position={[-.14, 1.25, -.27]} size={[.03, .6, .03]} color={arm} />
+      <Box position={[-.14, 1.57, -.27]} size={[.07, .07, .07]} color={accent} emissive={accent} />
+      <Box position={[.31, .72, .18]} size={[.12, .14, .4]} color={gun} castShadow />
+      <Box position={[-.31, .72, .03]} size={[.12, .4, .13]} color={arm} />
+    </Humanoid>;
+    case 'guard': return <Humanoid body="#673e3b" head="#697e7a" visor={accent} legs={legs}>
+      <Box position={[.31, .72, .24]} size={[.13, .15, .59]} color="#122429" castShadow />
+      <Box position={[-.31, .72, .03]} size={[.12, .4, .13]} color="#526b66" />
+    </Humanoid>;
+    case 'heavy': return <group scale={1.18}><Humanoid body="#5c3532" head="#5d6765" visor={accent} legs={legs} legColor="#1d2729" torso={[.58, .7, .4]}>
+      <Box position={[.35, .95, 0]} size={[.2, .14, .44]} color="#4a3a3a" castShadow />
+      <Box position={[-.35, .95, 0]} size={[.2, .14, .44]} color="#4a3a3a" castShadow />
+      <Box position={[-.3, .68, .32]} size={[.44, .78, .07]} color="#463c3d" castShadow />
+      <Box position={[-.3, .96, .36]} size={[.3, .04, .02]} color={accent} emissive={accent} />
+      <Box position={[.36, .72, .26]} size={[.17, .19, .66]} color="#122429" castShadow />
+    </Humanoid></group>;
+    case 'camera': return <>
+      <mesh position={[0, .04, 0]} scale={[.22, .08, .22]} geometry={CYLINDER} material={solid('#3c4a4a')} />
+      <Box position={[0, 1, 0]} size={[.09, 1.9, .09]} color="#5c6d6a" castShadow />
+      <Box position={[0, 1.94, 0]} size={[.16, .12, .16]} color="#465452" />
+      <Box position={[0, 2.02, .1]} size={[.24, .2, .42]} color="#2a3436" castShadow />
+      <Box position={[0, 2.02, .32]} size={[.13, .13, .03]} color={accent} emissive={accent} />
+      <Box position={[0, 2.14, -.05]} size={[.05, .04, .05]} color={accent} emissive={accent} />
+    </>;
+    case 'turret': return <>
+      <mesh position={[0, .14, 0]} scale={[.46, .28, .46]} geometry={CYLINDER} material={solid('#3d4447')} castShadow />
+      <mesh position={[0, .33, 0]} scale={[.32, .1, .32]} geometry={CYLINDER} material={solid('#4b3b3a')} />
+      <Box position={[0, .52, 0]} size={[.5, .3, .55]} color="#5a3936" castShadow />
+      <Box position={[0, .55, .55]} size={[.1, .1, .62]} color="#1c2427" castShadow />
+      <Box position={[0, .62, .28]} size={[.3, .05, .02]} color={accent} emissive={accent} />
+      <Box position={[.3, .5, -.05]} size={[.12, .2, .3]} color="#2e3436" />
+    </>;
+    case 'target': return <Humanoid body="#6e5040" head="#b0a18d" visor={accent} legs={legs} legColor="#2a2421">
+      <Box position={[0, .76, .165]} size={[.07, .32, .02]} color={accent} emissive={accent} />
+      <Box position={[.31, .42, .05]} size={[.1, .24, .34]} color="#3a2a22" castShadow />
+      <Box position={[.31, .72, .03]} size={[.12, .4, .13]} color="#5d4637" />
+      <Box position={[-.31, .72, .03]} size={[.12, .4, .13]} color="#5d4637" />
+    </Humanoid>;
+    case 'vip': return <Humanoid body="#2c363c" head="#c9bfae" visor={accent} legs={legs} legColor="#1d2328">
+      <Box position={[0, .76, .165]} size={[.07, .32, .02]} color="#e8c574" emissive="#e8c574" />
+      <Box position={[.31, .72, .03]} size={[.12, .4, .13]} color="#353f45" />
+      <Box position={[-.31, .72, .03]} size={[.12, .4, .13]} color="#353f45" />
+    </Humanoid>;
+  }
+});
+
+function Agent({ sim, unit, selected, labels }: { sim: Simulation; unit: Unit; selected: boolean; labels: RefObject<HTMLDivElement> }) {
+  const { id, kind, faction } = unit;
+  const root = useRef<Group>(null), model = useRef<Group>(null), pose = useRef<Group>(null), legs = useRef<Group>(null), ring = useRef<Mesh>(null);
+  const stun = useRef<Group>(null), mark = useRef<Mesh>(null), revive = useRef<Group>(null);
+  const downed = faction === 'squad' && unit.hp <= 0, top = TOP[kind], hitbox = HITBOX[kind];
+  const c = (color: string) => downed ? dim(color) : color;
+  const reviveProgress = () => { let p = 0; for (const v of sim.units) if (v.reviveTarget === id) p = Math.max(p, v.revive / REVIVE_SECONDS); return p; };
+  useFrame(({ clock }) => {
+    const u = sim.units.find(v => v.id === id);
+    if (!root.current || !model.current || !pose.current) return;
+    const hidden = !u || (u.faction === 'hostile' && (u.hp <= 0 || !u.visible));
+    root.current.visible = !hidden;
+    if (!u || hidden) return;
+    const t = clock.elapsedTime, down = u.faction === 'squad' && u.hp <= 0, walking = u.moving && !sim.paused && !down;
+    root.current.position.set(u.x, 0, u.z);
+    model.current.rotation.y = u.heading;
+    model.current.position.y = walking ? Math.sin(t * 17) * .035 : 0;
+    pose.current.rotation.x = down ? -Math.PI / 2 : 0; pose.current.position.y = down ? .2 : 0;
+    if (legs.current) legs.current.rotation.x = walking ? Math.sin(t * 17) * .4 : 0;
+    if (ring.current) ring.current.visible = sim.selected.includes(id);
+    if (stun.current) {
+      stun.current.visible = u.stunned > 0; stun.current.rotation.y = t * 5;
+      stun.current.children.forEach((spark, k) => { spark.visible = Math.sin(t * 31 + k * 2.1) > -.3; });
+    }
+    if (mark.current) { mark.current.visible = u.marked > 0; mark.current.rotation.y = t * 2.4; mark.current.position.y = top + .5 + Math.sin(t * 4) * .05; }
+    if (revive.current) revive.current.visible = down && sim.units.some(v => v.reviveTarget === id);
+  });
+  const click = (e: ThreeEvent<MouseEvent>) => {
+    const u = sim.units.find(v => v.id === id);
+    // Hidden or dead hostiles let the click fall through to the ground.
+    if (!u || (u.faction === 'hostile' && (u.hp <= 0 || !u.visible))) return;
+    e.stopPropagation(); if (e.delta > 5) return;
+    sim.unitClick(id, e.shiftKey);
+  };
+  const label = kind === 'target' ? (unit.hp > 0 && unit.visible ? '◇ TARGET' : null) : kind === 'vip' ? (unit.hp > 0 ? 'VIP' : null) : faction === 'squad' && selected && unit.hp > 0 ? unit.name : null;
+  const ground = c(kind === 'target' ? ACCENT.target : GROUND[faction]);
+  return <group ref={root} position={[unit.x, 0, unit.z]}>
+    <group ref={model}>
+      <group ref={pose} onClick={click}>
+        <mesh position={[0, hitbox[1] / 2, 0]} scale={hitbox} geometry={BOX} visible={false} />
+        <Model kind={kind} legs={legs} downed={downed} />
+      </group>
+    </group>
+    <mesh ref={ring} rotation={[-Math.PI / 2, 0, 0]} position={[0, .045, 0]} visible={false}><ringGeometry args={[.48, .53, 32]} /><meshBasicMaterial color="#9ff7d1" transparent opacity={.9} /></mesh>
+    {kind !== 'camera' ? <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, .035, 0]}><circleGeometry args={[kind === 'heavy' || kind === 'turret' ? .45 : .32, 20]} /><meshBasicMaterial color={ground} transparent opacity={.18} depthWrite={false} /></mesh> : null}
+    {faction === 'hostile' ? <>
+      <group ref={stun} position={[0, top - .1, 0]} visible={false}>
+        {[0, 1, 2, 3].map(k => <mesh key={k} position={[Math.sin(k * 1.57) * .34, (k % 2) * .18, Math.cos(k * 1.57) * .34]} rotation={[k * .7, 0, k * .4]} scale={[.05, .16, .05]} geometry={BOX} material={glow('#8fd8ff')} />)}
+      </group>
+      <mesh ref={mark} geometry={DIAMOND} material={glow('#ffb17d')} scale={[1, 1.5, 1]} visible={false} />
+    </> : null}
+    {downed ? <group ref={revive} visible={false}><ProgressRing radius={.7} color="#9ff7d1" value={reviveProgress} segments={24} /></group> : null}
+    {label ? <Html portal={labels} center position={[0, top + .45, 0]} style={{ pointerEvents: 'none' }}><span className={`unit-label${kind === 'target' ? ' hostile' : kind === 'vip' ? ' vip' : ''}`}>{label}</span></Html> : null}
+  </group>;
+}
+
+export function Units({ sim, units, selected, labels }: { sim: Simulation; units: Unit[]; selected: string[]; labels: RefObject<HTMLDivElement> }) {
+  return <>{units.map(u => <Agent key={`${u.id}:${u.kind}`} sim={sim} unit={u} selected={selected.includes(u.id)} labels={labels} />)}</>;
+}

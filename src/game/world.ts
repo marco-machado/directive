@@ -1,57 +1,142 @@
 export type Point = { x: number; z: number };
-export type Building = Point & { w: number; d: number; h: number; name: string; accent: string };
-export const BOUNDS = { minX: -16, maxX: 16, minZ: -12, maxZ: 12 };
-export const EXTRACT: Point = { x: -12, z: 8 };
-export const BUILDINGS: Building[] = [
-  { x: -11, z: -6, w: 5, d: 7, h: 5.6, name: 'KESSLER', accent: '#b9d6cc' },
-  { x: -3.5, z: -7, w: 5, d: 5, h: 3.3, name: 'DATA / 04', accent: '#ffb17d' },
-  { x: 5, z: -7.5, w: 5, d: 5, h: 6.5, name: 'NEXUS', accent: '#73dfca' },
-  { x: -5, z: .5, w: 4, d: 4, h: 2.1, name: 'RELAY', accent: '#bad3c8' },
-  { x: 4, z: 2, w: 4, d: 4, h: 2.8, name: '07', accent: '#e2a078' },
-  { x: 11.5, z: 5.5, w: 5, d: 8, h: 4.1, name: 'METRO', accent: '#73dfca' },
-  { x: -1.5, z: 8, w: 6, d: 3, h: 1.4, name: 'LOGISTICS', accent: '#b9d6cc' },
-];
-export function walkable(p: Point, padding = .38): boolean {
-  return p.x > BOUNDS.minX + padding && p.x < BOUNDS.maxX - padding && p.z > BOUNDS.minZ + padding && p.z < BOUNDS.maxZ - padding &&
-    !BUILDINGS.some(b => Math.abs(p.x - b.x) < b.w / 2 + padding && Math.abs(p.z - b.z) < b.d / 2 + padding);
-}
-export const distance = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.z - b.z);
-export function clearLine(a: Point, b: Point, padding = .1): boolean {
-  const steps = Math.ceil(distance(a, b) * 6);
-  for (let n = 1; n <= steps; n++) {
-    const t = n / steps;
-    if (!walkable({ x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t }, padding)) return false;
-  }
-  return true;
-}
+export type Rect = Point & { w: number; d: number };
+export type Building = Rect & { h: number; name: string; accent: string };
+export type Bounds = { minX: number; maxX: number; minZ: number; maxZ: number };
 
-// A small fixed-grid A* pathfinder keeps navigation independent of Three.js.
-export function findPath(from: Point, to: Point): Point[] {
-  if (!walkable(to)) return [];
-  if (clearLine(from, to, .4)) return [to];
-  const key = (p: Point) => `${p.x},${p.z}`;
-  const start = { x: Math.round(from.x), z: Math.round(from.z) };
-  const goal = { x: Math.round(to.x), z: Math.round(to.z) };
-  if (!walkable(start) || !walkable(goal)) return [];
-  const open: Point[] = [start], came = new Map<string, Point>(), cost = new Map([[key(start), 0]]);
-  const closed = new Set<string>();
-  while (open.length) {
-    open.sort((a, b) => (cost.get(key(a))! + distance(a, goal)) - (cost.get(key(b))! + distance(b, goal)));
-    const current = open.shift()!;
-    if (distance(current, goal) < .1) {
-      const path = [to]; let p = current;
-      while (came.has(key(p))) { path.unshift(p); p = came.get(key(p))!; }
-      return path;
-    }
-    closed.add(key(current));
-    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
-      const next = { x: current.x + dx, z: current.z + dz }, nk = key(next);
-      if (closed.has(nk) || !walkable(next) || !clearLine(current, next, .4)) continue;
-      const nextCost = cost.get(key(current))! + Math.hypot(dx, dz);
-      if (nextCost >= (cost.get(nk) ?? Infinity)) continue;
-      came.set(nk, current); cost.set(nk, nextCost);
-      if (!open.some(p => key(p) === nk)) open.push(next);
+export const distance = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.z - b.z);
+const inside = (p: Point, r: Rect, padding: number) => Math.abs(p.x - r.x) < r.w / 2 + padding && Math.abs(p.z - r.z) < r.d / 2 + padding;
+const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]] as const;
+
+// Buildings block movement and sight; low cover blocks movement only.
+export class World {
+  private readonly cols: number;
+  private readonly rows: number;
+  private readonly open: Uint8Array;
+  private readonly edges: Uint8Array;
+
+  constructor(readonly bounds: Bounds, readonly buildings: Building[], readonly cover: Rect[]) {
+    this.cols = Math.floor(bounds.maxX) - Math.ceil(bounds.minX) + 1;
+    this.rows = Math.floor(bounds.maxZ) - Math.ceil(bounds.minZ) + 1;
+    this.open = new Uint8Array(this.cols * this.rows);
+    this.edges = new Uint8Array(this.cols * this.rows);
+    for (let i = 0; i < this.open.length; i++) this.open[i] = this.walkable(this.point(i)) ? 1 : 0;
+    // A small fixed-grid navigation graph keeps pathing independent of Three.js.
+    for (let i = 0; i < this.open.length; i++) {
+      if (!this.open[i]) continue;
+      const p = this.point(i);
+      DIRS.forEach(([dx, dz], d) => {
+        const j = this.index({ x: p.x + dx, z: p.z + dz });
+        if (j >= 0 && this.open[j] && this.passable(p, this.point(j), .4)) this.edges[i] |= 1 << d;
+      });
     }
   }
-  return [];
+
+  private point(i: number): Point { return { x: Math.ceil(this.bounds.minX) + (i % this.cols), z: Math.ceil(this.bounds.minZ) + Math.floor(i / this.cols) }; }
+  private index(p: Point): number {
+    const c = p.x - Math.ceil(this.bounds.minX), r = p.z - Math.ceil(this.bounds.minZ);
+    return c < 0 || r < 0 || c >= this.cols || r >= this.rows ? -1 : r * this.cols + c;
+  }
+
+  walkable(p: Point, padding = .38): boolean {
+    const b = this.bounds;
+    return p.x > b.minX + padding && p.x < b.maxX - padding && p.z > b.minZ + padding && p.z < b.maxZ - padding &&
+      !this.buildings.some(r => inside(p, r, padding)) && !this.cover.some(r => inside(p, r, padding));
+  }
+  // Movement clearance along a segment.
+  passable(a: Point, b: Point, padding = .1): boolean { return this.sample(a, b, p => this.walkable(p, padding)); }
+  // Line of sight: only buildings block it.
+  sightClear(a: Point, b: Point): boolean {
+    return this.sample(a, b, p => !this.buildings.some(r => inside(p, r, .05)));
+  }
+  private sample(a: Point, b: Point, ok: (p: Point) => boolean) {
+    const steps = Math.ceil(distance(a, b) * 6);
+    for (let n = 1; n < steps; n++) {
+      const t = n / steps;
+      if (!ok({ x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t })) return false;
+    }
+    return true;
+  }
+  // True when `target` is crouched behind a barrier that lies on the attacker's line of fire.
+  coverBetween(attacker: Point, target: Point): boolean {
+    return this.cover.some(r => {
+      if (!inside(target, r, 1.1) || inside(attacker, r, 1.1)) return false;
+      const steps = Math.ceil(distance(attacker, target) * 8);
+      for (let n = 1; n < steps; n++) {
+        const t = n / steps;
+        if (inside({ x: attacker.x + (target.x - attacker.x) * t, z: attacker.z + (target.z - attacker.z) * t }, r, .05)) return true;
+      }
+      return false;
+    });
+  }
+
+  private nearestNode(p: Point): number {
+    let best = -1, bestD = Infinity;
+    const cx = Math.round(p.x), cz = Math.round(p.z);
+    for (let dz = -2; dz <= 2; dz++) for (let dx = -2; dx <= 2; dx++) {
+      const q = { x: cx + dx, z: cz + dz }, i = this.index(q);
+      if (i < 0 || !this.open[i]) continue;
+      const d = distance(p, q);
+      if (d < bestD && this.passable(p, q, .2)) { best = i; bestD = d; }
+    }
+    return best;
+  }
+
+  findPath(from: Point, to: Point): Point[] {
+    if (!this.walkable(to)) return [];
+    if (this.passable(from, to, .4)) return [to];
+    const start = this.nearestNode(from), goal = this.nearestNode(to);
+    if (start < 0 || goal < 0) return [];
+    const goalPoint = this.point(goal);
+    const cost = new Float32Array(this.open.length).fill(Infinity);
+    const came = new Int32Array(this.open.length).fill(-1);
+    const closed = new Uint8Array(this.open.length);
+    const heap: [number, number][] = [];
+    const push = (i: number, f: number) => {
+      heap.push([f, i]);
+      for (let k = heap.length - 1; k > 0;) { const p = (k - 1) >> 1; if (heap[p][0] <= heap[k][0]) break; [heap[p], heap[k]] = [heap[k], heap[p]]; k = p; }
+    };
+    const pop = () => {
+      const top = heap[0], last = heap.pop()!;
+      if (heap.length) {
+        heap[0] = last;
+        for (let k = 0; ;) {
+          const l = 2 * k + 1, r = l + 1; let m = k;
+          if (l < heap.length && heap[l][0] < heap[m][0]) m = l;
+          if (r < heap.length && heap[r][0] < heap[m][0]) m = r;
+          if (m === k) break; [heap[m], heap[k]] = [heap[k], heap[m]]; k = m;
+        }
+      }
+      return top[1];
+    };
+    cost[start] = 0; push(start, distance(this.point(start), goalPoint));
+    while (heap.length) {
+      const i = pop();
+      if (closed[i]) continue;
+      if (i === goal) {
+        const path: Point[] = [to];
+        for (let k = goal; k >= 0; k = came[k]) path.unshift(this.point(k));
+        return this.smooth(from, path);
+      }
+      closed[i] = 1;
+      const p = this.point(i);
+      DIRS.forEach(([dx, dz], d) => {
+        if (!(this.edges[i] & (1 << d))) return;
+        const j = i + dz * this.cols + dx, next = cost[i] + Math.hypot(dx, dz);
+        if (closed[j] || next >= cost[j]) return;
+        cost[j] = next; came[j] = i; push(j, next + distance({ x: p.x + dx, z: p.z + dz }, goalPoint));
+      });
+    }
+    return [];
+  }
+  // Drops waypoints that a straight walk can skip, so units do not zigzag along the grid.
+  private smooth(from: Point, path: Point[]): Point[] {
+    const out: Point[] = [];
+    let anchor = from;
+    for (let i = 0; i < path.length; i++) {
+      const next = path[i + 1];
+      if (next && this.passable(anchor, next, .4)) continue;
+      out.push(path[i]); anchor = path[i];
+    }
+    return out;
+  }
 }

@@ -4,7 +4,7 @@ A React Three Fiber squad-combat game served by one Cloudflare Worker. Campaign 
 
 ## Run
 
-Node.js 24 or newer. Install the locked dependencies with `npm ci`, then run `npm run dev`; the Cloudflare Vite plugin runs the Worker and Durable Object locally in workerd. `npm run build` bundles `dist/`; `npm run typecheck` runs the TypeScript compiler. `npm test` exercises navigation, combat/extraction, pause, save migration, upgrades, failure recovery, and the client holding a fast win's payout claim until the server's minimum mission time.
+Node.js 24 or newer. Install the locked dependencies with `npm ci`, then run `npm run dev`; the Cloudflare Vite plugin runs the Worker and Durable Object locally in workerd. `npm run build` bundles `dist/`; `npm run typecheck` runs the TypeScript compiler. `npm test` exercises district generation, navigation, detection and the alarm, abilities, every contract type, revive, fog of war, the campaign ledger (offers, recruits, upgrades, migration), and the client holding a fast win's payout claim until the server's minimum mission time.
 
 `npm run typecheck` checks the browser code and, with `worker/tsconfig.json`, the Worker. After editing `wrangler.jsonc`, run `npm run cf-typegen` to regenerate `worker/worker-configuration.d.ts`.
 
@@ -13,15 +13,26 @@ Direct dependency versions are pinned to the npm registry's stable `latest` rele
 ## Structure
 
 - `src/game/`: serializable campaign data, renderer-independent simulation, navigation and line-of-sight.
+- `src/game/campaign.ts`: campaign rules (contract offers, tiers and payouts, prices, roster, mission ledger) shared by the browser and the Worker.
+- `src/game/mapgen.ts`: builds a district (city blocks, cover, patrols, objectives) from a contract's seed.
+- `src/game/simulation.ts`: stealth, alarm, combat, abilities, objectives, revive and fog of war.
+- `src/game/classes.ts`: operative classes and their abilities.
 - `src/scene/`: React Three Fiber scene, procedural city and agents, camera, and visual effects. Frame updates mutate Three.js objects; UI snapshots update at 10 Hz.
-- `src/game/campaign.ts`: campaign rules (prices, payout, level cap, mission ledger) shared by the browser and the Worker.
-- `src/net/campaignClient.ts`: creates or loads the player's save code and reports deploys, completed contracts, and purchases to the Worker.
-- `src/main.tsx`: React DOM HUD, briefing, controls, headquarters, upgrade purchase flow, and save-code UI.
+- `src/net/campaignClient.ts`: creates or loads the player's save code and reports deploys, completed contracts, purchases, recruits and dismissals to the Worker.
+- `src/main.tsx`: React DOM HUD, contract board, squad picker, headquarters, and save-code UI.
 - `worker/`: Worker entry (`/api/*` routes, static assets) and the `PlayerCampaign` Durable Object.
 
-Select agents with click or 1/2, Shift-click to combine, A to select all. Click the street to move or a hostile to focus fire. S holds position. Space pauses and permits queued commands. Scroll to zoom, right-drag to pan, R to reset the camera. Touch uses tap commands and two-finger pan/zoom.
+## Play
 
-The campaign is intentionally one replayable district. Completing extraction pays 500 credits; ammunition costs 300 and plating costs 250, each capped at three levels. Progress saves to a Durable Object keyed by a 12-character save code (shown as `XXXX-XXXX-XXXX` in the briefing, headquarters, and help dialogs). The browser remembers its code in `localStorage['ndPlayer']`; enter the code on another device to continue there. A pre-server `ndSave` browser save is imported on first visit, then removed. The real-time mission runs in the browser; the Worker prices purchases and pays a contract once per deploy, and no sooner than 15 seconds after it. If the Worker is unreachable, the game stays playable and warns that progress is not saved.
+Pick one of three contracts on the board and up to four operatives, then deploy. Each contract is a generated district that grows with its tier: **assassination** (kill the target before it flees once the alarm sounds), **data heist** (hold the vault terminal for 12 s), **sabotage** (plant two charges) or **escort** (bring the VIP to extraction). Every contract ends at extraction.
+
+Guards patrol with vision cones, cameras sweep, and turrets guard objectives. Enemies outside your squad's line of sight are hidden. A full detection meter, or a hostile that survives being hit, raises the alarm: nearby guards hunt the squad, reinforcements arrive every 20 s, and an assassination target runs for an exit. Before the alarm the squad only fires at ordered targets. Finishing without an alarm pays a 25% stealth bonus. Low barriers halve fire from the far side.
+
+Operatives come in four classes, each with one ability: Assault (breach grenade, loud), Support (field heal), Recon (silent sniper shot that marks nearby enemies through walls) and Tech (EMP that stuns guards and turrets and blinds cameras). A downed operative can be revived by a teammate during the mission.
+
+Select agents with click or 1–4, Shift-click to combine, A to select all. Shift+1–4 uses that operative's ability; targeted abilities wait for a click and Esc cancels. Click the street to move, a hostile to focus fire, or a downed teammate to revive them. S holds position. Space pauses and permits queued commands. Scroll to zoom, right-drag to pan, R to reset the camera. Touch uses tap commands, two-finger pan/zoom and the ability buttons on the squad cards.
+
+The campaign starts with VEX (Assault) and ROOK (Support). Payouts run from 500 credits at tier 1 to 1,500 at tier 5, and the offered tiers rise as contracts are completed. Offers and recruits reroll after every deployment, won or lost. Headquarters sells ammunition (300) and plating (250) for the whole squad, ability upgrades per class (200; −15% cooldown and +20% effect per level), each capped at three levels, and recruits (400; roster of up to six, duplicates allowed, dismiss to free a slot). Progress saves to a Durable Object keyed by a 12-character save code (shown as `XXXX-XXXX-XXXX` on the board, at headquarters, and in the help dialog). The browser remembers its code in `localStorage['ndPlayer']`; enter the code on another device to continue there. A pre-server `ndSave` browser save is imported on first visit, then removed; saves from before contracts existed are upgraded with their credits, upgrades and progress kept. The real-time mission runs in the browser. The Worker deals the contract offers, prices purchases and recruits, and pays the stored contract once per deploy, no sooner than 15 seconds after it. The client reports whether the alarm was raised, and the Worker trusts that report for the stealth bonus. If the Worker is unreachable, the game stays playable and warns that progress is not saved.
 
 ## API
 
@@ -29,9 +40,11 @@ The campaign is intentionally one replayable district. Completing extraction pay
 |---|---|
 | `POST /api/players` | New save code; optional `{ "legacy": Campaign }` import |
 | `GET /api/campaign/:code` | Current campaign |
-| `POST /api/campaign/:code/missions` | Starts a contract; returns `missionId` |
-| `POST /api/campaign/:code/missions/:id/complete` | Pays the contract once |
-| `POST /api/campaign/:code/upgrades/:type` | Buys `weapon` or `armor` |
+| `POST /api/campaign/:code/missions` | `{ contractId, squad }`: deploys an offered contract and deals a new board; returns `missionId` and the campaign |
+| `POST /api/campaign/:code/missions/:id/complete` | `{ stealth }`: pays the contract once |
+| `POST /api/campaign/:code/upgrades/:type` | Buys `weapon`, `armor`, or an ability upgrade (`assault`, `support`, `recon`, `tech`) |
+| `POST /api/campaign/:code/recruits/:id` | Hires an offered recruit |
+| `DELETE /api/campaign/:code/roster/:id` | Dismisses an operative |
 
 ## Deploy
 
