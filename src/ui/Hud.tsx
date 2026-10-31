@@ -29,7 +29,7 @@ function Tracker({ state }: { state: Snapshot }) {
     })}</ol>
     <footer className="tracker-pay">
       <span><small>Payout</small><strong><Credits value={c.payout} /></strong></span>
-      <span className={state.alarm ? 'lost' : 'bonus'}><small>{state.alarm ? 'Bonus lost' : 'Stealth bonus'}</small><strong>+<Credits value={missionPayout(c, true) - c.payout} /></strong></span>
+      <span className={state.stealth ? 'bonus' : 'lost'}><small>{state.stealth ? 'Stealth bonus' : 'Bonus lost'}</small><strong>+<Credits value={missionPayout(c, true) - c.payout} /></strong></span>
     </footer>
   </section>;
 }

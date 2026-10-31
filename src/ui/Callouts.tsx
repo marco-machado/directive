@@ -25,7 +25,8 @@ export function useCallouts(state: Snapshot) {
     if (p.phase === 'mission' && state.phase === 'headquarters') { setQueue([]); stinger(state.result === 'success' ? 'success' : 'failure'); return; }
     if (p.phase !== 'mission' || state.phase !== 'mission') return;
     if (state.pending && !p.pending) play('aim');
-    if (state.alarm && !p.alarm) add({ tone: 'danger', kicker: 'Alarm raised', title: 'Weapons free', detail: `Reinforcements in ${REINFORCE_SECONDS} s` }, 'alarm');
+    if (state.alarm && !p.alarm) add({ tone: 'danger', kicker: 'Alarm raised', title: 'Weapons free', detail: state.reinforced >= REINFORCE_CAP ? 'No more reinforcements' : `Reinforcements in ${REINFORCE_SECONDS} s` }, 'alarm');
+    if (!state.alarm && p.alarm) add({ tone: 'good', kicker: 'Alarm cleared', title: 'Holding fire', detail: 'Stealth bonus lost' }, 'objective');
     state.objectives.forEach((o, i) => {
       if (!o.done || p.objectives[i]?.done || o.kind === 'extract') return;
       const upcoming = state.objectives.find(n => !n.done);
