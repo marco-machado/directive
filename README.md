@@ -10,6 +10,8 @@ Node.js 24 or newer. Install the locked dependencies with `npm ci`, then run `np
 
 Direct dependency versions are pinned to the npm registry's stable `latest` releases resolved during this rewrite. `package-lock.json` locks the transitive dependency graph.
 
+`@react-three/fiber` 9.8.2 is patched: `patches/@react-three+fiber+9.8.2.patch` swaps its store's deprecated `THREE.Clock` for a Clock-compatible class backed by `THREE.Timer`, and the `postinstall` script reapplies it with `patch-package` on every install. When upgrading R3F, regenerate or drop the patch.
+
 ## Structure
 
 - `src/game/`: serializable campaign data, renderer-independent simulation, navigation and line-of-sight.

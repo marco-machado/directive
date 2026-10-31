@@ -7,9 +7,10 @@
   --mint: #5ef2c0; --amber: #ffb454; --red: #ff5148; --cyan: #62d0ff; --gold: #ffd77a;
   --sl: env(safe-area-inset-left, 0px); --sr: env(safe-area-inset-right, 0px); --sb: env(safe-area-inset-bottom, 0px);
   --top: calc(64px + env(safe-area-inset-top, 0px)); --col-l: 340px; --col-r: 400px; --left-col: 300px; --hud-b: 120px;
-  font-family: var(--f-body); color: var(--text); background: var(--bg);
+  font-family: var(--f-body); color: var(--text); background: var(--bg); scrollbar-color: var(--line-2) transparent;
 }
 *, *::before, *::after { box-sizing: border-box }
+* { scrollbar-width: thin }
 body { margin: 0; background: var(--bg) }
 button { font: inherit; color: inherit; cursor: pointer }
 button:disabled { cursor: not-allowed }
@@ -44,6 +45,7 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
   background-size: 16px 2px, 2px 16px, 16px 2px, 2px 16px; background-position: top left, top left, bottom right, bottom right }
 .panel-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 16px 18px 13px; border-bottom: 1px solid var(--line) }
 .panel-head h2, .panel-head h3 { margin: 0; font: 600 20px/1 var(--f-display); letter-spacing: .08em; text-transform: uppercase }
+.panel-scroll { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain }
 .panel-meta { font: 600 11px var(--f-ui); letter-spacing: .14em; text-transform: uppercase; color: var(--dim); text-align: right }
 .kicker { display: flex; align-items: center; gap: 8px; margin: 0; font: 600 11px var(--f-ui); letter-spacing: .2em; text-transform: uppercase; color: var(--amber) }
 .kicker .icon { width: 15px; height: 15px }
@@ -172,7 +174,7 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 /* ---- Mission select ---- */
 .select { position: absolute; inset: calc(var(--top) + 20px) calc(20px + var(--sr)) calc(20px + var(--sb)) calc(20px + var(--sl)); z-index: 3; display: grid; grid-template-columns: var(--col-l) minmax(0, 1fr) var(--col-r); gap: 28px; pointer-events: none }
 .select > * { pointer-events: auto }
-.select-offers { align-self: start; max-height: 100%; overflow: auto; animation: slide-right .45s ease-out both }
+.select-offers { display: flex; flex-direction: column; align-self: start; max-height: 100%; animation: slide-right .45s ease-out both }
 .select-center { display: flex; flex-direction: column; justify-content: space-between; align-items: center; pointer-events: none }
 .select-center > * { pointer-events: auto }
 .sector-tag { pointer-events: none; text-align: center; text-shadow: 0 2px 14px #000; animation: drop .4s .1s ease-out both }
@@ -243,7 +245,8 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 
 /* ---- Headquarters ---- */
 .hq { position: absolute; inset: calc(var(--top) + 20px) calc(20px + var(--sr)) calc(20px + var(--sb)) calc(20px + var(--sl)); z-index: 3; display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 24px; max-width: 1240px; margin: 0 auto }
-.hq .panel { display: flex; flex-direction: column; align-self: start; min-height: 0; max-height: 100%; overflow: auto; overscroll-behavior: contain; padding-bottom: 18px }
+.hq .panel { display: flex; flex-direction: column; align-self: start; min-height: 0; max-height: 100% }
+.hq .panel-scroll { padding-bottom: 18px }
 .hq-armory { animation: rise .4s ease-out both }
 .hq-roster { animation: rise .4s .06s ease-out both }
 .upgrades { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 10px; padding: 0 18px }
@@ -501,7 +504,8 @@ dialog::backdrop { overflow: hidden; overscroll-behavior: contain; background: r
   .screen-select .view-frame { inset: calc(var(--top) + 84px) 24px 64px 404px }
   .brand-name { display: none }
   .hq { grid-template-columns: 1fr; overflow: auto }
-  .hq .panel { overflow: visible; max-height: none }
+  .hq .panel { max-height: none }
+  .hq .panel-scroll { overflow: visible }
   :root { --left-col: 260px }
   .agent { width: 184px }
   .agent-portrait { display: none }
@@ -537,9 +541,11 @@ dialog::backdrop { overflow: hidden; overscroll-behavior: contain; background: r
   .select { inset: calc(var(--top) + 47px + 30dvh) 0 0; display: block; overflow: auto; overscroll-behavior: contain; padding: 12px 12px 0; background: var(--bg); border-top: 1px solid var(--line-2) }
   .screen-select .view-frame { inset: calc(var(--top) + 47px) 0 auto 0; height: 30dvh }
   .select .panel { backdrop-filter: none; animation: none }
-  .select-offers { max-height: none; overflow: visible; margin-bottom: 12px }
+  .select-offers { max-height: none; margin-bottom: 12px }
+  .select-offers .panel-scroll { overflow: visible }
   .select-center { display: none }
   .select-brief { max-height: none; margin: 0 -12px; border-width: 1px 0 0 }
+  .select-brief::before { display: none }
   .brief-scroll { overflow: visible; padding: 16px 12px 8px }
   .deploy-dock { position: sticky; bottom: 0; padding: 10px 12px calc(12px + var(--sb)); background: rgb(4 10 13 / .97) }
   .roster-grid { grid-template-columns: 1fr }
