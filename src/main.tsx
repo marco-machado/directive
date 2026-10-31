@@ -15,6 +15,7 @@ import { Manual } from './ui/Manual.tsx';
 import { MissionSelect } from './ui/MissionSelect.tsx';
 import { play, setMood, sound } from './ui/audio.ts';
 import { TitleScreen } from './ui/TitleScreen.tsx';
+import { TooSmall, useTooSmall } from './ui/TooSmall.tsx';
 import { TopBar } from './ui/TopBar.tsx';
 import type { Screen, Tab } from './ui/TopBar.tsx';
 import './style.css';
@@ -22,6 +23,7 @@ import './style.css';
 function App() {
   const state = useSyncExternalStore(sim.subscribe, sim.getSnapshot);
   const { muted } = useSyncExternalStore(sound.subscribe, sound.settings);
+  const tooSmall = useTooSmall();
   const [saveCode, setSaveCode] = useState<string | null>(null), [connecting, setConnecting] = useState(true), [loadingCode, setLoadingCode] = useState(false);
   useEffect(() => { connection.then(setSaveCode, () => sim.setSaveUnavailable(true)).finally(() => setConnecting(false)); }, []);
   const [onTitle, setOnTitle] = useState(true), [tab, setTab] = useState<Tab>('missions');
@@ -39,9 +41,10 @@ function App() {
   // Focus follows phase changes; switching between the Missions and Headquarters tabs keeps it on the tab.
   const focusKey = onTitle ? 'title' : state.phase;
   useEffect(() => { titleRef.current?.focus(); }, [focusKey]);
+  useEffect(() => { if (tooSmall) sim.pause(); }, [tooSmall]);
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
-      if (e.repeat || e.ctrlKey || e.metaKey || e.altKey || help || menu || audio || confirmRestart || sim.phase !== 'mission') return;
+      if (e.repeat || e.ctrlKey || e.metaKey || e.altKey || tooSmall || help || menu || audio || confirmRestart || sim.phase !== 'mission') return;
       if (e.target instanceof HTMLElement && ['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) return;
       // A focused button keeps Space and Enter for itself; every other hotkey still works.
       if (e.target instanceof HTMLButtonElement && (e.code === 'Space' || e.code === 'Enter')) return;
@@ -57,7 +60,7 @@ function App() {
     const visibility = () => { if (document.hidden) sim.pause(); };
     window.addEventListener('keydown', key); document.addEventListener('visibilitychange', visibility);
     return () => { window.removeEventListener('keydown', key); document.removeEventListener('visibilitychange', visibility); };
-  }, [help, menu, audio, confirmRestart]);
+  }, [tooSmall, help, menu, audio, confirmRestart]);
   const openManual = () => { sim.pause(); setHelp(true); };
   const openMenu = () => { sim.pause(); setMenu(true); };
   const openAudio = () => { sim.pause(); setAudio('open'); };
@@ -108,6 +111,7 @@ function App() {
         <button className="btn danger" onClick={() => { sim.dismiss(dismissing.id); setDismissing(null); }}><Icon name="dismiss" /><span>Dismiss operative</span></button>
       </div>
     </div></Dialog> : null}
+    {tooSmall ? <TooSmall /> : null}
   </main>;
 }
 

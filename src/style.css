@@ -23,7 +23,7 @@ button:disabled { cursor: not-allowed }
 kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 4px; border: 1px solid var(--line-2); border-bottom-width: 2px; background: rgb(2 6 8 / .85); font: 700 10px/1 var(--f-ui); letter-spacing: .04em; text-transform: uppercase; color: var(--dim) }
 
 /* ---- Stage: the 3D scene, its screen treatment, and the free frame the camera fits into ---- */
-.app { position: relative; height: 100dvh; min-height: 640px; overflow: hidden; isolation: isolate }
+.app { position: relative; height: 100dvh; overflow: hidden; isolation: isolate }
 .scene { position: absolute; inset: 0; z-index: 0 }
 .scene canvas { touch-action: none; transition: filter .3s }
 .paused .scene canvas { filter: saturate(.3) brightness(.78) }
@@ -437,6 +437,11 @@ dialog:modal { overscroll-behavior: contain }
 dialog::backdrop { overflow: hidden; overscroll-behavior: contain; background: rgb(2 6 8 / .72); backdrop-filter: blur(4px) }
 .dialog-close { position: absolute; top: 14px; right: 14px; z-index: 1 }
 .dialog-body { padding: 28px 28px 24px }
+.too-small { width: 100vw; height: 100dvh; max-width: none; max-height: none; display: grid; place-content: center; justify-items: center; gap: 12px; padding: 24px; border: 0; background: var(--bg); text-align: center }
+.too-small::backdrop { background: var(--bg) }
+.too-small-logo { width: 52px; height: 52px; color: var(--text) }
+.too-small h2 { margin: 0; font: 700 30px/1 var(--f-display); letter-spacing: .03em; text-transform: uppercase }
+.too-small p:last-child { max-width: 32ch; margin: 0; font: 400 15px/1.6 var(--f-body); color: var(--dim) }
 .dialog-body h2 { margin: 6px 0 14px; padding-right: 44px; font: 700 34px/1 var(--f-display); letter-spacing: .03em; text-transform: uppercase }
 .dialog-body > p:not(.kicker) { margin: 0 0 20px; font: 400 15px/1.6 var(--f-body); color: var(--dim) }
 .dialog-body > .btn.primary { width: 100%; justify-content: space-between; margin-top: 22px }
@@ -509,7 +514,7 @@ dialog::backdrop { overflow: hidden; overscroll-behavior: contain; background: r
   .offer { min-height: 60px; padding: 8px 12px }
   .screen-select .view-frame { inset: calc(var(--top) + 84px) 24px 64px 404px }
   .brand-name { display: none }
-  .hq { grid-template-columns: 1fr; overflow: auto }
+  .hq { grid-template-columns: 1fr; grid-auto-rows: max-content; overflow: auto }
   .hq .panel { max-height: none }
   .hq .panel-scroll { overflow: visible }
   :root { --left-col: 260px }
@@ -518,91 +523,35 @@ dialog::backdrop { overflow: hidden; overscroll-behavior: contain; background: r
   .cmd { width: 52px; height: 52px }
   .cmd span { display: none }
   .debrief-grid { grid-template-columns: 1fr }
-}
-@media (max-width: 700px) {
-  :root { --top: calc(52px + env(safe-area-inset-top, 0px)); --hud-b: 190px }
-  .app { min-height: 0 }
-  .topbar { grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; padding-inline: calc(12px + var(--sl)) calc(12px + var(--sr)) }
-  .brand .logo { width: 30px; height: 30px }
-  .topbar-title { font-size: 12px; letter-spacing: .16em; text-align: center }
-  .funds { min-width: 0; padding-left: 10px }
-  .funds small { display: none }
-  .funds .credits { font-size: 17px }
-  .icon-button { width: 40px; height: 40px }
-  .screen-mission .icon-button.optional { display: none }
-  .tabs { position: absolute; top: 100%; left: 0; right: 0; padding: 4px 12px; border-width: 0 0 1px; background: rgb(4 10 13 / .95) }
-  .tabs button { flex: 1; justify-content: center; padding: 0 8px }
-  .status { gap: 8px; padding-left: 10px; justify-self: center }
-  .status-state strong { font-size: 12px; letter-spacing: .16em }
-  .status-detail { display: none }
-  .status-clock { font-size: 15px }
-  .title-screen { padding: 28px calc(20px + var(--sr)) calc(20px + var(--sb)) calc(20px + var(--sl)) }
-  .title-tagline { font-size: 15px }
-  .title-logo { width: 44px; height: 44px }
-  .title-name { font-size: 54px }
-  .title-foot { gap: 10px }
-  .title-foot .save-code { order: 3; width: 100% }
-  .screen-title .scene-fx { background: linear-gradient(rgb(4 9 11 / .9), rgb(4 9 11 / .7) 50%, rgb(4 9 11 / .95)) }
-  .screen-title .view-frame { inset: 45% 0 0 0 }
-  .select { inset: calc(var(--top) + 47px + 30dvh) 0 0; display: block; overflow: auto; overscroll-behavior: contain; padding: 12px 12px 0; background: var(--bg); border-top: 1px solid var(--line-2) }
-  .screen-select .view-frame { inset: calc(var(--top) + 47px) 0 auto 0; height: 30dvh }
-  .select .panel { backdrop-filter: none; animation: none }
-  .select-offers { max-height: none; margin-bottom: 12px }
-  .select-offers .panel-scroll { overflow: visible }
-  .select-center { display: none }
-  .select-brief { max-height: none; margin: 0 -12px; border-width: 1px 0 0 }
-  .select-brief::before { display: none }
-  .brief-scroll { overflow: visible; padding: 16px 12px 8px }
-  .deploy-dock { position: sticky; bottom: 0; padding: 10px 12px calc(12px + var(--sb)); background: rgb(4 10 13 / .97) }
+  .debrief { place-items: start center }
   .roster-grid { grid-template-columns: 1fr }
-  .hq { inset: calc(var(--top) + 47px) 0 0; display: block; padding: 12px; overflow: auto; overscroll-behavior: contain }
-  .hq .panel { margin-bottom: 12px; backdrop-filter: none }
-  .upgrades { grid-template-columns: 1fr; padding: 0 12px }
-  .roster-list { padding-inline: 12px }
-  .section-title { margin-inline: 12px }
-  .debrief { padding: 12px; place-items: start center }
-  .debrief-card { padding: 20px 16px }
-  .debrief-actions { flex-direction: column }
-  .stat strong { font-size: 18px }
-  .screen-mission .view-frame { inset: calc(var(--top) + 56px) 0 var(--hud-b) 0 }
-  .hud-left { display: contents }
-  .tracker { position: absolute; z-index: 3; top: var(--top); left: 0; right: 0; width: auto; display: flex; align-items: center; border-width: 0 0 1px; box-shadow: none; backdrop-filter: blur(8px) }
-  .tracker::before { display: none }
-  .tracker-head { padding: 8px 10px 8px 12px; border: 0 }
-  .tracker-title, .tier-badge, .tracker-pay { display: none }
-  .tracker-head { grid-template-columns: 32px }
-  .tracker-icon { width: 32px; height: 32px }
-  .objectives { flex: 1; padding: 8px 12px 8px 0 }
-  .objectives li:not(.current) { display: none }
-  .pause-banner { top: calc(var(--top) + 58px); max-width: calc(100% - 24px) }
-  .pause-banner small { display: none }
-  .targeting { left: 8px; right: 8px; translate: none; max-width: none; bottom: calc(var(--hud-b) + 4px) }
-  .targeting .btn { min-height: 44px }
-  .hud-bottom { left: calc(8px + var(--sl)); right: calc(8px + var(--sr)); bottom: calc(8px + var(--sb)); grid-template-columns: 1fr; grid-template-areas: "squad" "commands"; gap: 6px }
-  .comms { position: absolute; z-index: 3; left: calc(8px + var(--sl)); right: calc(8px + var(--sr)); bottom: calc(var(--hud-b) - 32px) }
-  .comms li { display: none; padding: 4px 8px; font-size: 12px; white-space: nowrap; overflow: hidden }
-  .comms li:last-child { display: flex }
-  .comms li span { overflow: hidden; text-overflow: ellipsis }
+}
+@media (max-width: 1000px) {
+  :root { --hud-b: 172px }
+  .callouts { left: calc(var(--left-col) + 40px + var(--sl)) }
+  .callout { min-width: 0 }
+  .targeting { left: auto; right: calc(24px + var(--sr)); translate: none; max-width: calc(100% - var(--left-col) - 64px - var(--sl) - var(--sr)) }
+  .hud-bottom { grid-template-columns: 1fr; grid-template-areas: "squad" "commands"; gap: 6px }
+  .controls-hint { display: none }
   .squad { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; justify-self: stretch }
   .agent, .agent.down { width: auto; grid-template-columns: 1fr }
   .agent.selected { transform: none }
-  .agent-select { min-height: 44px; padding: 6px }
-  .agent-name small, .hp-text { display: none }
-  .agent-name b { font-size: 14px }
+  .agent-select { min-height: 44px }
   .ability { min-height: 44px; border-left: 0; border-top: 1px solid var(--line); grid-auto-flow: column; justify-content: center; gap: 6px }
   .ability .icon { width: 20px; height: 20px }
-  .agent-down { min-height: 44px; border-left: 0; border-top: 1px solid var(--line); font-size: 9px }
-  .commands { justify-self: stretch; flex-direction: row }
+  .agent-down { min-height: 44px; border-left: 0; border-top: 1px solid var(--line) }
+  .commands { justify-self: stretch }
   .cmd { display: flex; flex: 1; align-items: center; justify-content: center; width: auto; height: 44px; gap: 8px }
   .cmd span { display: inline }
-  .cmd kbd, .controls-hint { display: none }
-  .callouts { top: 34% }
-  .callout { min-width: 0; padding: 12px 28px }
-  .callout strong { font-size: 24px }
-  .dialog-body { padding: 22px 18px 18px }
-  .dialog-body h2 { font-size: 28px }
-  .dialog-actions { flex-direction: column-reverse }
-  .manual-grid { grid-template-columns: 1fr; gap: 20px }
+  .cmd kbd { display: none }
+}
+@media (max-width: 1000px) and (max-height: 760px) {
+  .comms li:nth-last-child(n+3) { display: none }
+}
+@media (orientation: portrait) {
+  .screen-title .view-frame { inset: 0 0 55% 0 }
+  .screen-title .scene-fx { background: linear-gradient(rgb(4 9 11 / 0) 0%, rgb(4 9 11 / .7) 45%, rgb(4 9 11 / .96) 70%), radial-gradient(ellipse at 50% 25%, transparent 45%, rgb(2 6 8 / .7) 100%) }
+  .title-stack { margin-block: auto 0 }
 }
 @media (pointer: coarse) {
   .icon-button { width: 44px; height: 44px }
