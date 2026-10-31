@@ -20,15 +20,17 @@ export function MissionSelect({ state, titleRef, onChoose, onDeploy, onRecenter,
   return <div className="select">
     <section className="select-offers panel" aria-labelledby="ops-title">
       <header className="panel-head"><h2 id="ops-title" ref={titleRef} tabIndex={-1}>Contracts</h2><span className="panel-meta">Contract {pad(campaign.completed + 1)}</span></header>
-      <div className="offers" role="group" aria-label="Contracts">{campaign.offers.map(c => {
-        const on = c.id === contract?.id;
-        return <button key={c.id} className={`offer${on ? ' selected' : ''}`} aria-pressed={on} style={threat(c.tier)} onClick={() => onChoose(c.id)}>
-          <span className="offer-icon"><Icon name={c.type} /></span>
-          <span className="offer-copy"><strong>{CONTRACTS[c.type].title}</strong><small>Sector {pad(c.sector)} · {c.district}</small></span>
-          <span className="offer-side"><Credits value={c.payout} /><span className="offer-tier">T{c.tier}<Pips value={c.tier} max={MAX_TIER} label="Threat tier" /></span></span>
-        </button>;
-      })}</div>
-      {campaign.offers.length ? null : <p className="empty-note">No contracts on the board.</p>}
+      <div className="panel-scroll">
+        <div className="offers" role="group" aria-label="Contracts">{campaign.offers.map(c => {
+          const on = c.id === contract?.id;
+          return <button key={c.id} className={`offer${on ? ' selected' : ''}`} aria-pressed={on} style={threat(c.tier)} onClick={() => onChoose(c.id)}>
+            <span className="offer-icon"><Icon name={c.type} /></span>
+            <span className="offer-copy"><strong>{CONTRACTS[c.type].title}</strong><small>Sector {pad(c.sector)} · {c.district}</small></span>
+            <span className="offer-side"><Credits value={c.payout} /><span className="offer-tier">T{c.tier}<Pips value={c.tier} max={MAX_TIER} label="Threat tier" /></span></span>
+          </button>;
+        })}</div>
+        {campaign.offers.length ? null : <p className="empty-note">No contracts on the board.</p>}
+      </div>
     </section>
 
     <div className="select-center">

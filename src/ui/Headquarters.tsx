@@ -33,34 +33,38 @@ export function Headquarters({ campaign, saveCode, titleRef, onDismiss, connecti
   return <div className="hq">
     <section className="hq-armory panel" aria-labelledby="ops-title">
       <header className="panel-head"><h2 id="ops-title" ref={titleRef} tabIndex={-1}>Armory</h2><span className="panel-meta">Upgrades apply to every operative</span></header>
-      <h3 className="section-title">Squad gear</h3>
-      <div className="upgrades">
-        <Upgrade icon="ammo" title="Smart ammunition" detail="Armor-piercing rounds for the whole squad" stat="Damage" now={`+${campaign.weapon * WEAPON_BONUS}`} next={`+${(campaign.weapon + 1) * WEAPON_BONUS}`}
-          level={campaign.weapon} cost={GEAR_COST.weapon} cash={cash} onBuy={() => sim.buy('weapon')} />
-        <Upgrade icon="plating" title="Dermal plating" detail="Subdermal armor for every operative" stat="Health" now={`+${campaign.armor * ARMOR_BONUS}`} next={`+${(campaign.armor + 1) * ARMOR_BONUS}`}
-          level={campaign.armor} cost={GEAR_COST.armor} cash={cash} onBuy={() => sim.buy('armor')} />
+      <div className="panel-scroll">
+        <h3 className="section-title">Squad gear</h3>
+        <div className="upgrades">
+          <Upgrade icon="ammo" title="Smart ammunition" detail="Armor-piercing rounds for the whole squad" stat="Damage" now={`+${campaign.weapon * WEAPON_BONUS}`} next={`+${(campaign.weapon + 1) * WEAPON_BONUS}`}
+            level={campaign.weapon} cost={GEAR_COST.weapon} cash={cash} onBuy={() => sim.buy('weapon')} />
+          <Upgrade icon="plating" title="Dermal plating" detail="Subdermal armor for every operative" stat="Health" now={`+${campaign.armor * ARMOR_BONUS}`} next={`+${(campaign.armor + 1) * ARMOR_BONUS}`}
+            level={campaign.armor} cost={GEAR_COST.armor} cash={cash} onBuy={() => sim.buy('armor')} />
+        </div>
+        <h3 className="section-title">Class abilities</h3>
+        <div className="upgrades">{CLASSES.map(cls => {
+          const ability = CLASS_STATS[cls].ability, level = campaign.abilities[cls];
+          return <Upgrade key={cls} cls={cls} icon={ability} title={ABILITY_STATS[ability].name} detail={`${CLASS_STATS[cls].title} ability`} stat="Cooldown · effect"
+            now={`${secs(abilityCooldown(ability, level))} · ${Math.round(effectScale(level) * 100)}%`} next={`${secs(abilityCooldown(ability, level + 1))} · ${Math.round(effectScale(level + 1) * 100)}%`}
+            level={level} cost={ABILITY_UPGRADE_COST} cash={cash} onBuy={() => sim.buy(cls)} />;
+        })}</div>
       </div>
-      <h3 className="section-title">Class abilities</h3>
-      <div className="upgrades">{CLASSES.map(cls => {
-        const ability = CLASS_STATS[cls].ability, level = campaign.abilities[cls];
-        return <Upgrade key={cls} cls={cls} icon={ability} title={ABILITY_STATS[ability].name} detail={`${CLASS_STATS[cls].title} ability`} stat="Cooldown · effect"
-          now={`${secs(abilityCooldown(ability, level))} · ${Math.round(effectScale(level) * 100)}%`} next={`${secs(abilityCooldown(ability, level + 1))} · ${Math.round(effectScale(level + 1) * 100)}%`}
-          level={level} cost={ABILITY_UPGRADE_COST} cash={cash} onBuy={() => sim.buy(cls)} />;
-      })}</div>
     </section>
 
     <section className="hq-roster panel" aria-label="Roster">
       <header className="panel-head"><h3>Roster</h3><span className="panel-meta">{campaign.roster.length} / {ROSTER_CAP} operatives</span></header>
-      <ul className="roster-list">{campaign.roster.map(o => <li className="roster-row" key={o.id}><OperativeLabel op={o} />
-        <button className="btn ghost small danger" onClick={() => onDismiss(o)} disabled={campaign.roster.length <= 1} aria-label={`Dismiss ${o.name}`}><Icon name="dismiss" />Dismiss</button></li>)}</ul>
-      <h3 className="section-title">Recruits <small>New candidates after every deployment</small></h3>
-      {campaign.recruits.length ? <ul className="roster-list recruits">{campaign.recruits.map(r => <li className="roster-row" key={r.id}><OperativeLabel op={r} />
-        <button className="btn buy" data-cue="own" onClick={() => { if (sim.recruit(r.id)) play('purchase'); }} disabled={full || cash < RECRUIT_COST}
-          aria-label={full ? `Recruit ${r.name}: roster full` : `Recruit ${r.name} for ${credits(RECRUIT_COST)}`}>{full ? 'Roster full' : <><Icon name="recruit" /><Credits value={RECRUIT_COST} /></>}</button></li>)}</ul>
-        : <p className="empty-note">No candidates right now. New recruits arrive after the next deployment.</p>}
-      {saveCode ? <SaveCode code={saveCode} /> : null}
-      {connecting ? null : <div className="hq-load"><LoadSaveCode onLoaded={onLoaded} busy={loadingCode} setBusy={setLoadingCode} /></div>}
-      <small className="footnote">Progress saves to your save code. Enter it on another device to continue there.</small>
+      <div className="panel-scroll">
+        <ul className="roster-list">{campaign.roster.map(o => <li className="roster-row" key={o.id}><OperativeLabel op={o} />
+          <button className="btn ghost small danger" onClick={() => onDismiss(o)} disabled={campaign.roster.length <= 1} aria-label={`Dismiss ${o.name}`}><Icon name="dismiss" />Dismiss</button></li>)}</ul>
+        <h3 className="section-title">Recruits <small>New candidates after every deployment</small></h3>
+        {campaign.recruits.length ? <ul className="roster-list recruits">{campaign.recruits.map(r => <li className="roster-row" key={r.id}><OperativeLabel op={r} />
+          <button className="btn buy" data-cue="own" onClick={() => { if (sim.recruit(r.id)) play('purchase'); }} disabled={full || cash < RECRUIT_COST}
+            aria-label={full ? `Recruit ${r.name}: roster full` : `Recruit ${r.name} for ${credits(RECRUIT_COST)}`}>{full ? 'Roster full' : <><Icon name="recruit" /><Credits value={RECRUIT_COST} /></>}</button></li>)}</ul>
+          : <p className="empty-note">No candidates right now. New recruits arrive after the next deployment.</p>}
+        {saveCode ? <SaveCode code={saveCode} /> : null}
+        {connecting ? null : <div className="hq-load"><LoadSaveCode onLoaded={onLoaded} busy={loadingCode} setBusy={setLoadingCode} /></div>}
+        <small className="footnote">Progress saves to your save code. Enter it on another device to continue there.</small>
+      </div>
     </section>
   </div>;
 }
