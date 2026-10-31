@@ -4,8 +4,8 @@ import { AudioButton, credits, LoadSaveCode, pad, SaveCode } from './common.tsx'
 import { Icon, Logo } from './icons.tsx';
 import { Uplink } from './TopBar.tsx';
 
-export function TitleScreen({ campaign, connecting, offline, saveCode, loadingCode, setLoadingCode, onLoaded, onContinue, onManual, onAudio }: {
-  campaign: Campaign; connecting: boolean; offline: boolean; saveCode: string | null;
+export function TitleScreen({ campaign, connecting, offline, syncing, saveCode, loadingCode, setLoadingCode, onLoaded, onContinue, onManual, onAudio }: {
+  campaign: Campaign; connecting: boolean; offline: boolean; syncing: boolean; saveCode: string | null;
   loadingCode: boolean; setLoadingCode: (busy: boolean) => void; onLoaded: (code: string) => void; onContinue: () => void; onManual: () => void; onAudio: () => void;
 }) {
   const [loading, setLoading] = useState(false), start = useRef<HTMLButtonElement>(null);
@@ -26,7 +26,7 @@ export function TitleScreen({ campaign, connecting, offline, saveCode, loadingCo
         <button className="menu-item" aria-expanded={loading && !connecting} disabled={connecting} onClick={() => setLoading(v => !v)}>
           <span className="menu-item-copy"><strong>Load save code</strong><small>{connecting ? 'Available once the uplink is up' : 'Continue a campaign from another device'}</small></span><Icon name="key" />
         </button>
-        {loading && !connecting ? <LoadSaveCode onLoaded={code => { setLoading(false); onLoaded(code); }} busy={loadingCode} setBusy={setLoadingCode} /> : null}
+        {loading && !connecting ? <LoadSaveCode onLoaded={code => { setLoading(false); onLoaded(code); }} busy={loadingCode} setBusy={setLoadingCode} syncing={syncing} /> : null}
         <button className="menu-item" onClick={onManual}>
           <span className="menu-item-copy"><strong>Operator manual</strong><small>Controls and stealth rules</small></span><Icon name="help" />
         </button>

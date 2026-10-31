@@ -71,13 +71,13 @@ function App() {
     </div>
     <div className="scene-fx" aria-hidden="true" />
     <div ref={frame} className="view-frame" aria-hidden="true" />
-    {onTitle ? <TitleScreen campaign={state.campaign} connecting={connecting} offline={state.saveUnavailable} saveCode={saveCode} loadingCode={loadingCode} setLoadingCode={setLoadingCode}
+    {onTitle ? <TitleScreen campaign={state.campaign} connecting={connecting} offline={state.saveUnavailable} syncing={state.syncing} saveCode={saveCode} loadingCode={loadingCode} setLoadingCode={setLoadingCode}
       onLoaded={loaded} onContinue={() => setOnTitle(false)} onManual={() => setHelp(true)} onAudio={openAudio} />
       : <TopBar state={state} screen={screen} tab={tab} setTab={setTab} connecting={connecting} onManual={openManual} onAudio={openAudio} onMenu={openMenu} />}
     {screen === 'select' ? <MissionSelect state={state} titleRef={titleRef} onChoose={id => { sim.chooseContract(id); resetCamera(); }} onDeploy={sim.deploy}
       onRecenter={resetCamera} deployBlocked={deployBlocked} connecting={connecting} /> : null}
     {screen === 'hq' ? <Headquarters campaign={state.campaign} saveCode={saveCode} titleRef={titleRef} onDismiss={setDismissing}
-      connecting={connecting} loadingCode={loadingCode} setLoadingCode={setLoadingCode} onLoaded={setSaveCode} /> : null}
+      connecting={connecting} syncing={state.syncing} loadingCode={loadingCode} setLoadingCode={setLoadingCode} onLoaded={setSaveCode} /> : null}
     {screen === 'debrief' ? <Debrief state={state} saveCode={saveCode} titleRef={titleRef} onBoard={() => toBoard('missions')} onHeadquarters={() => toBoard('hq')} /> : null}
     {screen === 'mission' ? <Hud state={state} onRecenter={resetCamera} /> : null}
     <Callouts callout={screen === 'mission' ? callout : null} />

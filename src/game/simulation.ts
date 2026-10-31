@@ -28,7 +28,7 @@ export type Snapshot = {
   phase: Phase; paused: boolean; selected: string[]; squad: string[]; squadPick: string[]; units: Unit[]; campaign: Campaign;
   contract: Contract | null; plan: MissionPlan | null; objectives: Objective[]; alarm: boolean; reinforceIn: number; reinforced: number;
   result: 'success' | 'failure' | null; failReason: string; payout: number; stealth: boolean; time: number; message: string;
-  saveUnavailable: boolean; pending: Pending;
+  saveUnavailable: boolean; syncing: boolean; pending: Pending;
 };
 // Reports campaign events to the server; the server answers through applyCampaign.
 export type CampaignSync = {
@@ -88,6 +88,7 @@ export class Simulation {
   time = 0;
   message = 'Choose a contract and a squad.';
   saveUnavailable = false;
+  syncing = false;
   commandPoint: Point | null = null;
   pending: Pending = null;
   private reinforced = 0;
@@ -112,13 +113,14 @@ export class Simulation {
       units: this.units.map(u => ({ ...u })), campaign: this.campaign, contract: this.contract, plan: this.plan,
       objectives: this.objectives.map(o => ({ ...o })), alarm: this.alarm, reinforceIn: this.reinforceIn, reinforced: this.reinforced, result: this.result,
       failReason: this.failReason, payout: this.payout, stealth: !this.alarm, time: this.time, message: this.message,
-      saveUnavailable: this.saveUnavailable, pending: this.pending,
+      saveUnavailable: this.saveUnavailable, syncing: this.syncing, pending: this.pending,
     };
     this.listeners.forEach(fn => fn());
   }
   private report(send: (sync: CampaignSync) => void) { if (this.sync) try { send(this.sync); } catch { this.saveUnavailable = true; } }
   applyCampaign(campaign: Campaign) { this.campaign = campaign; if (this.phase !== 'mission') this.refreshBoard(); this.emit(); }
   setSaveUnavailable(unavailable: boolean) { if (this.saveUnavailable !== unavailable) { this.saveUnavailable = unavailable; this.emit(); } }
+  setSyncing(syncing: boolean) { if (this.syncing !== syncing) { this.syncing = syncing; this.emit(); } }
 
   // ---- Contract board and headquarters ----
   private refreshBoard() {

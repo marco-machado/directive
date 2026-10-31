@@ -50,7 +50,8 @@ export function SaveCode({ code }: { code: string }) {
     <button className="btn ghost small" onClick={copy}><Icon name={copied ? 'check' : 'copy'} />{copied ? 'Copied' : 'Copy'}</button></div>;
 }
 
-export function LoadSaveCode({ onLoaded, busy, setBusy }: { onLoaded: (code: string) => void; busy: boolean; setBusy: (busy: boolean) => void }) {
+// Loading a code drops actions not yet sent, so Load is disabled while they sync.
+export function LoadSaveCode({ onLoaded, busy, setBusy, syncing }: { onLoaded: (code: string) => void; busy: boolean; setBusy: (busy: boolean) => void; syncing: boolean }) {
   const [value, setValue] = useState(''), [error, setError] = useState('');
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -67,7 +68,7 @@ export function LoadSaveCode({ onLoaded, busy, setBusy }: { onLoaded: (code: str
   return <form className="load-code" onSubmit={submit}>
     <label htmlFor="load-code-input">Enter a save code from another device</label>
     <div><input id="load-code-input" value={value} onChange={e => setValue(e.target.value)} placeholder="XXXX-XXXX-XXXX" autoComplete="off" spellCheck={false} />
-      <button className="btn" type="submit" disabled={busy || !value.trim()}>{busy ? 'Loading…' : 'Load'}</button></div>
+      <button className="btn" type="submit" disabled={busy || syncing || !value.trim()}>{busy ? 'Loading…' : syncing ? 'Saving…' : 'Load'}</button></div>
     {error ? <p className="warning" role="alert"><Icon name="alert" />{error}</p> : null}
   </form>;
 }
