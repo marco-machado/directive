@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Simulation, parseCampaign, CALM_SECONDS, COVER_FACTOR, HACK_SECONDS, REINFORCE_CAP, REINFORCE_SECONDS, REVIVE_SECONDS } from '../src/game/simulation.ts';
+import { Simulation, parseCampaign, CALM_SECONDS, COVER_FACTOR, HACK_SECONDS, QUEUE_SPACING, REINFORCE_CAP, REINFORCE_SECONDS, REVIVE_SECONDS } from '../src/game/simulation.ts';
 import type { CampaignSync, Unit, Upgrade } from '../src/game/simulation.ts';
 import { contractPayout, freshCampaign, MAX_TIER } from '../src/game/campaign.ts';
 import type { Campaign, ContractType } from '../src/game/campaign.ts';
@@ -184,6 +184,8 @@ test('sabotage needs both charges before extraction pays', () => {
   squad[1].x = a.x; squad[1].z = a.z; step(sim, 3.2);
   assert.equal(a.done, true); assert.equal(sim.phase, 'mission');
   squad[1].x = b.x; squad[1].z = b.z; step(sim, 3.2);
+  assert.equal(b.done, true); assert.equal(sim.phase, 'mission');
+  squad[1].x = sim.plan!.extract.x; squad[1].z = sim.plan!.extract.z; sim.update(1 / 60);
   assert.equal(sim.result, 'success');
   assert.equal(sim.payout, Math.round(contractPayout(1) * 1.25));
   assert.equal(sim.campaign.cash, sim.payout);
@@ -197,7 +199,52 @@ test('an alarmed contract pays without the stealth bonus', () => {
   squad[1].x = -18; squad[1].z = -18;
   sim.plan && (sim as unknown as { raiseAlarm(p: object, r: string): void }).raiseAlarm({ x: 0, z: 0 }, 'test');
   step(sim, HACK_SECONDS + 1);
+  assert.equal(terminal.done, true); assert.equal(sim.phase, 'mission');
+  squad[0].x = -18; squad[0].z = -18; sim.update(1 / 60);
   assert.equal(sim.result, 'success'); assert.equal(sim.payout, contractPayout(1));
+});
+
+test('extraction waits for every operative, downed ones included', () => {
+  const { sim, squad } = arena('heist');
+  const [terminal, extract] = sim.objectives, [medic, down] = squad;
+  terminal.done = true;
+  medic.x = extract.x; medic.z = extract.z; sim.update(1 / 60);
+  assert.equal(sim.phase, 'mission'); assert.equal(extract.progress, 1 / squad.length);
+  down.x = extract.x + .5; down.z = extract.z; down.hp = 0; sim.update(1 / 60);
+  assert.equal(sim.phase, 'mission'); assert.equal(sim.message, `${down.name} is down. Revive them before extracting.`);
+  sim.selected = [medic.id]; sim.unitClick(down.id);
+  step(sim, REVIVE_SECONDS + .5);
+  assert.equal(sim.result, 'success'); assert.equal(extract.done, true);
+});
+
+const fullRoster = ['assault', 'support', 'recon', 'tech'].map((cls, i) => ({ id: `o${i}`, name: `OP${i}`, cls })) as Campaign['roster'];
+
+test('a select-all move brings a full squad to a generated extraction corner', () => {
+  const roster = fullRoster;
+  for (let seed = 1; seed <= 8; seed++) {
+    const sim = new Simulation(campaignWith('heist', { roster, offers: [contract('heist', 1, seed)] }));
+    sim.deploy();
+    const squad = sim.units.filter(u => u.faction === 'squad'), extract = sim.objectives.at(-1)!;
+    assert.equal(squad.length, 4);
+    sim.units = [...squad]; sim.objectives[0].done = true;
+    squad.forEach(u => { u.x += (extract.x > 0 ? -6 : 6); u.z += (extract.z > 0 ? -6 : 6); u.path = []; });
+    sim.selectAll(); sim.move({ x: extract.x, z: extract.z });
+    assert.ok(squad.every(u => u.path.length), `seed ${seed}: an operative got no route`);
+    step(sim, 20);
+    assert.equal(sim.result, 'success', `seed ${seed}: ${squad.map(u => distance(u, extract).toFixed(2)).join(' ')}`);
+  }
+});
+
+test('escort completes once the squad and the VIP are in the zone', () => {
+  // Four abreast, the formation's ends sit 1.35 from the beacon, where a VIP trailing them would stop short.
+  const { sim, squad } = arena('escort', { roster: fullRoster });
+  const vip = sim.units.find(u => u.faction === 'vip')!, extract = sim.objectives.at(-1)!;
+  assert.equal(squad.length, 4);
+  vip.x = 1; vip.z = 2;
+  step(sim, .5); assert.equal(sim.objectives[0].done, true);
+  sim.selectAll(); sim.move({ x: extract.x, z: extract.z });
+  step(sim, 30);
+  assert.equal(sim.result, 'success', `VIP ${distance(vip, extract).toFixed(2)} from extraction`);
 });
 
 test('the escort VIP joins, follows, and its death fails the contract', () => {
@@ -409,6 +456,8 @@ test('a contract finished after a stand-down pays without the stealth bonus', ()
   squad[0].x = terminal.x; squad[0].z = terminal.z;
   squad[1].x = -18; squad[1].z = -18;
   step(sim, HACK_SECONDS + 1);
+  assert.equal(terminal.done, true); assert.equal(sim.phase, 'mission');
+  squad[0].x = -18; squad[0].z = -18; sim.update(1 / 60);
   assert.equal(sim.result, 'success'); assert.equal(sim.payout, contractPayout(1));
   assert.equal(events.at(-1), 'completed:false');
 });
@@ -434,4 +483,110 @@ test('restarting clears the detection; pausing holds the countdown', () => {
   sim.togglePause(); step(sim, 5); assert.equal(sim.calmIn, calm);
   sim.togglePause(); sim.restart();
   assert.equal(sim.alarm, false); assert.equal(sim.getSnapshot().stealth, true); assert.equal(sim.calmIn, 0);
+});
+
+// ---- Squad movement through narrow streets ----
+const FOUR: Partial<Campaign> = { roster: [{ id: 'vex', name: 'VEX', cls: 'assault' }, { id: 'rook', name: 'ROOK', cls: 'support' }, { id: 'kai', name: 'KAI', cls: 'recon' }, { id: 'nova', name: 'NOVA', cls: 'tech' }] };
+const block = (x0: number, x1: number, z0: number, z1: number) => ({ x: (x0 + x1) / 2, z: (z0 + z1) / 2, w: x1 - x0, d: z1 - z0, h: 3, name: 'B', accent: '#fff' });
+// A 1.4 m alley along z at x = 0, too narrow for the side-by-side spread.
+const ALLEY = [block(-6, -.7, -2, 10), block(.7, 6, -2, 10)];
+// A walled-in room around (15, 15) that nothing outside can reach.
+const POCKET = [block(12, 18, 17.5, 18.5), block(12, 18, 11.5, 12.5), block(11.5, 12.5, 11.5, 18.5), block(17.5, 18.5, 11.5, 18.5)];
+function streets(buildings = ALLEY, type: ContractType = 'heist') {
+  const a = arena(type, FOUR);
+  a.sim.plan = { ...a.sim.plan!, world: new World(a.world.bounds, buildings, []) };
+  a.squad.forEach((u, i) => { u.x = i - 1.5; u.z = -5; });
+  return a;
+}
+const settle = (sim: Simulation, units: Unit[]) => {
+  step(sim, 30, () => units.every(u => !u.path.length));
+  assert.equal(sim.phase, 'mission'); assert.ok(units.every(u => !u.path.length), 'still walking');
+};
+const spaced = (units: Point[]) => units.every((u, i) => units.every((v, j) => i === j || distance(u, v) >= QUEUE_SPACING - 1e-3));
+
+test('the squad queues single file into an alley too narrow to stand abreast', () => {
+  const { sim, squad } = streets();
+  sim.move({ x: 0, z: 8 });
+  assert.ok(squad.every(u => u.path.length), 'someone ignored the order');
+  settle(sim, squad);
+  const byZ = [...squad].sort((a, b) => b.z - a.z);
+  assert.ok(distance(byZ[0], { x: 0, z: 8 }) < 1e-6);
+  for (const u of squad) { assert.ok(sim.plan!.world.walkable(u)); assert.ok(Math.abs(u.x) < .32 && u.z > -2, JSON.stringify(u)); }
+  for (let i = 1; i < byZ.length; i++) assert.ok(byZ[i - 1].z - byZ[i].z >= QUEUE_SPACING - 1e-3, `gap ${i}`);
+});
+
+test('a leader already on the point still gets a queue behind it, not a pile', () => {
+  const { sim, squad } = streets();
+  squad[0].x = 0; squad[0].z = 8;
+  sim.move({ x: 0, z: 8 }); settle(sim, squad);
+  assert.ok(spaced(squad), JSON.stringify(squad.map(u => [u.x, u.z])));
+});
+
+test('operatives bunched on the point all still move, stacking where the route runs out', () => {
+  const { sim, squad } = streets();
+  squad.forEach((u, i) => { u.x = 0; u.z = 7.9 + i * .05; });
+  sim.move({ x: 0, z: 8 });
+  for (const u of squad) assert.deepEqual(u.path.at(-1), { x: 0, z: 8 });
+});
+
+test('the queue follows a bent alley around its corner', () => {
+  // The alley runs north at x = 0, then turns east along z = 7.
+  const { sim, squad } = streets([block(-6, -.7, -2, 10), block(.7, 6, -2, 6.3), block(.7, 6, 7.7, 10)]);
+  sim.move({ x: 5, z: 7 }); settle(sim, squad);
+  for (const u of squad) assert.ok(sim.plan!.world.walkable(u), JSON.stringify(u));
+  assert.ok(spaced(squad));
+});
+
+test('an operative who cannot reach the point keeps its orders; the rest queue', () => {
+  const { sim, squad } = streets([...ALLEY, ...POCKET]);
+  const stuck = squad[3]; stuck.x = 15; stuck.z = 15; stuck.path = [{ x: 16, z: 15 }];
+  sim.move({ x: 0, z: 8 });
+  assert.deepEqual(stuck.path, [{ x: 16, z: 15 }]);
+  const rest = squad.slice(0, 3); settle(sim, rest);
+  assert.ok(spaced(rest)); assert.ok(rest.every(u => Math.abs(u.x) < .32));
+});
+
+test('when only some fit abreast, the whole squad queues instead', () => {
+  // 2.2 m wide: the inner pair could stand abreast, the outer pair could not.
+  const { sim, squad } = streets([block(-6, -1.1, -2, 10), block(1.1, 6, -2, 10)]);
+  sim.move({ x: 0, z: 8 }); settle(sim, squad);
+  const zs = squad.map(u => u.z).sort((a, b) => b - a);
+  for (let i = 1; i < zs.length; i++) assert.ok(zs[i - 1] - zs[i] >= QUEUE_SPACING - 1e-3, String(zs));
+});
+
+test('in the open the squad still spreads side by side', () => {
+  const { sim, squad } = streets([]);
+  sim.move({ x: 10, z: 10 });
+  squad.forEach((u, i) => assert.deepEqual(u.path.at(-1), { x: 10 + (i - 1.5) * QUEUE_SPACING, z: 10 }));
+});
+
+test('a point nobody can reach is refused and leaves every order alone', () => {
+  const { sim, squad } = streets([...ALLEY, ...POCKET]);
+  squad.forEach(u => { u.path = [{ x: -10, z: -10 }]; });
+  sim.move({ x: 15, z: 15 });
+  assert.match(sim.message, /Route blocked/); assert.equal(sim.commandPoint, null);
+  for (const u of squad) assert.deepEqual(u.path, [{ x: -10, z: -10 }]);
+});
+
+test('a click on the VIP sends the squad to where the VIP stood', () => {
+  const { sim, squad } = streets(ALLEY, 'escort');
+  const vip = sim.units.find(u => u.faction === 'vip')!; vip.x = 0; vip.z = 8;
+  sim.unitClick(vip.id);
+  vip.x = 0; vip.z = 3;
+  assert.ok(squad.every(u => u.path.length));
+  assert.ok(squad.some(u => u.path.at(-1)!.z === 8)); assert.ok(squad.every(u => u.path.at(-1) !== vip));
+});
+
+test('a move order cancels attack and revive orders, abreast or in a queue', () => {
+  for (const buildings of [[], ALLEY]) {
+    const { sim, squad } = streets(buildings);
+    squad.forEach(u => { u.targetId = 'h0'; u.reviveTarget = 'rook'; u.revive = 1; });
+    sim.move({ x: 0, z: 8 });
+    for (const u of squad) { assert.equal(u.targetId, null); assert.equal(u.reviveTarget, null); assert.equal(u.revive, 0); }
+  }
+});
+
+test('the same order in the same alley gives the same queue', () => {
+  const runs = [streets(), streets()].map(({ sim, squad }) => { sim.move({ x: 0, z: 8 }); return squad.map(u => u.path); });
+  assert.deepEqual(runs[0], runs[1]);
 });

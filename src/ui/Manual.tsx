@@ -25,6 +25,7 @@ const RULES: [IconName, string][] = [
   ['eye', 'Before the alarm, the squad only fires at targets you order.'],
   ['camera', 'Hostiles and cameras see in vision cones. Stay in one too long and the alarm sounds.'],
   ['snipe', 'Sniper shots are silent. Grenades are loud and raise the alarm at once. A hostile that survives a hit raises it too.'],
+  ['flag', 'Extraction counts only when every operative, downed ones included, is in the zone. Revive the fallen first.'],
   ['alert', `After the alarm, reinforcements arrive every ${REINFORCE_SECONDS} s. Stay out of every hostile's sight and range for ${CALM_SECONDS} s and it stands down.`],
   ['check', `Extract without ever raising the alarm for +${Math.round(STEALTH_BONUS * 100)}% payout. A stood-down alarm still voids the bonus.`],
 ];

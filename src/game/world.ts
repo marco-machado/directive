@@ -37,10 +37,12 @@ export class World {
     return c < 0 || r < 0 || c >= this.cols || r >= this.rows ? -1 : r * this.cols + c;
   }
 
-  walkable(p: Point, padding = .38): boolean {
+  inBounds(p: Point, padding = .38): boolean {
     const b = this.bounds;
-    return p.x > b.minX + padding && p.x < b.maxX - padding && p.z > b.minZ + padding && p.z < b.maxZ - padding &&
-      !this.buildings.some(r => inside(p, r, padding)) && !this.cover.some(r => inside(p, r, padding));
+    return p.x > b.minX + padding && p.x < b.maxX - padding && p.z > b.minZ + padding && p.z < b.maxZ - padding;
+  }
+  walkable(p: Point, padding = .38): boolean {
+    return this.inBounds(p, padding) && !this.buildings.some(r => inside(p, r, padding)) && !this.cover.some(r => inside(p, r, padding));
   }
   // Movement clearance along a segment.
   passable(a: Point, b: Point, padding = .1): boolean { return this.sample(a, b, p => this.walkable(p, padding)); }
