@@ -1,4 +1,4 @@
-import { memo, useRef } from 'react';
+import { memo, useCallback, useRef } from 'react';
 import type { ReactNode, RefObject } from 'react';
 import { useFrame } from '@react-three/fiber';
 import type { ThreeEvent } from '@react-three/fiber';
@@ -14,6 +14,10 @@ const TOP: Record<UnitKind, number> = { assault: 1.3, support: 1.3, recon: 1.3, 
 const HITBOX: Record<UnitKind, Vec3> = { assault: [.95, 1.5, .95], support: [.95, 1.5, .95], recon: [.95, 1.5, .95], tech: [.95, 1.5, .95], guard: [.95, 1.5, .95], heavy: [1.15, 1.8, 1.15], camera: [.7, 2.3, .7], turret: [1.1, 1, 1.1], target: [.95, 1.5, .95], vip: [.95, 1.5, .95] };
 const ACCENT: Record<UnitKind, string> = { assault: '#9ff7d1', support: '#9ff7d1', recon: '#9ff7d1', tech: '#8ff0e6', guard: '#ed7e70', heavy: '#ff6d5c', camera: '#ff5a4a', turret: '#ff6d5c', target: '#ffbd83', vip: '#ffe7a8' };
 const GROUND: Record<Faction, string> = { squad: '#9ff7d1', hostile: '#ed7e70', vip: '#ffe7a8' };
+
+// Unit hitboxes by mesh, for the canvas cursor; a unit is clickable when unitClick would act on it.
+export type Hitboxes = Map<Mesh, string>;
+export const clickable = (sim: Simulation, u: Unit | undefined) => !!u && (u.faction === 'squad' && u.hp > 0 || sim.phase === 'mission' && (u.faction !== 'hostile' || u.hp > 0 && u.visible));
 
 // Health bars billboard toward the camera and draw over buildings so a unit behind a wall still reads.
 const PLANE = new PlaneGeometry(1, 1), BAR_W = 1, BAR_H = .14;
@@ -112,12 +116,13 @@ const Model = memo(function Model({ kind, legs, downed }: { kind: UnitKind; legs
   }
 });
 
-function Agent({ sim, unit, selected, slot, tagged, labels }: { sim: Simulation; unit: Unit; selected: boolean; slot: number; tagged: boolean; labels: RefObject<HTMLDivElement> }) {
+function Agent({ sim, unit, selected, slot, tagged, labels, hitboxes }: { sim: Simulation; unit: Unit; selected: boolean; slot: number; tagged: boolean; labels: RefObject<HTMLDivElement>; hitboxes: Hitboxes }) {
   const { id, kind, faction } = unit;
   const root = useRef<Group>(null), model = useRef<Group>(null), pose = useRef<Group>(null), legs = useRef<Group>(null), ring = useRef<Group>(null), spin = useRef<Group>(null);
   const bar = useRef<Group>(null), fill = useRef<Mesh>(null);
   const stun = useRef<Group>(null), mark = useRef<Mesh>(null), revive = useRef<Group>(null);
   const downed = faction === 'squad' && unit.hp <= 0, top = TOP[kind], hitbox = HITBOX[kind];
+  const register = useCallback((mesh: Mesh) => { hitboxes.set(mesh, id); return () => { hitboxes.delete(mesh); }; }, [hitboxes, id]);
   const c = (color: string) => downed ? dim(color) : color;
   const reviveProgress = () => { let p = 0; for (const v of sim.units) if (v.reviveTarget === id) p = Math.max(p, v.revive / REVIVE_SECONDS); return p; };
   useFrame(({ clock, camera }) => {
@@ -162,7 +167,7 @@ function Agent({ sim, unit, selected, slot, tagged, labels }: { sim: Simulation;
   return <group ref={root} position={[unit.x, 0, unit.z]}>
     <group ref={model}>
       <group ref={pose} onClick={click}>
-        <mesh position={[0, hitbox[1] / 2, 0]} scale={hitbox} geometry={BOX} visible={false} />
+        <mesh ref={register} position={[0, hitbox[1] / 2, 0]} scale={hitbox} geometry={BOX} visible={false} />
         <Model kind={kind} legs={legs} downed={downed} />
       </group>
     </group>
@@ -186,8 +191,8 @@ function Agent({ sim, unit, selected, slot, tagged, labels }: { sim: Simulation;
   </group>;
 }
 
-export function Units({ sim, units, selected, squad, live, labels }: { sim: Simulation; units: Unit[]; selected: string[]; squad: string[]; live: boolean; labels: RefObject<HTMLDivElement> }) {
+export function Units({ sim, units, selected, squad, live, labels, hitboxes }: { sim: Simulation; units: Unit[]; selected: string[]; squad: string[]; live: boolean; labels: RefObject<HTMLDivElement>; hitboxes: Hitboxes }) {
   // Hotkey tags mark a partial selection; with the whole squad selected they would only stack up over the group.
   const partial = live && units.some(u => u.faction === 'squad' && u.hp > 0 && !selected.includes(u.id));
-  return <>{units.map(u => <Agent key={`${u.id}:${u.kind}`} sim={sim} unit={u} selected={selected.includes(u.id)} slot={squad.indexOf(u.id)} tagged={partial} labels={labels} />)}</>;
+  return <>{units.map(u => <Agent key={`${u.id}:${u.kind}`} sim={sim} unit={u} selected={selected.includes(u.id)} slot={squad.indexOf(u.id)} tagged={partial} labels={labels} hitboxes={hitboxes} />)}</>;
 }

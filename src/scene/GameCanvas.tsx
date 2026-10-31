@@ -3,6 +3,7 @@ import type { ComponentRef, RefObject } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import { DirectionalLight, MOUSE } from 'three';
+import type { Mesh } from 'three';
 import type { MissionPlan } from '../game/mapgen.ts';
 import type { Bounds } from '../game/world.ts';
 import type { Simulation } from '../game/simulation.ts';
@@ -13,7 +14,8 @@ import type { Pointer } from './effects.tsx';
 import { Objectives } from './objectives.tsx';
 import { Pointers } from './pointers.tsx';
 import type { Insets } from './pointers.tsx';
-import { Units } from './units.tsx';
+import { clickable, Units } from './units.tsx';
+import type { Hitboxes } from './units.tsx';
 import './scene.css';
 
 const FALLBACK: Bounds = { minX: -16, maxX: 16, minZ: -12, maxZ: 12 };
@@ -58,7 +60,24 @@ function World({ sim, reset, layout, attract, frame, labels }: Props & { labels:
   const state = useSyncExternalStore(sim.subscribe, sim.getSnapshot), { plan, pending } = state;
   const bounds = plan?.world.bounds ?? FALLBACK, { cx, cz, w, d } = extent(bounds);
   const pointer = useRef<Pointer>({ x: 0, z: 0, on: false }), insets = useRef<Insets>({ l: 0, t: 0, r: 0, b: 0 }), gl = useThree(s => s.gl);
-  useEffect(() => { gl.domElement.style.cursor = pending ? 'crosshair' : ''; }, [gl, pending]);
+  // The canvas cursor: a crosshair while aiming, a hand over any unit a click would act on.
+  // Re-picked every frame, since units walk under a resting pointer and hostiles drop out of sight.
+  const hitboxes = useRef<Hitboxes>(new Map()).current, inside = useRef(false), cursor = useRef('');
+  useEffect(() => {
+    const el = gl.domElement, enter = () => { inside.current = true; }, leave = () => { inside.current = false; };
+    el.addEventListener('pointerenter', enter); el.addEventListener('pointerleave', leave);
+    return () => { el.removeEventListener('pointerenter', enter); el.removeEventListener('pointerleave', leave); };
+  }, [gl]);
+  useFrame(({ raycaster, pointer: ndc, camera }) => {
+    let next = '';
+    if (sim.pending) next = 'crosshair';
+    else if (inside.current && hitboxes.size) {
+      raycaster.setFromCamera(ndc, camera);
+      const hit = raycaster.intersectObjects([...hitboxes.keys()], false).find(h => clickable(sim, sim.units.find(u => u.id === hitboxes.get(h.object as Mesh))));
+      if (hit) next = 'pointer';
+    }
+    if (next !== cursor.current) gl.domElement.style.cursor = cursor.current = next;
+  });
   return <>
     <color attach="background" args={['#101c21']} />
     <ambientLight intensity={1.25} color="#d6e6dc" />
@@ -74,7 +93,7 @@ function World({ sim, reset, layout, attract, frame, labels }: Props & { labels:
         <planeGeometry args={[w, d]} />
       </mesh>
       <Objectives sim={sim} objectives={state.objectives} labels={labels} />
-      <Units sim={sim} units={state.units} selected={state.selected} squad={state.squad} live={state.phase === 'mission'} labels={labels} />
+      <Units sim={sim} units={state.units} selected={state.selected} squad={state.squad} live={state.phase === 'mission'} labels={labels} hitboxes={hitboxes} />
       <Effects sim={sim} />
       <Pointers sim={sim} labels={labels} insets={insets} />
       {pending ? <Targeting key={`${pending.unitId}:${pending.ability}`} sim={sim} pending={pending} pointer={pointer} /> : null}
