@@ -10,13 +10,13 @@ export type Insets = { l: number; t: number; r: number; b: number };
 const MARGIN = 34;
 const name = (o: Objective) => o.kind === 'terminal' ? 'VAULT' : o.kind === 'charge' ? `CHARGE ${o.label.at(-1)}` : o.kind === 'vip' ? 'VIP' : 'EXTRACT';
 
-// Edge arrows toward hostiles noticing the squad and open objectives that are outside the free frame.
-// Watchers come first, in red. Plain DOM nodes, positioned every frame without React renders.
+// Edge arrows toward hostiles noticing the squad, a fleeing target's exit, and open objectives that are outside
+// the free frame. Watchers and the exit come first, in red; the target points at its last known area until seen. Plain DOM nodes, positioned every frame without React renders.
 export function Pointers({ sim, labels, insets }: { sim: Simulation; labels: RefObject<HTMLDivElement>; insets: RefObject<Insets> }) {
   const camera = useThree(s => s.camera), size = useThree(s => s.size), gl = useThree(s => s.gl), nodes = useRef<HTMLDivElement[]>([]), at = useMemo(() => new Vector3(), []);
   useEffect(() => {
     const host = labels.current;
-    nodes.current = Array.from({ length: 6 }, () => {
+    nodes.current = Array.from({ length: 8 }, () => {
       const el = document.createElement('div');
       el.className = 'pointer'; el.hidden = true; el.innerHTML = '<i class="pointer-arrow"></i><b class="pointer-dot"></b><span class="pointer-label"></span>';
       host.appendChild(el); return el;
@@ -34,8 +34,15 @@ export function Pointers({ sim, labels, insets }: { sim: Simulation; labels: Ref
     if (sim.phase === 'mission' && !sim.alarm) for (const u of sim.units) {
       if (u.faction === 'hostile' && u.hp > 0 && u.visible && u.detect > 0) targets.push({ p: u, kind: 'watcher', label: u.kind.toUpperCase() });
     }
+    const target = sim.units.find(u => u.kind === 'target' && u.hp > 0);
+    if (sim.phase === 'mission' && target?.exit) targets.push({ p: target.exit, kind: 'exit', label: 'TARGET EXIT' });
     if (sim.phase === 'mission') for (const o of sim.objectives) {
-      if (o.done || o.kind === 'target' || (o.kind === 'extract' && !ready)) continue;
+      if (o.done || (o.kind === 'extract' && !ready)) continue;
+      if (o.kind === 'target') {
+        if (target?.visible) targets.push({ p: target, kind: 'target', label: 'TARGET' });
+        else if (target && sim.targetArea) targets.push({ p: sim.targetArea, kind: 'target', label: 'TARGET AREA' });
+        continue;
+      }
       targets.push({ p: o.kind === 'vip' ? sim.units.find(u => u.kind === 'vip') ?? o : o, kind: o.kind, label: name(o) });
     }
     let n = 0;

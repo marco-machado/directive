@@ -36,6 +36,19 @@ export const isContractType = (v: unknown): v is ContractType => CONTRACT_TYPES.
 
 export const contractPayout = (tier: number) => 500 + (tier - 1) * 250;
 export const baseTier = (completed: number) => Math.min(MAX_TIER, 1 + Math.floor(completed / 2));
+// How hard a tier is for this campaign's squad. Four operatives count for about one tier and the six
+// weapon and armor levels for about two more (see scripts/balance.ts); ability levels of the classes on the
+// roster add a little. The margin is how many tiers the contract sits above what the squad handles easily.
+export type Threat = 'low' | 'moderate' | 'high' | 'extreme';
+export function squadRating(c: Campaign) {
+  const size = Math.min(SQUAD_MAX, c.roster.length), classes = new Set(c.roster.map(o => o.cls));
+  const abilities = [...classes].reduce((sum, cls) => sum + c.abilities[cls], 0);
+  return (size - 2) * .5 + (c.weapon + c.armor) / 3 + abilities * .05;
+}
+export function threatFor(c: Campaign, tier: number): Threat {
+  const margin = tier - 1 - squadRating(c);
+  return margin <= .5 ? 'low' : margin <= 1.5 ? 'moderate' : margin <= 2.5 ? 'high' : 'extreme';
+}
 export const missionPayout = (contract: Contract, stealth: boolean) => Math.round(contract.payout * (stealth ? 1 + STEALTH_BONUS : 1));
 
 const DISTRICTS = ['GLASS DISTRICT', 'CHROME QUARTER', 'NEON VERGE', 'KESSLER YARDS', 'DATA WARRENS', 'HALCYON ROW', 'IRON MARKET', 'ORBITAL DOCKS', 'VANTA HEIGHTS', 'SILT CANAL'];
@@ -43,10 +56,17 @@ const NAMES = ['KAI', 'NOVA', 'SABLE', 'ORIN', 'JUNO', 'HEX', 'MIRA', 'DACE', 'R
 const STARTERS: Operative[] = [{ id: 'vex', name: 'VEX', cls: 'assault' }, { id: 'rook', name: 'ROOK', cls: 'support' }];
 const token = (rng: Rng) => Array.from({ length: 8 }, () => '0123456789abcdefghijklmnopqrstuvwxyz'[Math.floor(rng() * 36)]).join('');
 
-function dealOffers(completed: number, rng: Rng): Contract[] {
+// Until this many contracts are complete, the board offers only the base tier and the one above it.
+export const OPENING_CONTRACTS = 2;
+export function offerTiers(completed: number): number[] {
+  const base = baseTier(completed);
+  if (completed < OPENING_CONTRACTS) return [base, base, base + 1];
   // Three consecutive tiers around the base, shifted inward at either end so every offer differs.
-  const low = Math.min(MAX_TIER - 2, Math.max(1, baseTier(completed) - 1));
-  const tiers = [low, low + 1, low + 2];
+  const low = Math.min(MAX_TIER - 2, Math.max(1, base - 1));
+  return [low, low + 1, low + 2];
+}
+function dealOffers(completed: number, rng: Rng): Contract[] {
+  const tiers = offerTiers(completed);
   const types = shuffle(rng, CONTRACT_TYPES);
   return tiers.map((tier, i) => ({ id: token(rng), type: types[i], tier, seed: Math.floor(rng() * 2 ** 31), payout: contractPayout(tier), district: pick(rng, DISTRICTS), sector: 1 + Math.floor(rng() * 99) }));
 }

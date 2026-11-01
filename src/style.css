@@ -194,6 +194,10 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .offer-copy { min-width: 0 }
 .offer-copy strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 18px/1.1 var(--f-display); letter-spacing: .05em; text-transform: uppercase }
 .offer-copy small { display: block; margin-top: 5px; font: 500 12px/1.3 var(--f-ui); letter-spacing: .08em; text-transform: uppercase; color: var(--dim) }
+.offer-copy .threat-read, .brief .threat-read { display: block; margin-top: 5px; font: 700 11px/1.3 var(--f-ui); letter-spacing: .1em; text-transform: uppercase }
+.threat-low { color: var(--dim) }
+.threat-moderate { color: var(--amber) }
+.threat-high, .threat-extreme { color: var(--red) }
 .offer-side { display: grid; justify-items: end; gap: 8px }
 .offer-side .credits { font: 600 17px var(--f-ui); color: var(--gold) }
 .offer-tier { display: flex; align-items: center; gap: 6px; font: 700 11px var(--f-ui); letter-spacing: .1em; color: var(--threat) }
@@ -205,7 +209,7 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .brief-objectives li { display: flex; align-items: center; gap: 10px; font: 500 14px var(--f-ui) }
 .brief-objectives .icon { width: 14px; height: 14px; color: var(--amber) }
 .brief-objectives li:last-child .icon { color: var(--mint) }
-.intel { list-style: none; display: grid; grid-template-columns: repeat(4, 1fr); margin: 0 0 12px; padding: 0; border: 1px solid var(--line); background: rgb(3 8 10 / .45) }
+.intel { list-style: none; display: grid; grid-template-columns: repeat(5, 1fr); margin: 0 0 12px; padding: 0; border: 1px solid var(--line); background: rgb(3 8 10 / .45) }
 .intel li { display: grid; justify-items: center; gap: 3px; padding: 10px 4px; border-left: 1px solid var(--line) }
 .intel li:first-child { border-left: 0 }
 .intel .icon { width: 18px; height: 18px; color: var(--red) }
@@ -429,15 +433,14 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .cmd[aria-pressed=true] { border-color: var(--mint); color: var(--mint); box-shadow: inset 0 0 14px rgb(94 242 192 / .18) }
 .controls-hint { grid-area: hint; justify-self: center; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px; margin: 0; font: 500 11px var(--f-ui); letter-spacing: .08em; text-transform: uppercase; color: var(--faint); pointer-events: none }
 .controls-hint kbd { min-width: 16px; height: 16px; font-size: 9px }
-.callouts { position: absolute; z-index: 5; top: 24%; left: 0; right: 0; display: flex; justify-content: center; pointer-events: none }
-.callout { --c: var(--mint); position: relative; display: grid; justify-items: center; gap: 5px; min-width: 360px; max-width: calc(100% - 24px); padding: 14px 48px 16px; text-align: center;
-  background: linear-gradient(90deg, transparent, rgb(3 8 10 / .9) 18%, rgb(3 8 10 / .9) 82%, transparent); animation: callout 2.6s ease-in-out both }
-.callout::before, .callout::after { content: ''; position: absolute; left: 8%; right: 8%; height: 1px; background: linear-gradient(90deg, transparent, var(--c), transparent) }
-.callout::before { top: 0 }
-.callout::after { bottom: 0 }
-.callout small { font: 700 12px var(--f-ui); letter-spacing: .36em; text-transform: uppercase; color: var(--c) }
-.callout strong { font: 700 34px/1 var(--f-display); letter-spacing: .06em; text-transform: uppercase; text-shadow: 0 0 24px color-mix(in srgb, var(--c) 55%, transparent) }
-.callout span { font: 500 14px var(--f-ui); letter-spacing: .04em; color: var(--dim) }
+/* Docked under the status pill and spanning only the gap between the side columns, so it never covers the tracker, the squad or the middle of the view. */
+.callouts { position: absolute; z-index: 5; top: calc(var(--top) + 10px); left: calc(var(--left-col) + 40px + var(--sl)); right: calc(var(--left-col) + 40px + var(--sr)); display: flex; justify-content: center; pointer-events: none }
+.spotted ~ .callouts { top: calc(var(--top) + 66px) }
+.callout { --c: var(--mint); display: flex; gap: 12px; max-width: 100%; padding: 7px 14px 7px 10px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--c) 55%, transparent); border-left: 3px solid var(--c);
+  background: rgb(3 8 10 / .92); box-shadow: 0 0 18px color-mix(in srgb, var(--c) 20%, transparent); font: 500 13px var(--f-ui); letter-spacing: .04em; color: var(--dim); white-space: nowrap; text-overflow: ellipsis; animation: callout 1.6s ease-out both }
+.callout > span { min-width: 0; overflow: hidden; text-overflow: ellipsis }
+.callout > span + span::before { content: '·'; margin-right: 12px; color: var(--faint) }
+.callout strong { font: 700 13px var(--f-display); letter-spacing: .18em; text-transform: uppercase; color: var(--c) }
 .callout.danger { --c: var(--red) }
 .callout.objective { --c: var(--amber) }
 .callout.info { --c: var(--cyan) }
@@ -499,7 +502,7 @@ dialog::backdrop { overflow: hidden; overscroll-behavior: contain; background: r
 @keyframes alarm-edge { from { opacity: .6 } to { opacity: 1 } }
 @keyframes alarm-pulse { from { box-shadow: 0 0 0 rgb(255 81 72 / 0) } to { box-shadow: 0 0 22px rgb(255 81 72 / .6) } }
 @keyframes hit { from { box-shadow: inset 0 0 0 2px var(--red), 0 0 26px rgb(255 81 72 / .7) } }
-@keyframes callout { 0% { opacity: 0; transform: scaleX(.6) } 8% { opacity: 1; transform: scaleX(1.04) } 13% { transform: none } 85% { opacity: 1 } 100% { opacity: 0; transform: translateY(-10px) } }
+@keyframes callout { 0% { opacity: 0; transform: translateY(-6px) } 12% { opacity: 1; transform: none } 85% { opacity: 1 } 100% { opacity: 0 } }
 
 /* ---- Responsive ---- */
 @media (max-width: 1680px) {
@@ -542,8 +545,7 @@ dialog::backdrop { overflow: hidden; overscroll-behavior: contain; background: r
 }
 @media (max-width: 1000px) {
   :root { --hud-b: 172px }
-  .callouts { left: calc(var(--left-col) + 40px + var(--sl)) }
-  .callout { min-width: 0 }
+  .callouts { right: calc(24px + var(--sr)) }
   .targeting { left: auto; right: calc(24px + var(--sr)); translate: none; max-width: calc(100% - var(--left-col) - 64px - var(--sl) - var(--sr)) }
   .hud-bottom { grid-template-columns: 1fr; grid-template-areas: "squad" "commands"; gap: 6px }
   .controls-hint { display: none }
