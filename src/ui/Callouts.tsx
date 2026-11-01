@@ -4,40 +4,38 @@ import type { Snapshot } from '../game/simulation.ts';
 import { CONTRACTS } from './common.tsx';
 import { play, stinger } from './audio.ts';
 import type { Cue } from './audio.ts';
+import { enqueue, SHOW_MS } from './calloutQueue.ts';
+import type { Callout, CalloutPart, Tone } from './calloutQueue.ts';
 
-type Callout = { id: number; tone: 'info' | 'danger' | 'good' | 'objective'; kicker: string; title: string; detail?: string };
-const SHOW_MS = 2600;
-
-// Turns snapshot changes into center-screen callouts and their cues.
+// Turns snapshot changes into callouts docked under the status pill, and their cues.
 export function useCallouts(state: Snapshot) {
   const [queue, setQueue] = useState<Callout[]>([]);
   const previous = useRef(state), next = useRef(0);
   useEffect(() => {
     const p = previous.current; previous.current = state;
     if (p === state) return;
-    const add = (c: Omit<Callout, 'id'>, cue: Cue) => { setQueue(list => [...list, { ...c, id: next.current++ }].slice(-4)); play(cue); };
+    const add = (tone: Tone, part: CalloutPart, cue: Cue) => { const now = performance.now(), id = next.current++; setQueue(list => enqueue(list, id, tone, part, now)); play(cue); };
     const restarted = p.phase === 'mission' && state.phase === 'mission' && state.time < p.time;
     if (state.phase === 'mission' && state.contract && (p.phase !== 'mission' || restarted)) {
       setQueue([]);
-      add({ tone: 'info', kicker: 'Contract live', title: CONTRACTS[state.contract.type].title, detail: `${state.contract.district} · Tier ${state.contract.tier}` }, 'deploy');
+      add('info', { title: CONTRACTS[state.contract.type].title, detail: `${state.contract.district} · Tier ${state.contract.tier}` }, 'deploy');
       return;
     }
     if (p.phase === 'mission' && state.phase === 'headquarters') { setQueue([]); stinger(state.result === 'success' ? 'success' : 'failure'); return; }
     if (p.phase !== 'mission' || state.phase !== 'mission') return;
     if (state.pending && !p.pending) play('aim');
-    if (state.alarm && !p.alarm) add({ tone: 'danger', kicker: 'Alarm raised', title: 'Weapons free', detail: state.reinforced >= REINFORCE_CAP ? 'No more reinforcements' : `Reinforcements in ${Math.ceil(state.reinforceIn)} s` }, 'alarm');
-    if (!state.alarm && p.alarm) add({ tone: 'good', kicker: 'Alarm cleared', title: 'Holding fire', detail: 'Stealth bonus lost' }, 'objective');
+    if (state.alarm && !p.alarm) add('danger', { title: 'Alarm', detail: state.reinforced >= REINFORCE_CAP ? 'no more reinforcements' : `reinforcements in ${Math.ceil(state.reinforceIn)} s` }, 'alarm');
+    if (!state.alarm && p.alarm) add('good', { title: 'Alarm cleared', detail: 'stealth bonus lost' }, 'objective');
     state.objectives.forEach((o, i) => {
       if (!o.done || p.objectives[i]?.done || o.kind === 'extract') return;
-      const upcoming = state.objectives.find(n => !n.done);
-      add({ tone: 'objective', kicker: 'Objective complete', title: o.label, detail: upcoming ? `Next: ${upcoming.label}` : undefined }, 'objective');
+      add('objective', { title: 'Objective complete', detail: o.label }, 'objective');
     });
-    if (state.reinforced > p.reinforced) add({ tone: 'danger', kicker: 'Reinforcements', title: 'Hostiles entering the district', detail: `${state.reinforced} / ${REINFORCE_CAP}` }, 'reinforce');
+    if (state.reinforced > p.reinforced) add('danger', { title: 'Reinforcements', detail: `${state.reinforced} / ${REINFORCE_CAP} entering` }, 'reinforce');
     for (const u of state.units) {
       const before = u.faction === 'squad' ? p.units.find(v => v.id === u.id) : undefined;
       if (!before) continue;
-      if (before.hp > 0 && u.hp <= 0) add({ tone: 'danger', kicker: 'Operative down', title: u.name, detail: 'Select a teammate and click the body to revive' }, 'down');
-      else if (before.hp <= 0 && u.hp > 0) add({ tone: 'good', kicker: 'Revived', title: u.name, detail: 'Back on their feet' }, 'revive');
+      if (before.hp > 0 && u.hp <= 0) add('danger', { title: `${u.name} down`, detail: 'click the body to revive' }, 'down');
+      else if (before.hp <= 0 && u.hp > 0) add('good', { title: `${u.name} revived` }, 'revive');
     }
   }, [state]);
   const head = queue[0]?.id;
@@ -54,7 +52,7 @@ export function Callouts({ callout }: { callout: Callout | null }) {
   if (!callout) return null;
   return <div className="callouts" aria-hidden="true">
     <div key={callout.id} className={`callout ${callout.tone}`}>
-      <small>{callout.kicker}</small><strong>{callout.title}</strong>{callout.detail ? <span>{callout.detail}</span> : null}
+      {callout.parts.map((part, i) => <span key={i}><strong>{part.title}</strong>{part.detail ? <> · {part.detail}</> : null}</span>)}
     </div>
   </div>;
 }
