@@ -5,7 +5,8 @@ import type { Rng } from './rng.ts';
 
 export type Operative = { id: string; name: string; cls: ClassId };
 export type ContractType = 'assassination' | 'heist' | 'sabotage' | 'escort';
-export type Contract = { id: string; type: ContractType; tier: number; seed: number; payout: number; district: string; sector: number };
+// `patrols` caps the guards that walk a route (the rest of the district is unchanged); only contract 01 sets it.
+export type Contract = { id: string; type: ContractType; tier: number; seed: number; payout: number; district: string; sector: number; patrols?: number };
 export type Gear = 'weapon' | 'armor';
 export type Upgrade = Gear | ClassId;
 export type Campaign = {
@@ -65,6 +66,9 @@ export function offerTiers(completed: number): number[] {
   const low = Math.min(MAX_TIER - 2, Math.max(1, base - 1));
   return [low, low + 1, low + 2];
 }
+// Contract 01 is the same hand-checked district for every campaign: one patrol to read and a quiet way round it.
+// It stays first on the board until a contract is completed, so a failed first run can try it again.
+export const FIRST_CONTRACT = { type: 'heist', tier: 1, seed: 10492675, district: 'GLASS DISTRICT', sector: 1, patrols: 1 } as const satisfies Omit<Contract, 'id' | 'payout'>;
 // The highest tier on a board dealt after `completed` contracts. Boards are dealt at each deployment.
 export const topTier = (completed: number) => Math.max(...offerTiers(completed));
 // The next tier a board will add, how many more completed contracts that takes, and how far the campaign is from the
@@ -78,9 +82,13 @@ export function nextUnlock(completed: number): { tier: number; after: number; pr
   return { tier: topTier(completed + after), after, progress: (completed - since) / (completed + after - since) };
 }
 function dealOffers(completed: number, rng: Rng): Contract[] {
-  const tiers = offerTiers(completed);
-  const types = shuffle(rng, CONTRACT_TYPES);
-  return tiers.map((tier, i) => ({ id: token(rng), type: types[i], tier, seed: Math.floor(rng() * 2 ** 31), payout: contractPayout(tier), district: pick(rng, DISTRICTS), sector: 1 + Math.floor(rng() * 99) }));
+  const tiers = offerTiers(completed), first = completed ? null : FIRST_CONTRACT;
+  const types = shuffle(rng, CONTRACT_TYPES.filter(t => t !== first?.type));
+  return tiers.map((tier, i) => {
+    const id = token(rng);
+    if (first && i === 0) return { id, ...first, payout: contractPayout(first.tier) };
+    return { id, type: types[first ? i - 1 : i], tier, seed: Math.floor(rng() * 2 ** 31), payout: contractPayout(tier), district: pick(rng, DISTRICTS), sector: 1 + Math.floor(rng() * 99) };
+  });
 }
 // Recon and Tech carry the only silent tools (sniper shot, EMP).
 export const SILENT_CLASSES: readonly ClassId[] = ['recon', 'tech'];
@@ -117,7 +125,8 @@ function clampContract(c: any): Contract | null {
   if (!id || !district || !isContractType(c?.type)) return null;
   const tier = Math.max(1, n(c.tier, MAX_TIER));
   // Payout always follows the tier, so an imported save cannot carry a richer contract.
-  return { id, type: c.type, tier, seed: n(c.seed, 2 ** 31), payout: contractPayout(tier), district, sector: Math.max(1, n(c.sector, 99)) };
+  const contract: Contract = { id, type: c.type, tier, seed: n(c.seed, 2 ** 31), payout: contractPayout(tier), district, sector: Math.max(1, n(c.sector, 99)) };
+  return c.patrols === undefined ? contract : { ...contract, patrols: n(c.patrols, 3 + MAX_TIER) };
 }
 // Accepts v1 (`mission`), v2 and v3 saves.
 export function clampCampaign(data: any, rng: Rng = Math.random): Campaign {
@@ -148,7 +157,13 @@ export function applyDismiss(c: Campaign, id: string): Campaign | null {
   if (c.roster.length <= 1 || !c.roster.some(o => o.id === id)) return null;
   return { ...c, roster: c.roster.filter(o => o.id !== id) };
 }
-export const applyPayout = (c: Campaign, contract: Contract, stealth: boolean): Campaign => ({ ...c, cash: c.cash + missionPayout(contract, stealth), completed: c.completed + 1 });
+const isFirstContract = (o: Contract) => o.seed === FIRST_CONTRACT.seed && o.patrols === FIRST_CONTRACT.patrols;
+// The board was dealt at deploy, before this payout counted, so the first payout deals new offers in place of one that
+// still holds contract 01. Recruits stay: they are what the first payout can buy.
+export function applyPayout(c: Campaign, contract: Contract, stealth: boolean, rng: Rng): Campaign {
+  const paid = { ...c, cash: c.cash + missionPayout(contract, stealth), completed: c.completed + 1 };
+  return c.offers.some(isFirstContract) ? { ...paid, offers: dealOffers(paid.completed, rng) } : paid;
+}
 
 export const validSquad = (c: Campaign, squad: readonly string[]) =>
   squad.length >= 1 && squad.length <= SQUAD_MAX && new Set(squad).size === squad.length && squad.every(id => c.roster.some(o => o.id === id));
@@ -163,8 +178,8 @@ export function startMission(state: Ledger, id: string, now: number, contractId:
   if (active?.id === contractId) return { ...state, activeMission: { id, startedAt: now, contract: active } };
   return null;
 }
-export function completeMission(state: Ledger, id: string, now: number, stealth: boolean): Ledger | null {
+export function completeMission(state: Ledger, id: string, now: number, stealth: boolean, rng: Rng): Ledger | null {
   const m = state.activeMission;
   if (!m || m.id !== id || now - m.startedAt < MIN_MISSION_MS) return null;
-  return { campaign: applyPayout(state.campaign, m.contract, stealth), activeMission: null };
+  return { campaign: applyPayout(state.campaign, m.contract, stealth, rng), activeMission: null };
 }

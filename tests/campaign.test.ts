@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyDismiss, applyPurchase, applyRecruit, baseTier, clampCampaign, completeMission, contractPayout, dealBoard, freshCampaign, MAX_TIER, MIN_MISSION_MS, nextUnlock, OPENING_CONTRACTS, RECRUIT_COST, ROSTER_CAP, SILENT_CLASSES, squadRating, startMission, threatFor, topTier } from '../src/game/campaign.ts';
+import { applyDismiss, applyPurchase, applyRecruit, baseTier, clampCampaign, completeMission, contractPayout, dealBoard, FIRST_CONTRACT, freshCampaign, MAX_TIER, MIN_MISSION_MS, nextUnlock, OPENING_CONTRACTS, RECRUIT_COST, ROSTER_CAP, SILENT_CLASSES, squadRating, startMission, threatFor, topTier } from '../src/game/campaign.ts';
 import type { Ledger } from '../src/game/campaign.ts';
 import { mulberry32 } from '../src/game/rng.ts';
 import { formatSaveCode, generateSaveCode, normalizeSaveCode } from '../src/game/saveCode.ts';
@@ -77,7 +77,7 @@ test('a new campaign always offers a Recon or Tech recruit until its first contr
     // Deploying deals the next board before the payout, so the guarantee holds there too: that is the board the first payout can buy from.
     const ledger = startMission({ campaign: fresh, activeMission: null }, 'm', 0, fresh.offers[0].id, ['vex'], r)!;
     assert.ok(silent(ledger.campaign), `seed ${seed}: board dealt by the first deploy`);
-    const paid = completeMission(ledger, 'm', MIN_MISSION_MS, true)!.campaign;
+    const paid = completeMission(ledger, 'm', MIN_MISSION_MS, true, rng)!.campaign;
     assert.ok(paid.cash >= RECRUIT_COST && silent(paid));
     if (!silent(dealBoard(paid, r))) later++;
   }
@@ -88,12 +88,12 @@ test('a mission pays its stored contract once, only for the active id, and never
   const t0 = 1_000_000, campaign = freshCampaign(rng), offer = campaign.offers[2];
   const ledger = startMission({ campaign, activeMission: null }, 'm1', t0, offer.id, ['vex', 'rook'], rng)!;
   assert.ok(!ledger.campaign.offers.some(o => o.id === offer.id), 'deploying rerolls the board');
-  assert.equal(completeMission(ledger, 'm1', t0 + MIN_MISSION_MS - 1, false), null);
-  assert.equal(completeMission(ledger, 'other', t0 + MIN_MISSION_MS, false), null);
-  const paid = completeMission(ledger, 'm1', t0 + MIN_MISSION_MS, false)!;
+  assert.equal(completeMission(ledger, 'm1', t0 + MIN_MISSION_MS - 1, false, rng), null);
+  assert.equal(completeMission(ledger, 'other', t0 + MIN_MISSION_MS, false, rng), null);
+  const paid = completeMission(ledger, 'm1', t0 + MIN_MISSION_MS, false, rng)!;
   assert.equal(paid.campaign.cash, offer.payout); assert.equal(paid.campaign.completed, 1); assert.equal(paid.activeMission, null);
-  assert.equal(completeMission(paid, 'm1', t0 + MIN_MISSION_MS * 2, false), null);
-  const sneaky = completeMission(ledger, 'm1', t0 + MIN_MISSION_MS, true)!;
+  assert.equal(completeMission(paid, 'm1', t0 + MIN_MISSION_MS * 2, false, rng), null);
+  const sneaky = completeMission(ledger, 'm1', t0 + MIN_MISSION_MS, true, rng)!;
   assert.equal(sneaky.campaign.cash, Math.round(offer.payout * 1.25));
 });
 
@@ -123,4 +123,23 @@ test('save codes round-trip through display formatting and common typos', () => 
   assert.equal(normalizeSaveCode(formatSaveCode(code).toLowerCase()), code);
   assert.equal(normalizeSaveCode('7KQ2-M9XD-4TRO'), '7KQ2M9XD4TR0');
   assert.equal(normalizeSaveCode('short'), null);
+});
+
+test('contract 01 is the same hand-checked heist until a contract is completed', () => {
+  for (let seed = 1; seed <= 20; seed++) {
+    const fresh = freshCampaign(mulberry32(seed)), first = fresh.offers[0];
+    assert.deepEqual({ ...first, id: '' }, { ...FIRST_CONTRACT, id: '', payout: contractPayout(1) });
+    assert.equal(new Set(fresh.offers.map(o => o.type)).size, 3);
+    assert.ok(fresh.offers.slice(1).every(o => o.patrols === undefined));
+    // A failed or abandoned first run deals it again; the first payout deals a board without it.
+    const ledger = startMission({ campaign: fresh, activeMission: null }, 'm', 0, first.id, ['vex'], mulberry32(seed))!;
+    assert.equal(ledger.campaign.offers[0].seed, FIRST_CONTRACT.seed);
+    const paid = completeMission(ledger, 'm', MIN_MISSION_MS, true, rng)!.campaign;
+    assert.deepEqual(paid.offers.map(o => o.tier), [1, 1, 2]);
+    assert.deepEqual(paid.recruits, ledger.campaign.recruits);
+    assert.ok(paid.offers.every(o => o.seed !== FIRST_CONTRACT.seed && o.patrols === undefined));
+  }
+  // Saved boards keep the patrol cap through the clamp, within bounds.
+  assert.equal(clampCampaign({ offers: [{ ...FIRST_CONTRACT, id: 'a' }] }, rng).offers[0].patrols, 1);
+  assert.equal(clampCampaign({ offers: [{ ...FIRST_CONTRACT, id: 'a', patrols: 99 }] }, rng).offers[0].patrols, 8);
 });

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Simulation, parseCampaign, CALM_SECONDS, FIRST_WAVE_SECONDS, VIP_DAMAGE_TAKEN, VIP_SECURE_SECONDS, CAMERA_DETECT, COVER_FACTOR, DETECT_DRAIN, detectSeconds, GHOST_SECONDS, HACK_SECONDS, LOOK_ANGLE, LOOK_EVERY, LOOK_PAUSE, QUEUE_SPACING, REINFORCE_CAP, SUSPICIOUS, REINFORCE_SECONDS, REVIVE_SECONDS, SIGHT_RANGE, TAKEDOWN_REACH, TAKEDOWN_SECONDS, tierDamage, tierHp } from '../src/game/simulation.ts';
 import type { CampaignSync, Unit, Upgrade } from '../src/game/simulation.ts';
-import { contractPayout, freshCampaign, MAX_TIER } from '../src/game/campaign.ts';
+import { contractPayout, FIRST_CONTRACT, freshCampaign, MAX_TIER } from '../src/game/campaign.ts';
 import type { Campaign, ContractType } from '../src/game/campaign.ts';
 import { abilityCooldown, CLASS_STATS } from '../src/game/classes.ts';
 import { mapSize, planMission, TARGET_AREA_OFFSET, TARGET_AREA_RADIUS } from '../src/game/mapgen.ts';
@@ -1058,4 +1058,50 @@ test('a click on the street drawn past the bounds lands on the nearest walkable 
   assert.deepEqual(world.clampToBounds({ x: 30, z: -40 }), { x: 15.5, z: -11.5 });
   assert.deepEqual(world.clampToBounds({ x: 3, z: 4 }), { x: 3, z: 4 });
   assert.ok(world.walkable(world.clampToBounds({ x: -8.7, z: 12.03 })));
+});
+
+test('contract 01 has one patrol and a quiet route: straight to the terminal and back, whenever the squad sets out', () => {
+  const plan = planMission({ ...FIRST_CONTRACT, id: 'c01', payout: contractPayout(1) });
+  assert.equal(plan.enemies.filter(e => e.patrol.length > 1).length, 1);
+  assert.deepEqual(plan.enemies.map(e => e.kind), ['guard', 'guard', 'guard']);
+  for (const delay of [0, 3, 6, 9, 12, 16]) {
+    const sim = new Simulation({ ...freshCampaign(mulberry32(7)), offers: [{ ...FIRST_CONTRACT, id: 'c01', payout: contractPayout(1) }] });
+    sim.deploy();
+    step(sim, delay);
+    sim.move(sim.objectives[0]);
+    step(sim, 60, () => sim.objectives[0].done);
+    sim.move(sim.objectives[1]);
+    step(sim, 60);
+    assert.equal(sim.result, 'success', `setting out after ${delay} s`);
+    assert.equal(sim.detected, false, `setting out after ${delay} s`);
+  }
+});
+
+test('first-time milestones are recorded once each, in the order they happen, and reset with the mission', () => {
+  const { sim, squad, hostile } = arena('heist');
+  step(sim, .1);
+  assert.deepEqual(sim.milestones, ['abilityReady']);
+  const guard = hostile('guard', 0, 4, Math.PI);
+  step(sim, 5, () => sim.alarm);
+  assert.deepEqual(sim.milestones, ['abilityReady', 'hostileSeen', 'suspicious', 'alarm']);
+  squad[0].hp = 1; guard.cooldown = 0;
+  step(sim, 3, () => squad[0].hp <= 0);
+  assert.deepEqual(sim.milestones.slice(4), ['downed']);
+  sim.objectives[0].done = true;
+  step(sim, .1);
+  assert.deepEqual(sim.milestones.slice(4), ['downed', 'extractOpen']);
+  assert.equal(sim.getSnapshot().milestones, sim.milestones);
+  sim.restart();
+  assert.ok(!sim.milestones.includes('alarm'));
+});
+
+test('a deploy waits while a save is in flight, so it only ever names an offer the server dealt', () => {
+  const { events, sync } = recorder();
+  const sim = new Simulation(campaignWith('heist'), sync);
+  sim.setSyncing(true);
+  sim.deploy();
+  assert.equal(sim.phase, 'briefing'); assert.deepEqual(events, []);
+  sim.setSyncing(false);
+  sim.deploy();
+  assert.equal(sim.phase, 'mission'); assert.equal(events.length, 1);
 });

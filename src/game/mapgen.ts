@@ -123,10 +123,10 @@ function attempt(contract: Contract, rng: Rng, withCover: boolean): MissionPlan 
   const post = (site: Point) => near(site, 4, backRoom) ?? near(site, 6, backRoom) ?? near(site, 8, backRoom);
 
   // Two posted guards hold every objective; the rest walk the streets.
-  const guards = 3 + contract.tier;
   for (const site of (sites.length ? sites : [primary]).slice(0, 2)) {
     for (let k = 0; k < (sites.length > 1 ? 1 : 2); k++) { const p = post(site); if (p) add('guard', p, []); }
   }
+  const guards = contract.patrols === undefined ? 3 + contract.tier : enemies.filter(e => e.kind === 'guard').length + contract.patrols;
   const nodeStarts = shuffle(rng, nodes).filter(n => free(n.p, 3));
   while (enemies.filter(e => e.kind === 'guard').length < guards && nodeStarts.length) {
     const n = nodeStarts.pop()!, route = patrolRoute(rng, lattice, n.i, n.j, 2 + Math.floor(rng() * 2), extract);
