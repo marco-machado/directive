@@ -4,7 +4,8 @@ import { useFrame } from '@react-three/fiber';
 import type { ThreeEvent } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
 import { AlwaysStencilFunc, BufferAttribute, CanvasTexture, CircleGeometry, GreaterDepth, MeshBasicMaterial, MeshStandardMaterial, NotEqualStencilFunc, PlaneGeometry, ReplaceStencilOp, RingGeometry, Shape, ShapeGeometry, SRGBColorSpace, Color, Vector2, Vector3 } from 'three';
-import type { BufferGeometry, Camera, Group, Material, Mesh, Object3D } from 'three';
+import type { BufferGeometry, Camera, Group, Material, Mesh, Object3D, Skeleton, SkinnedMesh, Texture } from 'three';
+import type { GLTF } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { REVIVE_SECONDS, SUSPICIOUS, TAKEDOWN_SECONDS } from '../game/simulation.ts';
 import type { Faction, Simulation, Unit, UnitKind } from '../game/simulation.ts';
@@ -13,6 +14,8 @@ import { rectDistance } from './framing.ts';
 import { BOX, DIAMOND, glow, ProgressRing, shield, SHIELD_COLOR, STILL } from './parts.tsx';
 import { animate, CLASS_COLOR, makeRig, REACH, SCALE, skin } from './rigs.ts';
 import type { Motion } from './rigs.ts';
+import { useUnitModel } from './models.ts';
+import { animateImported, importRig } from './skinned.ts';
 import { mayBeHidden, viewAlong } from './view.ts';
 
 type Vec3 = [number, number, number];
@@ -40,9 +43,37 @@ const nightGlow = (m: MeshStandardMaterial) => {
 };
 const MARKS = { stencilWrite: true, stencilRef: 1, stencilFunc: AlwaysStencilFunc, stencilZPass: ReplaceStencilOp };
 const BODY = nightGlow(Object.assign(new MeshStandardMaterial({ vertexColors: true, roughness: .72, metalness: .2 }), MARKS));
+// Visors, lamps and lenses are authored past 1, like the district's neon, so the bloom pass picks them out.
+const GLOW_GAIN = 1.8;
 const GLOW = Object.assign(new MeshBasicMaterial({ vertexColors: true, toneMapped: false }), MARKS);
+GLOW.color.setScalar(GLOW_GAIN);
 const BODY_DIM = nightGlow(BODY.clone()), GLOW_DIM = GLOW.clone();
 BODY_DIM.color.setScalar(DIM); GLOW_DIM.color.setScalar(DIM);
+// What the scene draws and poses for one unit: its procedural rig, or its imported model once that has loaded.
+// Each painted mesh has a lit material and a darkened one for a downed operative.
+type Paint = { mesh: Mesh; lit: Material; dim: Material };
+type Figure = { root: Object3D; body: SkinnedMesh; skeleton: Skeleton; paints: Paint[]; pose: (m: Motion) => void };
+const textured = new Map<Texture, { lit: Material; dim: Material }>();
+function texturedPaint(map: Texture) {
+  let p = textured.get(map);
+  if (!p) {
+    const lit = nightGlow(Object.assign(new MeshStandardMaterial({ map, roughness: .72, metalness: .2 }), MARKS)), dim = nightGlow(lit.clone());
+    dim.color.setScalar(DIM);
+    textured.set(map, p = { lit, dim });
+  }
+  return p;
+}
+function figureOf(kind: UnitKind, template: GLTF | null): Figure {
+  if (template) {
+    const rig = importRig(kind, template), paints: Paint[] = [{ mesh: rig.body, ...(rig.map ? texturedPaint(rig.map) : { lit: BODY, dim: BODY_DIM }) }];
+    if (rig.gun) paints.push({ mesh: rig.gun.body, lit: BODY, dim: BODY_DIM });
+    if (rig.gun?.glow) paints.push({ mesh: rig.gun.glow, lit: GLOW, dim: GLOW_DIM });
+    return { root: rig.root, body: rig.body, skeleton: rig.skeleton, paints, pose: m => animateImported(rig, m) };
+  }
+  const rig = makeRig(kind, BODY, GLOW), paints: Paint[] = [{ mesh: rig.body, lit: BODY, dim: BODY_DIM }];
+  if (rig.glow) paints.push({ mesh: rig.glow, lit: GLOW, dim: GLOW_DIM });
+  return { root: rig.body, body: rig.body, skeleton: rig.skeleton, paints, pose: m => animate(rig, m) };
+}
 const silhouettes = new Map<string, Material>();
 function silhouette(color: string) {
   let m = silhouettes.get(color);
@@ -254,19 +285,17 @@ function Agent({ sim, unit, selected, slot, tagged, labels, hitboxes }: { sim: S
   const downed = faction === 'squad' && unit.hp <= 0, top = TOP[kind], hitbox = HITBOX[kind];
   const register = useCallback((mesh: Mesh) => { hitboxes.set(mesh, id); return () => { hitboxes.delete(mesh); }; }, [hitboxes, id]);
   const c = (color: string) => downed ? dim(color) : color;
-  // The rig and its silhouette skin share one skeleton; only their materials follow the downed state.
-  const { rig, ghost } = useMemo(() => {
-    const rig = makeRig(kind, BODY, GLOW), ghost = skin(rig, BODY);
-    rig.body.castShadow = true;
-    for (const m of [rig.body, rig.glow, ghost]) if (m) m.renderOrder = 1;
-    return { rig, ghost };
-  }, [kind]);
-  useEffect(() => () => rig.skeleton.dispose(), [rig]);
+  // The figure and its silhouette skin share one skeleton; only their materials follow the downed state.
+  const template = useUnitModel(kind);
+  const { figure, ghost } = useMemo(() => {
+    const figure = figureOf(kind, template), ghost = skin(figure, BODY);
+    for (const { mesh, lit } of figure.paints) { mesh.renderOrder = 1; mesh.castShadow = lit !== GLOW; }
+    ghost.renderOrder = 1; ghost.frustumCulled = figure.body.frustumCulled;
+    return { figure, ghost };
+  }, [kind, template]);
+  useEffect(() => () => figure.skeleton.dispose(), [figure]);
   // Set once per change, not every render, so a combat look swapped in by dress() survives snapshots.
-  useEffect(() => {
-    rig.body.material = downed ? BODY_DIM : BODY;
-    if (rig.glow) rig.glow.material = downed ? GLOW_DIM : GLOW;
-  }, [rig, downed]);
+  useEffect(() => { for (const p of figure.paints) p.mesh.material = downed ? p.dim : p.lit; }, [figure, downed]);
   ghost.material = silhouette(c(silhouetteColor(kind, faction)));
   const motion = useRef<Motion>({ t: 0, walk: 0, phase: 0, aim: 0, kick: 0, kickSide: 0, flinch: 0, down: 0, die: 0 }).current;
   const seen = useRef({ shot: newestShot(sim), fired: -Infinity }).current;
@@ -321,7 +350,7 @@ function Agent({ sim, unit, selected, slot, tagged, labels, hitboxes }: { sim: S
     const collapse = down ? Math.min(1, downFor / COLLAPSE_SECONDS) : 0, fall = collapse * collapse;
     motion.down = dead ? 0 : fall;
     motion.die = dead ? HUMAN(kind) ? fall : collapse : 0;
-    animate(rig, motion);
+    figure.pose(motion);
     // Downed operatives lie on their side, hostiles fall on their backs; both settle centered on the unit.
     const side = motion.down, back = HUMAN(kind) ? motion.die : 0;
     pose.current.rotation.set(-back * Math.PI / 2, 0, side * Math.PI / 2);
@@ -362,7 +391,7 @@ function Agent({ sim, unit, selected, slot, tagged, labels, hitboxes }: { sim: S
     <group ref={model}>
       <group ref={pose} onClick={click}>
         <mesh ref={register} position={[0, hitbox[1] / 2, 0]} scale={hitbox} geometry={BOX} visible={false} />
-        <group scale={SCALE[kind] ?? 1}><group ref={lit}><primitive object={rig.body} /></group><primitive object={ghost} /></group>
+        <group scale={SCALE[kind] ?? 1}><group ref={lit}><primitive object={figure.root} /></group><primitive object={ghost} /></group>
       </group>
     </group>
     {faction === 'squad' ? <group ref={ring} rotation={[-Math.PI / 2, 0, 0]} position={[0, .045, 0]} visible={false}>

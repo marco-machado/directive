@@ -17,7 +17,7 @@ export const CLASS_COLOR: Partial<Record<UnitKind, string>> = { assault: '#ff8a5
 // sits from the unit's center, for the occlusion test.
 export const SCALE: Partial<Record<UnitKind, number>> = { heavy: 1.18 };
 export const REACH = 1;
-const ARMED: Record<UnitKind, boolean> = { assault: true, support: true, recon: true, tech: true, guard: true, heavy: true, camera: false, turret: false, target: false, vip: false };
+export const ARMED: Record<UnitKind, boolean> = { assault: true, support: true, recon: true, tech: true, guard: true, heavy: true, camera: false, turret: false, target: false, vip: false };
 
 // A box with chamfered edges, centered on the origin: a rectangle inset by the bevel and extruded along z.
 function bevelBox(w: number, h: number, d: number, b = Math.min(w, h, d) * .22) {
@@ -37,6 +37,9 @@ const lathe = (points: [number, number][], segments = 12) => new LatheGeometry(p
 // A rod along z (barrels, lenses, antennas when turned).
 const rod = (radius: number, length: number, segments = 8) => new CylinderGeometry(radius, radius, length, segments).rotateX(Math.PI / 2);
 const ring = (radius: number, tube: number, segments = 16) => new TorusGeometry(radius, tube, 4, segments);
+// A limb hanging from its joint: a capsule tapering from `top` to `bottom` radius over `length`.
+const limb = (top: number, bottom: number, length: number) => lathe([[0, -length - bottom * .5], [bottom * .7, -length - bottom * .35], [bottom, -length], [top, 0], [top * .75, top * .35], [0, top * .5]], 8);
+const ball = (radius: number, segments = 8) => lathe([[0, -radius], [radius * .7, -radius * .7], [radius, 0], [radius * .7, radius * .7], [0, radius]], segments);
 
 const matrix = new Matrix4(), quaternion = new Quaternion(), euler = new Euler(), offset = new Vector3(), UNIT = new Vector3(1, 1, 1), tint = new Color();
 class Kit {
@@ -75,165 +78,211 @@ class Kit {
 }
 
 // ---- Humanoids ----
-type Look = { suit: string; vest: string; legs: string; boots: string; skin: string; glove?: string; width?: number };
+// Pads are the shoulder caps and knee pads; squad classes paint them in a darkened class color, so a class
+// reads by more than its glow at play scale.
+type Look = { suit: string; vest: string; legs: string; boots: string; skin: string; glove?: string; pads?: string; width?: number };
 // The shared body: hips carry the legs and the waist-hinged chest, which carries the head and the arms. Arms
-// hang from the shoulders in the bind pose; the pose code lifts them onto the weapon.
+// hang from the shoulders in the bind pose; the pose code lifts them onto the weapon. Limbs are tapered capsules.
 function humanoid(kind: UnitKind, look: Look) {
-  const k = new Kit(kind), w = look.width ?? 1, sx = .27 * w, glove = look.glove ?? '#1b2427';
+  const k = new Kit(kind), w = look.width ?? 1, sx = .27 * w, glove = look.glove ?? '#1b2427', pads = look.pads ?? look.vest;
   k.bone('root', null, [0, 0, 0]).bone('hips', 'root', [0, .58, 0])
     .bone('legL', 'hips', [-.11, .58, 0]).bone('legR', 'hips', [.11, .58, 0])
     .bone('chest', 'hips', [0, .6, 0]).bone('head', 'chest', [0, .98, 0])
     .bone('armL', 'chest', [-sx, .92, 0]).bone('armR', 'chest', [sx, .92, 0]);
   if (ARMED[kind]) k.bone('gun', 'chest', [.1, .74, .16]);
-  k.lit(look.legs, 'hips', bevelBox(.34 * w, .16, .24), [0, .6, 0]);
+  k.lit(look.legs, 'hips', bevelBox(.34 * w, .16, .24), [0, .6, 0])
+    .lit('#161c1e', 'hips', bevelBox(.37 * w, .05, .27, .012), [0, .665, 0]);
   for (const [side, x] of [['legL', -.11], ['legR', .11]] as const) {
-    k.lit(look.legs, side, bevelBox(.15, .3, .19), [x, .43, 0])
-      .lit(look.legs, side, bevelBox(.13, .26, .17), [x, .18, 0])
-      .lit(look.boots, side, bevelBox(.15, .09, .27), [x, .045, .04]);
+    k.lit(look.legs, side, limb(.085, .068, .25), [x, .57, 0])
+      .lit(pads, side, bevelBox(.11, .1, .06, .02), [x, .3, .07])
+      .lit(look.legs, side, limb(.066, .055, .22), [x, .31, 0])
+      .lit(look.boots, side, bevelBox(.15, .1, .28), [x, .05, .04]);
   }
   k.lit(look.suit, 'chest', lathe([[.17 * w, .64], [.2 * w, .72], [.24 * w, .86], [.23 * w, .96], [.1, .99], [0, .99]], 10), [0, 0, 0])
-    .lit(look.vest, 'chest', bevelBox(.36 * w, .24, .07), [0, .8, .14])
+    .lit(look.vest, 'chest', bevelBox(.36 * w, .26, .08), [0, .8, .14])
+    .lit(look.vest, 'chest', bevelBox(.34 * w, .22, .07), [0, .82, -.13])
     .lit(look.skin, 'head', bevelBox(.08, .06, .08), [0, 1.0, 0])
-    .lit(look.skin, 'head', bevelBox(.23, .25, .25, .07), [0, 1.13, .01]);
+    .lit(look.skin, 'head', lathe([[0, 1.0], [.085, 1.005], [.112, 1.05], [.12, 1.12], [.108, 1.19], [.065, 1.235], [0, 1.25]], 10), [0, 0, .01]);
   for (const [side, x] of [['armL', -sx], ['armR', sx]] as const) {
-    k.lit(look.suit, side, bevelBox(.12, .24, .14), [x, .8, 0])
-      .lit(look.suit, side, bevelBox(.1, .2, .12), [x, .6, 0])
+    k.lit(pads, side, ball(.085), [x, .91, 0])
+      .lit(look.suit, side, limb(.062, .052, .2), [x, .9, 0])
+      .lit(look.suit, side, limb(.054, .046, .17), [x, .69, 0])
       .lit(glove, side, bevelBox(.1, .09, .11), [x, .47, .01]);
   }
   return k;
 }
-// A long gun on the gun bone, pointing +z from the grip at the bone.
-function rifle(k: Kit, length: number, accent: string, { scope = false, stock = .16 } = {}) {
-  const [x, y, z] = k.bones.find(b => b.name === 'gun')!.at, dark = '#141d20', metal = '#2b3a3e';
-  k.lit(dark, 'gun', profile([[-stock, -.02], [0, -.03], [.02, -.11], [.07, -.11], [.07, -.03], [length * .55, -.03], [length * .55, .04], [-.02, .05], [-stock, .02]], .06), [x, y, z])
-    .lit(metal, 'gun', rod(.018, length * .5), [x, y + .015, z + length * .75])
-    .glow(accent, 'gun', bevelBox(.065, .015, length * .3, .004), [x, y + .05, z + length * .25]);
-  if (scope) k.lit(metal, 'gun', rod(.028, .2), [x, y + .085, z + .12]);
+// The squad's rounded helmet with a lit visor across the face.
+const helmet = (k: Kit, color: string, visor: string) => k
+  .lit(color, 'head', lathe([[.15, 1.1], [.16, 1.18], [.13, 1.26], [.06, 1.29], [0, 1.29]], 10))
+  .glow(visor, 'head', bevelBox(.21, .06, .03, .01), [0, 1.15, .135]);
+// A long gun on the gun bone, pointing +z from the grip at the bone: receiver and stock, a curved magazine,
+// the barrel with a muzzle, and a lit rail along the top.
+type Rifle = { length: number; accent: string; scope?: boolean; stock?: number };
+const RIFLE: Partial<Record<UnitKind, Rifle>> = {
+  assault: { length: .58, accent: CLASS_COLOR.assault! }, support: { length: .54, accent: CLASS_COLOR.support! },
+  recon: { length: .74, accent: CLASS_COLOR.recon!, scope: true, stock: .2 }, tech: { length: .46, accent: CLASS_COLOR.tech! },
+  guard: { length: .62, accent: '#ff5148' }, heavy: { length: .5, accent: '#ff6d5c' },
+};
+function rifle(k: Kit) {
+  const { length, accent, scope = false, stock = .16 } = RIFLE[k.kind]!, [x, y, z] = k.bones.find(b => b.name === 'gun')!.at, dark = '#141d20', metal = '#2b3a3e';
+  k.lit(dark, 'gun', profile([[-stock, -.03], [0, -.035], [.02, -.12], [.075, -.12], [.075, -.035], [length * .55, -.035], [length * .55, .045], [-.02, .055], [-stock, .025]], .075), [x, y, z])
+    .lit(metal, 'gun', profile([[.1, -.035], [.17, -.035], [.19, -.17], [.12, -.18]], .05), [x, y, z])
+    .lit(metal, 'gun', rod(.022, length * .5), [x, y + .015, z + length * .75])
+    .lit(dark, 'gun', rod(.032, .07), [x, y + .015, z + length])
+    .glow(accent, 'gun', bevelBox(.08, .022, length * .32, .006), [x, y + .058, z + length * .25]);
+  if (scope) k.lit(metal, 'gun', rod(.034, .24), [x, y + .1, z + .12]).glow(accent, 'gun', ring(.03, .009, 10), [x, y + .1, z + .245]);
   return k;
 }
 
-const SQUAD: Look = { suit: '#466766', vest: '#3a5856', legs: '#22383b', boots: '#151e20', skin: '#697e7a' };
+const SQUAD: Look = { suit: '#4f7370', vest: '#3d5e5b', legs: '#253c3f', boots: '#151e20', skin: '#6f8580' };
 
 function assault() {
-  const c = CLASS_COLOR.assault!, k = humanoid('assault', { ...SQUAD, width: 1.12 });
-  k.lit('#3b5a58', 'head', lathe([[.15, 1.1], [.16, 1.18], [.13, 1.26], [.06, 1.29], [0, 1.29]], 10))
-    .glow(c, 'head', bevelBox(.2, .045, .03, .008), [0, 1.16, .14]);
-  // Heavy shoulder plates, raked outward, with a lit edge.
+  const c = CLASS_COLOR.assault!, paint = '#b4613f', k = humanoid('assault', { ...SQUAD, width: 1.12, pads: paint });
+  helmet(k, '#3b5a58', c);
+  // Heavy shoulder plates and a chest plate in the class color, raked outward, with lit edges.
   for (const [side, x, r] of [['armL', -.3, .3], ['armR', .3, -.3]] as const) {
-    k.lit('#5b7a76', side, bevelBox(.2, .1, .3, .03), [x * 1.04, .97, 0], [0, 0, r])
-      .glow(c, side, bevelBox(.2, .015, .02, .004), [x * 1.04, .97, .16], [0, 0, r]);
+    k.lit(paint, side, bevelBox(.23, .11, .32, .03), [x * 1.05, .98, 0], [0, 0, r])
+      .glow(c, side, bevelBox(.22, .022, .025, .005), [x * 1.05, .98, .17], [0, 0, r]);
   }
-  k.lit('#2f4644', 'chest', bevelBox(.3, .12, .08), [0, .66, .15]);
-  return rifle(k, .62, c).build();
+  k.lit(paint, 'chest', bevelBox(.3, .18, .04, .012), [0, .85, .195])
+    .lit('#2f4644', 'chest', bevelBox(.3, .12, .08), [0, .66, .15]);
+  return rifle(k).build();
 }
 function support() {
-  const c = CLASS_COLOR.support!, k = humanoid('support', SQUAD);
-  k.lit('#3b5a58', 'head', lathe([[.15, 1.1], [.16, 1.18], [.13, 1.26], [.06, 1.29], [0, 1.29]], 10))
-    .glow(c, 'head', bevelBox(.2, .045, .03, .008), [0, 1.16, .14])
-    // The med pack: a tall pale case with a lit cross on its back and lid.
-    .lit('#d5dfdb', 'chest', bevelBox(.36, .42, .2), [0, .8, -.24])
-    .glow(c, 'chest', bevelBox(.2, .06, .02, .005), [0, .82, -.35]).glow(c, 'chest', bevelBox(.06, .2, .02, .005), [0, .82, -.35])
-    .glow(c, 'chest', bevelBox(.16, .02, .05, .005), [0, 1.015, -.24]).glow(c, 'chest', bevelBox(.05, .02, .16, .005), [0, 1.015, -.24]);
-  return rifle(k, .58, c).build();
+  const c = CLASS_COLOR.support!, paint = '#4cc39b', k = humanoid('support', { ...SQUAD, pads: paint });
+  helmet(k, '#3b5a58', c);
+  // Mint armbands, and the med pack: a tall pale case with a lit cross on its back and lid.
+  for (const [side, x] of [['armL', -.27], ['armR', .27]] as const) k.lit(paint, side, bevelBox(.14, .06, .14, .015), [x, .79, 0]);
+  k.lit('#d5dfdb', 'chest', bevelBox(.38, .44, .22), [0, .8, -.25])
+    .glow(c, 'chest', bevelBox(.24, .075, .02, .006), [0, .82, -.37]).glow(c, 'chest', bevelBox(.075, .24, .02, .006), [0, .82, -.37])
+    .glow(c, 'chest', bevelBox(.18, .02, .06, .005), [0, 1.025, -.25]).glow(c, 'chest', bevelBox(.06, .02, .18, .005), [0, 1.025, -.25]);
+  return rifle(k).build();
 }
 function recon() {
-  const c = CLASS_COLOR.recon!, k = humanoid('recon', { ...SQUAD, suit: '#3f5b55', width: .92 });
-  // A hood peaked over the face, falling to a drape between the shoulders.
-  k.lit('#33504b', 'head', lathe([[.16, 1.02], [.17, 1.12], [.16, 1.22], [.11, 1.3], [.03, 1.33], [0, 1.33]], 10))
-    .lit('#33504b', 'head', bevelBox(.22, .06, .1), [0, 1.24, .14], [.35, 0, 0])
-    .lit('#33504b', 'chest', bevelBox(.3, .3, .06), [0, .84, -.16], [-.12, 0, 0])
-    .glow(c, 'head', bevelBox(.17, .035, .03, .006), [0, 1.13, .145]);
-  return rifle(k, .74, c, { scope: true, stock: .2 }).build();
+  const c = CLASS_COLOR.recon!, cloak = '#7a6a3a', k = humanoid('recon', { ...SQUAD, suit: '#3f5b55', width: .92, pads: cloak });
+  // A sand hood peaked over the face, falling to a long drape down the back, and lit goggles.
+  k.lit(cloak, 'head', lathe([[.16, 1.02], [.17, 1.12], [.16, 1.22], [.11, 1.3], [.03, 1.34], [0, 1.34]], 10))
+    .lit(cloak, 'head', bevelBox(.22, .06, .1), [0, 1.24, .14], [.35, 0, 0])
+    .lit(cloak, 'chest', bevelBox(.32, .46, .05), [0, .76, -.17], [-.1, 0, 0])
+    .glow(c, 'head', bevelBox(.18, .05, .03, .008), [0, 1.13, .145]);
+  return rifle(k).build();
 }
 function tech() {
-  const c = CLASS_COLOR.tech!, k = humanoid('tech', SQUAD);
-  k.lit('#3b5a58', 'head', lathe([[.15, 1.1], [.16, 1.18], [.13, 1.26], [.06, 1.29], [0, 1.29]], 10))
-    .glow(c, 'head', bevelBox(.2, .045, .03, .008), [0, 1.16, .14])
-    // The drone pack: a disc drone docked on the back, four lit rotors, and a whip antenna.
-    .lit('#2c4245', 'chest', bevelBox(.3, .3, .16), [0, .8, -.22])
-    .lit('#4e6967', 'chest', lathe([[.0, -.03], [.2, -.03], [.22, 0], [.2, .03], [0, .04]], 12), [0, .98, -.24])
-    .lit('#2c4245', 'chest', rod(.012, .64).rotateX(Math.PI / 2), [-.13, 1.28, -.28]);
-  for (const [x, z] of [[-.16, -.08], [.16, -.08], [-.16, -.4], [.16, -.4]]) k.glow(c, 'chest', ring(.065, .01, 12).rotateX(Math.PI / 2), [x, 1.0, z]);
-  k.glow(c, 'chest', bevelBox(.05, .05, .05, .01), [-.13, 1.61, -.28]);
-  return rifle(k, .46, c).build();
+  const c = CLASS_COLOR.tech!, pack = '#3482ad', k = humanoid('tech', { ...SQUAD, pads: pack });
+  helmet(k, '#3b5a58', c);
+  // The drone pack: a disc drone docked on a blue pack, four lit rotors, a whip antenna, and a wrist screen.
+  k.lit(pack, 'chest', bevelBox(.32, .32, .17), [0, .8, -.23])
+    .lit('#5a7674', 'chest', lathe([[0, -.03], [.22, -.03], [.24, 0], [.22, .03], [0, .045]], 12), [0, .99, -.25])
+    .lit('#2c4245', 'chest', rod(.014, .7).rotateX(Math.PI / 2), [-.14, 1.3, -.29]);
+  for (const [x, z] of [[-.18, -.07], [.18, -.07], [-.18, -.43], [.18, -.43]]) k.glow(c, 'chest', ring(.07, .014, 12).rotateX(Math.PI / 2), [x, 1.0, z]);
+  k.glow(c, 'chest', ball(.035, 6), [-.14, 1.66, -.29])
+    .glow(c, 'armL', bevelBox(.04, .06, .1, .008), [-.32, .56, .03]);
+  return rifle(k).build();
 }
 
 function guard() {
   const k = humanoid('guard', { suit: '#6b3d39', vest: '#4f2f2c', legs: '#2a2224', boots: '#161214', skin: '#8a7c70' });
-  // A domed helmet with a white lamp, and a red light on the left shoulder.
+  // A domed helmet with a brim and a white lamp, a red beacon on the left shoulder, a radio antenna and chest pouches.
   k.lit('#3a2826', 'head', lathe([[.17, 1.09], [.18, 1.16], [.16, 1.24], [.09, 1.3], [0, 1.31]], 10))
-    .lit('#3a2826', 'head', bevelBox(.3, .025, .1, .008), [0, 1.11, .15])
-    .glow('#fff3cf', 'head', bevelBox(.08, .06, .05, .01), [0, 1.24, .15])
-    .glow('#ff8a7a', 'head', bevelBox(.18, .035, .03, .006), [0, 1.15, .14])
-    .glow('#ff3b30', 'armL', bevelBox(.07, .07, .07, .015), [-.3, .99, .02]);
-  return rifle(k, .62, '#ff5148').build();
+    .lit('#3a2826', 'head', bevelBox(.3, .025, .12, .008), [0, 1.11, .15])
+    .glow('#fff3cf', 'head', bevelBox(.1, .08, .06, .015), [0, 1.24, .15])
+    .glow('#ff8a7a', 'head', bevelBox(.2, .05, .03, .008), [0, 1.16, .14])
+    .glow('#ff3b30', 'armL', bevelBox(.09, .09, .09, .02), [-.3, 1.0, .02])
+    .lit('#1d1517', 'chest', rod(.01, .36, 6).rotateX(Math.PI / 2), [-.17, 1.15, -.13]);
+  for (const x of [-.11, 0, .11]) k.lit('#3a2422', 'chest', bevelBox(.09, .1, .05, .015), [x, .7, .18]);
+  return rifle(k).build();
 }
 function heavy() {
-  const k = humanoid('heavy', { suit: '#5c3532', vest: '#47302e', legs: '#1d2729', boots: '#121618', skin: '#5d6765', width: 1.2 });
+  const k = humanoid('heavy', { suit: '#5c3532', vest: '#47302e', legs: '#1d2729', boots: '#121618', skin: '#5d6765', pads: '#4a3a3a', width: 1.2 });
   k.bone('shield', 'chest', [-.22, .7, .3]);
-  // Full helmet with a lit slit, bulky shoulder armor, and a tall riot shield carried on the left.
+  // Full helmet with a face plate and a lit slit, bulky shoulder armor, and a tall riot shield carried on the left
+  // with a lit viewport.
   k.lit('#3d3332', 'head', lathe([[.17, 1.0], [.19, 1.1], [.18, 1.22], [.11, 1.3], [0, 1.31]], 10))
-    .glow('#ff6d5c', 'head', bevelBox(.2, .03, .03, .006), [0, 1.17, .17]);
+    .lit('#2a2222', 'head', bevelBox(.24, .14, .04, .012), [0, 1.14, .16])
+    .glow('#ff6d5c', 'head', bevelBox(.2, .035, .03, .006), [0, 1.17, .18]);
   for (const [side, x] of [['armL', -.34], ['armR', .34]] as const) {
-    k.lit('#4a3a3a', side, lathe([[.0, .1], [.15, .08], [.16, .0], [.12, -.08], [0, -.08]], 8), [x, .94, 0])
+    k.lit('#4a3a3a', side, lathe([[.0, -.08], [.12, -.08], [.16, .0], [.15, .08], [0, .1]], 8), [x, .94, 0])
       .lit('#4a3a3a', side, bevelBox(.18, .12, .22), [x, .78, 0]);
   }
-  k.lit('#7d7470', 'shield', bevelBox(.46, .8, .06, .02), [-.24, .66, .38])
-    .lit('#3a3233', 'shield', bevelBox(.5, .06, .08, .02), [-.24, 1.05, .38])
-    .glow('#ff6d5c', 'shield', bevelBox(.28, .05, .02, .006), [-.24, .92, .42])
-    .glow('#ff6d5c', 'shield', bevelBox(.04, .5, .02, .006), [-.24, .6, .42]);
-  return rifle(k, .5, '#ff6d5c').build();
+  k.lit('#7d7470', 'shield', bevelBox(.48, .84, .06, .02), [-.24, .66, .38])
+    .lit('#3a3233', 'shield', bevelBox(.52, .06, .08, .02), [-.24, 1.07, .38])
+    .lit('#3a3233', 'shield', bevelBox(.52, .05, .08, .02), [-.24, .25, .38])
+    .glow('#ffb3a6', 'shield', bevelBox(.3, .05, .02, .006), [-.24, .96, .42])
+    .glow('#ff6d5c', 'shield', bevelBox(.05, .5, .02, .006), [-.24, .6, .42]);
+  return rifle(k).build();
 }
 function target() {
-  const gold = '#ffcf6b', k = humanoid('target', { suit: '#6e5040', vest: '#5a4034', legs: '#2a2421', boots: '#171312', skin: '#b0a18d', glove: '#2a1f1a' });
-  // A long coat flaring to the knees with a gold hem and collar, slicked hair, and a briefcase in the right hand.
-  k.lit('#5b4134', 'hips', lathe([[.33, .24], [.29, .4], [.25, .58], [.24, .66]], 14))
-    .glow(gold, 'hips', ring(.325, .014, 20).rotateX(Math.PI / 2), [0, .25, 0])
-    .glow(gold, 'chest', ring(.15, .014, 14).rotateX(Math.PI / 2), [0, .99, 0])
-    .glow(gold, 'chest', bevelBox(.04, .3, .02, .005), [0, .8, .18])
+  const gold = '#ffcf6b', trim = '#c99a45', k = humanoid('target', { suit: '#6e5040', vest: '#5a4034', legs: '#2a2421', boots: '#171312', skin: '#b0a18d', glove: '#2a1f1a', pads: '#5b4134' });
+  // A long coat flaring to the knees with a painted gold hem and collar (lit gold there blooms into a halo),
+  // lapels, slicked hair, gold shades, and a briefcase in the right hand.
+  k.lit('#5b4134', 'hips', lathe([[.36, .22], [.31, .4], [.26, .58], [.245, .66]], 14))
+    .lit(trim, 'hips', ring(.355, .022, 20).rotateX(Math.PI / 2), [0, .23, 0])
+    .lit(trim, 'chest', ring(.15, .02, 14).rotateX(Math.PI / 2), [0, .99, 0])
+    .glow(gold, 'chest', bevelBox(.05, .3, .02, .006), [0, .8, .19])
+    .lit('#4a342a', 'chest', bevelBox(.08, .24, .03, .01), [-.08, .86, .19], [0, 0, -.25])
+    .lit('#4a342a', 'chest', bevelBox(.08, .24, .03, .01), [.08, .86, .19], [0, 0, .25])
     .lit('#2a211c', 'head', bevelBox(.25, .07, .26, .03), [0, 1.26, -.01])
-    .lit('#2c2420', 'armR', bevelBox(.08, .23, .32, .02), [.29, .34, 0])
-    .glow(gold, 'armR', bevelBox(.09, .03, .1, .006), [.29, .46, 0]);
+    .glow(gold, 'head', bevelBox(.18, .035, .03, .006), [0, 1.15, .135])
+    .lit('#2c2420', 'armR', bevelBox(.09, .26, .36, .02), [.29, .33, 0])
+    .glow(gold, 'armR', bevelBox(.1, .035, .12, .006), [.29, .47, 0]);
   return k.build();
 }
 function vip() {
   const gold = '#ffe08a', k = humanoid('vip', { suit: '#2c363c', vest: '#e9e3d4', legs: '#1d2328', boots: '#111416', skin: '#c9bfae' });
-  // A sharp suit: white shirt front, gold tie, and a brimmed hat with a gold band.
-  k.glow(gold, 'chest', bevelBox(.05, .26, .02, .006), [0, .82, .185])
-    .lit('#1f272c', 'head', lathe([[0, 1.22], [.25, 1.22], [.25, 1.235], [.14, 1.24], [.13, 1.35], [0, 1.36]], 14))
-    .glow(gold, 'head', ring(.135, .012, 14).rotateX(Math.PI / 2), [0, 1.26, 0]);
+  // A sharp suit: white shirt front between dark lapels, gold tie and pocket square, and a brimmed hat with a gold band.
+  k.glow(gold, 'chest', bevelBox(.06, .26, .02, .006), [0, .82, .19])
+    .lit('#1f272c', 'chest', bevelBox(.08, .26, .03, .01), [-.1, .84, .18], [0, 0, -.2])
+    .lit('#1f272c', 'chest', bevelBox(.08, .26, .03, .01), [.1, .84, .18], [0, 0, .2])
+    .glow(gold, 'chest', bevelBox(.05, .03, .02, .005), [.15, .9, .2])
+    .lit('#1f272c', 'head', lathe([[0, 1.22], [.27, 1.22], [.27, 1.235], [.14, 1.24], [.13, 1.35], [0, 1.36]], 14))
+    .glow(gold, 'head', ring(.135, .018, 14).rotateX(Math.PI / 2), [0, 1.26, 0]);
   return k.build();
 }
 
 function camera() {
   const k = new Kit('camera'), red = '#ff5a4a';
   k.bone('root', null, [0, 0, 0]).bone('head', 'root', [0, 1.9, 0]);
-  // Pole on a footplate, a mount arm out front, and a housing whose lens wears a lit ring.
+  // A pole on a footplate with a junction box and its cable; on top a pan joint and a yoke holding a tapered
+  // housing under a sun hood, whose lens wears a lit ring around a red eye.
   k.lit('#3c4a4a', 'root', lathe([[.24, 0], [.24, .05], [.12, .09], [.06, .12], [0, .12]], 12))
-    .lit('#5c6d6a', 'root', lathe([[.05, .1], [.045, 1.86], [0, 1.86]], 8))
-    .lit('#465452', 'head', bevelBox(.12, .14, .12), [0, 1.9, 0])
-    .lit('#465452', 'head', bevelBox(.08, .08, .2), [0, 1.98, .08])
-    .lit('#2a3436', 'head', bevelBox(.24, .2, .38, .04), [0, 2.03, .2])
-    .lit('#1f282a', 'head', bevelBox(.3, .03, .44, .01), [0, 2.145, .22])
-    .lit('#0c1213', 'head', rod(.07, .06, 12), [0, 2.03, .41])
-    .glow(red, 'head', ring(.075, .016, 16), [0, 2.03, .43])
-    .glow(red, 'head', bevelBox(.04, .04, .04, .008), [.08, 2.11, .02]);
+    .lit('#5c6d6a', 'root', lathe([[.055, .1], [.04, 1.86], [0, 1.86]], 8))
+    .lit('#3c4a4a', 'root', bevelBox(.13, .2, .1), [0, 1.1, -.06])
+    .lit('#1c2426', 'root', rod(.012, .8).rotateX(Math.PI / 2), [.05, 1.5, -.04])
+    .glow(red, 'root', bevelBox(.03, .03, .02, .006), [0, 1.16, -.005])
+    .lit('#465452', 'head', bevelBox(.12, .12, .12), [0, 1.9, 0])
+    .lit('#465452', 'head', bevelBox(.3, .04, .08, .012), [0, 1.95, .12])
+    .lit('#465452', 'head', bevelBox(.03, .16, .1, .008), [-.14, 2.02, .16])
+    .lit('#465452', 'head', bevelBox(.03, .16, .1, .008), [.14, 2.02, .16])
+    .lit('#2a3436', 'head', profile([[-.16, -.1], [.18, -.11], [.24, -.07], [.24, .08], [.16, .11], [-.16, .1]], .24), [0, 2.03, .2])
+    .lit('#1f282a', 'head', bevelBox(.3, .025, .46, .008), [0, 2.155, .24])
+    .lit('#0c1213', 'head', rod(.075, .07, 12), [0, 2.03, .46])
+    .glow(red, 'head', ring(.08, .022, 16), [0, 2.03, .48])
+    .glow(red, 'head', rod(.035, .012, 10), [0, 2.03, .497])
+    .glow(red, 'head', bevelBox(.04, .04, .04, .008), [.08, 2.12, .06]);
   return k.build();
 }
 function turret() {
   const k = new Kit('turret'), red = '#ff6d5c';
   k.bone('root', null, [0, 0, 0]).bone('head', 'root', [0, .3, 0])
-    .bone('barrelL', 'head', [-.09, .46, .2]).bone('barrelR', 'head', [.09, .46, .2]).bone('laser', 'head', [0, .55, .3]);
-  // A stepped base ring with a lit band, a squat head on a collar, twin barrels, and a laser line out front.
-  k.lit('#3d4447', 'root', lathe([[.5, 0], [.52, .05], [.47, .13], [.36, .17], [.3, .27], [0, .27]], 18))
-    .glow(red, 'root', ring(.495, .014, 24).rotateX(Math.PI / 2), [0, .09, 0])
-    .lit('#4b3b3a', 'head', lathe([[.22, .26], [.24, .32], [.2, .35], [0, .35]], 14))
-    .lit('#5a3936', 'head', profile([[-.24, 0], [.18, 0], [.26, .08], [.2, .22], [-.2, .22], [-.26, .12]], .48), [0, .34, -.02])
-    .lit('#2e3436', 'head', bevelBox(.12, .16, .24), [.29, .43, -.06])
-    .glow(red, 'head', bevelBox(.18, .04, .02, .006), [0, .5, .19]);
+    .bone('barrelL', 'head', [-.1, .46, .2]).bone('barrelR', 'head', [.1, .46, .2]).bone('laser', 'head', [0, .55, .3]);
+  // A hex base plate on three splayed feet with a lit band, a narrow column that sets the head apart from the base,
+  // a squat head with armored cheeks, an ammo box and a sensor eye, long twin barrels, and a laser line out front.
+  k.lit('#3d4447', 'root', lathe([[.44, 0], [.46, .03], [.42, .07], [0, .07]], 6), [0, 0, 0], [0, Math.PI / 6, 0])
+    .glow(red, 'root', ring(.36, .014, 24).rotateX(Math.PI / 2), [0, .075, 0])
+    .lit('#4b5356', 'root', lathe([[.17, .07], [.13, .12], [.12, .22], [.17, .26], [0, .27]], 12));
+  for (const a of [0, 2 * Math.PI / 3, 4 * Math.PI / 3]) k.lit('#2e3436', 'root', bevelBox(.13, .07, .28, .02), [Math.sin(a) * .42, .035, Math.cos(a) * .42], [0, a, 0]);
+  k.lit('#4b3b3a', 'head', lathe([[.22, .26], [.24, .32], [.2, .35], [0, .35]], 14))
+    .lit('#5a3936', 'head', profile([[-.24, 0], [.16, 0], [.26, .08], [.2, .22], [-.2, .22], [-.26, .12]], .46), [0, .34, -.02])
+    .lit('#7a3f39', 'head', bevelBox(.06, .2, .36, .015), [-.25, .45, 0])
+    .lit('#7a3f39', 'head', bevelBox(.06, .2, .36, .015), [.25, .45, 0])
+    .lit('#2e3436', 'head', bevelBox(.12, .16, .24), [.33, .43, -.06])
+    .lit('#1c2427', 'head', bevelBox(.3, .06, .05, .012), [0, .48, -.27])
+    .glow(red, 'head', bevelBox(.18, .05, .03, .008), [0, .52, .17]);
   for (const side of ['barrelL', 'barrelR'] as const) {
-    const x = side === 'barrelL' ? -.09 : .09;
-    k.lit('#1c2427', side, rod(.04, .5, 10), [x, .46, .44]).lit('#2b3a3e', side, rod(.052, .1, 10), [x, .46, .67]);
+    const x = side === 'barrelL' ? -.1 : .1;
+    k.lit('#2b3a3e', side, rod(.06, .16, 10), [x, .46, .26])
+      .lit('#1c2427', side, rod(.042, .6, 10), [x, .46, .48])
+      .lit('#2b3a3e', side, rod(.058, .12, 10), [x, .46, .76]);
   }
   k.glow('#ff3b30', 'laser', bevelBox(.018, .018, 1, .004), [0, .55, .8]);
   return k.build();
@@ -244,6 +293,13 @@ const models = new Map<UnitKind, RigModel>();
 export function rigModel(kind: UnitKind) {
   let m = models.get(kind);
   if (!m) { m = BUILDERS[kind](); models.set(kind, m); }
+  return m;
+}
+// A unit's rifle on its own, the grip at the origin and the muzzle toward +z, for models that carry it in a hand.
+const weapons = new Map<UnitKind, RigModel>();
+export function weaponModel(kind: UnitKind) {
+  let m = weapons.get(kind);
+  if (!m) { m = rifle(new Kit(kind).bone('gun', null, [0, 0, 0])).build(); weapons.set(kind, m); }
   return m;
 }
 
@@ -266,7 +322,7 @@ export function makeRig(kind: UnitKind, body: Material, glow: Material) {
   if (lit) { lit.bind(skeleton, mesh.bindMatrix); mesh.add(lit); }
   return { kind, body: mesh, glow: lit, bones: Object.fromEntries(bones.map(b => [b.name, b])), rest, skeleton } satisfies Rig;
 }
-export function skin(rig: Rig, material: Material) {
+export function skin(rig: Pick<Rig, 'body' | 'skeleton'>, material: Material) {
   const mesh = new SkinnedMesh(rig.body.geometry, material);
   mesh.bind(rig.skeleton, rig.body.bindMatrix);
   return mesh;
@@ -298,13 +354,14 @@ export function animate(rig: Rig, m: Motion) {
   b.chest.rotation.y = stride * .12;
   b.armL.rotation.x = -stride * .7 * swing; b.armR.rotation.x = stride * .7 * swing;
   if (armed) {
-    // Weapon at low ready, raised to the shoulder while aiming; each shot kicks it back and up.
-    const lift = m.aim;
+    // Weapon at low ready, slung across the body so it shows from any side (the heavy keeps it clear of the
+    // shield), raised to the shoulder while aiming; each shot kicks it back and up.
+    const lift = m.aim, across = rig.kind === 'heavy' ? 0 : 1 - lift;
     b.armR.rotation.x += -.6 - .85 * lift - m.kick * .2; b.armR.rotation.z = -.1;
     if (rig.kind === 'heavy') { b.armL.rotation.x += -.8 - .3 * lift; b.armL.rotation.z = .15; b.shield.position.z += .06 * lift - m.flinch * .08; b.shield.rotation.y = .25 * lift; }
     else { b.armL.rotation.x += -1 - .45 * lift; b.armL.rotation.z = .4 + .1 * lift; }
     b.gun.position.y += .14 * lift; b.gun.position.z += .06 * lift - m.kick * .07;
-    b.gun.rotation.x = .4 * (1 - lift) - m.kick * .3;
+    b.gun.rotation.set(.3 * (1 - lift) - m.kick * .3, -.6 * across, .2 * across);
     b.chest.rotation.x -= m.kick * .06;
   } else if (rig.kind === 'target') b.armR.rotation.x *= .5;
   // Hit flinch: the torso snaps back and twists, the head jerks.

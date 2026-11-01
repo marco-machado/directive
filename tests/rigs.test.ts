@@ -45,6 +45,16 @@ test('walking swings the legs against each other and aiming raises the weapon', 
   assert.ok(gun.rotation.x < -.2, 'recoil tips the muzzle up');
 });
 
+test('rifles rest slung across the body and point ahead when aimed; the heavy keeps its clear of the shield', () => {
+  const rifleman = makeRig('assault', paint, paint), heavy = makeRig('heavy', paint, paint);
+  animate(rifleman, still());
+  assert.ok(rifleman.bones.gun.rotation.y < -.3);
+  animate(rifleman, still({ aim: 1 }));
+  assert.ok(Math.abs(rifleman.bones.gun.rotation.y) < .01);
+  animate(heavy, still());
+  assert.ok(Math.abs(heavy.bones.gun.rotation.y) < .01);
+});
+
 test('the turret recoils one barrel at a time and stretches its laser while aiming', () => {
   const rig = makeRig('turret', paint, paint), { barrelL, barrelR, laser } = rig.bones, rest = new Vector3().copy(barrelR.position);
   animate(rig, still({ aim: 1, kick: 1, kickSide: 1 }));
