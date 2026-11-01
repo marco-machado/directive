@@ -248,7 +248,7 @@ export function rigModel(kind: UnitKind) {
 }
 
 // One unit's live rig: its bones, the lit body, the glow, and an optional extra skin (the silhouette) on the
-// same skeleton. The extra meshes are children of the body, so they share its world transform.
+// same skeleton. The glow is a child of the body; an extra skin must sit at the body's world transform too.
 export type Rig = { kind: UnitKind; body: SkinnedMesh; glow: SkinnedMesh | null; bones: Record<string, Bone>; rest: Vector3[]; skeleton: Skeleton };
 export function makeRig(kind: UnitKind, body: Material, glow: Material) {
   const model = rigModel(kind);
