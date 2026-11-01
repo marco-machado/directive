@@ -70,7 +70,8 @@ function SquadCard({ unit, slot, selected, campaign, pending, cover, onFocusSele
 }
 
 // Routine order confirmations stay out of the visible log; the sr-only status still announces them.
-const ROUTINE = ['Move order confirmed.', 'Holding position.'];
+const ROUTINE = ['Move order confirmed.', 'Waypoint added.', 'Holding position.', 'Wait cleared.'];
+const routineWait = /^Holding \d+ s at the last waypoint\.$/;
 const COMMS_LINES = 6;
 const danger = (text: string) => text.startsWith('ALARM') || text.endsWith(' is down.');
 // The last few reports, newest at the bottom; a report repeated back to back collapses into one line with a count.
@@ -81,7 +82,7 @@ function Comms({ state }: { state: Snapshot }) {
     const restarted = state.time < last.current.at, text = state.message;
     if (!restarted && last.current.text === text) { last.current.at = state.time; return; }
     last.current = { text, at: state.time };
-    const routine = ROUTINE.some(p => text.startsWith(p));
+    const routine = ROUTINE.some(p => text.startsWith(p)) || routineWait.test(text);
     setLog(list => {
       const kept = restarted ? [] : list, prev = kept.at(-1);
       if (routine) return kept;
