@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { CSSProperties } from 'react';
+import type { CSSProperties, MouseEvent } from 'react';
 import { sim } from '../app.ts';
 import { missionPayout } from '../game/campaign.ts';
 import type { Campaign } from '../game/campaign.ts';
@@ -35,12 +35,19 @@ function Tracker({ state }: { state: Snapshot }) {
   </section>;
 }
 
-function SquadCard({ unit, slot, selected, campaign, pending }: { unit: Unit; slot: number; selected: boolean; campaign: Campaign; pending: Pending }) {
+// Two clicks or taps on a card within this many ms focus the view on that operative.
+const DOUBLE_TAP_MS = 450;
+function SquadCard({ unit, slot, selected, campaign, pending, onFocusSelection }: { unit: Unit; slot: number; selected: boolean; campaign: Campaign; pending: Pending; onFocusSelection: () => void }) {
   const cls = unit.kind as ClassId, ability = unit.ability ?? CLASS_STATS[cls].ability, name = ABILITY_STATS[ability].name;
   const max = abilityCooldown(ability, campaign.abilities[cls]), down = unit.hp <= 0, ready = unit.abilityCd <= 0, aiming = pending?.unitId === unit.id;
-  const health = unit.hp / unit.maxHp, hit = !down && unit.hurt > 1.1;
+  const health = unit.hp / unit.maxHp, hit = !down && unit.hurt > 1.1, lastTap = useRef(-Infinity);
+  // Timed by hand: touch browsers don't all report a double tap as dblclick.
+  const pick = (e: MouseEvent<HTMLButtonElement>) => {
+    play('select'); sim.select(unit.id, e.shiftKey);
+    if (e.timeStamp - lastTap.current < DOUBLE_TAP_MS) { lastTap.current = -Infinity; onFocusSelection(); } else lastTap.current = e.timeStamp;
+  };
   return <div className={`agent cls-${cls}${selected ? ' selected' : ''}${down ? ' down' : ''}${hit ? ' hit' : ''}${down ? '' : health <= .3 ? ' critical' : health <= .55 ? ' wounded' : ''}`}>
-    <button className="agent-select" data-cue="own" disabled={down} aria-pressed={selected} aria-keyshortcuts={String(slot + 1)} onClick={e => { play('select'); sim.select(unit.id, e.shiftKey); }}>
+    <button className="agent-select" data-cue="own" disabled={down} aria-pressed={selected} aria-keyshortcuts={String(slot + 1)} title="Double-click to focus the view" onClick={pick}>
       <span className="agent-portrait"><Portrait cls={cls} /><kbd>{slot + 1}</kbd></span>
       <span className="agent-copy">
         <span className="agent-name"><b>{unit.name}</b><small>{CLASS_STATS[cls].title}</small></span>
@@ -78,7 +85,7 @@ function Targeting({ pending }: { pending: NonNullable<Pending> }) {
   </div>;
 }
 
-export function Hud({ state, onRecenter }: { state: Snapshot; onRecenter: () => void }) {
+export function Hud({ state, overview, onFocusSelection, onToggleOverview }: { state: Snapshot; overview: boolean; onFocusSelection: () => void; onToggleOverview: () => void }) {
   return <>
     <aside className="hud-left"><Tracker state={state} /><Comms state={state} /></aside>
     {state.paused ? <div className="pause-banner"><Icon name="pause" /><span><strong>Tactical pause</strong><small>Orders queue while paused</small></span>
@@ -88,12 +95,13 @@ export function Hud({ state, onRecenter }: { state: Snapshot; onRecenter: () => 
     <footer className="hud-bottom">
       <section className="squad" aria-label="Squad selection">{state.squad.map((id, i) => {
         const u = state.units.find(v => v.id === id);
-        return u ? <SquadCard key={id} unit={u} slot={i} selected={state.selected.includes(id)} campaign={state.campaign} pending={state.pending} /> : null;
+        return u ? <SquadCard key={id} unit={u} slot={i} selected={state.selected.includes(id)} campaign={state.campaign} pending={state.pending} onFocusSelection={onFocusSelection} /> : null;
       })}</section>
       <div className="commands" role="group" aria-label="Orders">
         <button className="cmd" onClick={sim.hold} aria-keyshortcuts="S"><Icon name="hold" /><span>Hold</span><kbd>S</kbd></button>
         <button className="cmd" onClick={sim.selectAll} aria-keyshortcuts="A"><Icon name="squad" /><span>All</span><kbd>A</kbd></button>
-        <button className="cmd" onClick={onRecenter} aria-keyshortcuts="R" aria-label="Recenter view"><Icon name="recenter" /><span>View</span><kbd>R</kbd></button>
+        <button className="cmd" onClick={onFocusSelection} aria-keyshortcuts="F" aria-label="Focus view on the selection"><Icon name="recenter" /><span>View</span><kbd>F</kbd></button>
+        <button className="cmd" onClick={onToggleOverview} aria-keyshortcuts="R" aria-pressed={overview} aria-label="District overview"><Icon name="overview" /><span>Overview</span><kbd>R</kbd></button>
       </div>
       {state.campaign.completed ? null : <p className="controls-hint" aria-hidden="true">Click street: move · click hostile: takedown or volley · <kbd>1</kbd>–<kbd>4</kbd> select · <kbd>Shift</kbd>+<kbd>1</kbd>–<kbd>4</kbd> ability · <kbd>Space</kbd> pause</p>}
     </footer>
