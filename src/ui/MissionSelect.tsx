@@ -38,7 +38,7 @@ export function MissionSelect({ state, titleRef, onChoose, onDeploy, onRecenter,
           </button>;
         })}</div>
         {campaign.offers.length ? null : <p className="empty-note">No contracts on the board.</p>}
-        <Clearance campaign={campaign} className="board-clearance" />
+        <Clearance campaign={campaign} short className="board-clearance" />
       </div>
     </section>
 

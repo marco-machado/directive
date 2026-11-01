@@ -31,15 +31,16 @@ export const Pips = ({ value, max, label, className = '' }: { value: number; max
   <span className={`pips ${className}`} role="img" aria-label={`${label} ${value} of ${max}`}>{Array.from({ length: max }, (_, i) => <i className={value > i ? 'on' : ''} key={i} />)}</span>;
 
 // Tier progression. Boards are dealt at each deployment from the completed count, so a tier unlocked by a
-// contract reaches the board dealt at the next deployment, not the one already on display.
-export function Clearance({ campaign, justCompleted = false, className = '' }: { campaign: Campaign; justCompleted?: boolean; className?: string }) {
+// contract reaches the board dealt at the next deployment, not the one already on display. `short` trims the copy to one line for the board.
+export function Clearance({ campaign, justCompleted = false, short = false, className = '' }: { campaign: Campaign; justCompleted?: boolean; short?: boolean; className?: string }) {
   const done = campaign.completed, top = topTier(done), next = nextUnlock(done);
   const onBoard = Math.max(0, ...campaign.offers.map(o => o.tier)), unlocked = justCompleted && done > 0 && top > topTier(done - 1);
   const left = next ? `${next.after} more contract${next.after === 1 ? '' : 's'}` : '';
   return <section className={`clearance ${className}`} style={threat(top)} aria-label="Clearance">
     <header><small>Clearance</small><strong>Tier {top}</strong><Pips value={top} max={MAX_TIER} label="Clearance tier" />{unlocked ? <b className="clearance-new">Unlocked</b> : null}</header>
-    <p>{top > onBoard ? `Tier ${top} offers join the board dealt at your next deployment.` : `Offers up to Tier ${top}.`}
-      {' '}{next ? `Tier ${next.tier} unlocks after ${left}.` : 'Every tier is open.'}</p>
+    {short ? <p>{top > onBoard ? `Tier ${top} joins the next board.` : next ? `Tier ${next.tier} after ${left}.` : 'Every tier is open.'}</p>
+      : <p>{top > onBoard ? `Tier ${top} offers join the board dealt at your next deployment.` : `Offers up to Tier ${top}.`}
+        {' '}{next ? `Tier ${next.tier} unlocks after ${left}.` : 'Every tier is open.'}</p>}
     {next ? <span className="clearance-meter" role="progressbar" aria-label={`Progress to Tier ${next.tier}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(next.progress * 100)}><i style={{ width: `${next.progress * 100}%` }} /></span> : null}
   </section>;
 }
