@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Simulation, parseCampaign, CALM_SECONDS, CAMERA_DETECT, COVER_FACTOR, DETECT_DRAIN, detectSeconds, HACK_SECONDS, LOOK_ANGLE, LOOK_EVERY, LOOK_PAUSE, QUEUE_SPACING, REINFORCE_CAP, SUSPICIOUS, REINFORCE_SECONDS, REVIVE_SECONDS, TAKEDOWN_REACH, TAKEDOWN_SECONDS } from '../src/game/simulation.ts';
+import { Simulation, parseCampaign, CALM_SECONDS, CAMERA_DETECT, COVER_FACTOR, DETECT_DRAIN, detectSeconds, GHOST_SECONDS, HACK_SECONDS, LOOK_ANGLE, LOOK_EVERY, LOOK_PAUSE, QUEUE_SPACING, REINFORCE_CAP, SUSPICIOUS, REINFORCE_SECONDS, REVIVE_SECONDS, SIGHT_RANGE, TAKEDOWN_REACH, TAKEDOWN_SECONDS } from '../src/game/simulation.ts';
 import type { CampaignSync, Unit, Upgrade } from '../src/game/simulation.ts';
 import { contractPayout, freshCampaign, MAX_TIER } from '../src/game/campaign.ts';
 import type { Campaign, ContractType } from '../src/game/campaign.ts';
@@ -385,6 +385,66 @@ test('fog of war hides hostiles behind buildings until marked', () => {
   sim.update(1 / 60); assert.equal(guard.visible, false);
   sim.attack(guard.id); assert.equal(guard.targetId, null);
   guard.marked = 2; sim.update(1 / 60); assert.equal(guard.visible, true);
+});
+
+test('sight rays stop at the first building footprint', () => {
+  const world = new World({ minX: -10, maxX: 10, minZ: -10, maxZ: 10 }, [{ x: 3, z: 0, w: 2, d: 2, h: 3, name: 'A', accent: '#fff' }, { x: 6, z: 0, w: 2, d: 2, h: 3, name: 'B', accent: '#fff' }], []);
+  assert.ok(Math.abs(world.sightDistance({ x: 0, z: 0 }, 1, 0, 9) - 1.95) < 1e-9);
+  assert.equal(world.sightDistance({ x: 0, z: 0 }, 0, 1, 9), 9);
+  assert.equal(world.sightDistance({ x: 0, z: 0 }, 1, 0, 1.5), 1.5);
+  assert.equal(world.sightDistance({ x: 3, z: 0 }, 0, 1, 9), 0);
+  // A diagonal ray agrees with sightClear on where A starts blocking.
+  const from = { x: 0, z: -2 }, at = (t: number) => ({ x: t * Math.SQRT1_2, z: -2 + t * Math.SQRT1_2 });
+  const d = world.sightDistance(from, Math.SQRT1_2, Math.SQRT1_2, 9);
+  assert.ok(Math.abs(d - 1.95 * Math.SQRT2) < 1e-9, String(d));
+  assert.ok(world.sightClear(from, at(d - .01)));
+  assert.equal(world.sightClear(from, at(d + .5)), false);
+});
+
+test('a hostile that leaves sight leaves a last-seen record until it is seen again', () => {
+  const { sim, hostile } = arena('heist');
+  const guard = hostile('guard', 0, -6, Math.PI);
+  guard.patrol = [{ x: 0, z: -6 }, { x: 0, z: -16 }];
+  sim.update(1 / 60); assert.equal(guard.visible, true); assert.equal(sim.lastSeen.size, 0);
+  step(sim, 10, () => !guard.visible);
+  const seen = sim.lastSeen.get(guard.id);
+  assert.ok(seen, 'no record when the guard left sight');
+  assert.ok(Math.abs(seen.z + SIGHT_RANGE) < .1 && seen.x === 0, JSON.stringify(seen));
+  assert.equal(seen.heading, Math.PI); assert.equal(seen.at, sim.time);
+  // The record holds still while the guard walks on out of sight, and goes once the guard is back in view.
+  step(sim, GHOST_SECONDS, () => { if (guard.visible) return true; assert.deepEqual(sim.lastSeen.get(guard.id), seen); return false; });
+  assert.equal(guard.visible, true);
+  assert.ok(sim.time - seen.at < GHOST_SECONDS);
+  assert.equal(sim.lastSeen.has(guard.id), false);
+});
+
+test('last-seen records fade after GHOST_SECONDS and drop for the dead and on restart', () => {
+  const { sim, hostile } = arena('heist');
+  const posted = hostile('guard', 0, -5, Math.PI), other = hostile('guard', 3, -5, Math.PI);
+  sim.update(1 / 60);
+  posted.z = -18; other.z = -18; sim.update(1 / 60);
+  assert.deepEqual(sim.lastSeen.get(posted.id), { x: 0, z: -18, heading: posted.heading, at: sim.time });
+  other.hp = 0; sim.update(1 / 60);
+  assert.equal(sim.lastSeen.has(other.id), false);
+  step(sim, GHOST_SECONDS - .2);
+  assert.ok(sim.lastSeen.has(posted.id));
+  step(sim, .3);
+  assert.equal(sim.lastSeen.has(posted.id), false);
+  posted.z = -5; sim.update(1 / 60); posted.z = -18; sim.update(1 / 60);
+  assert.equal(sim.lastSeen.size, 1);
+  sim.restart(); assert.equal(sim.lastSeen.size, 0);
+});
+
+test('watching a guard finish a patrol leg reveals its whole route', () => {
+  const { sim, hostile } = arena('heist');
+  const watched = hostile('guard', 0, -3, Math.PI), far = hostile('guard', 0, -15, Math.PI);
+  watched.patrol = [{ x: 0, z: -3 }, { x: 0, z: -7 }]; far.patrol = [{ x: 0, z: -15 }, { x: 0, z: -19 }];
+  step(sim, 10, () => sim.intel.has(watched.id));
+  assert.deepEqual(sim.intel.get(watched.id), [{ x: 0, z: -3 }, { x: 0, z: -7 }, { x: 0, z: -3 }]);
+  assert.deepEqual({ x: watched.x, z: watched.z }, { x: 0, z: -7 }, 'learned at the end of the first leg');
+  step(sim, 10);
+  assert.equal(sim.intel.has(far.id), false, 'a leg walked out of sight teaches nothing');
+  assert.ok(sim.intel.has(watched.id), 'intel lasts the mission');
 });
 
 test('squad loss pays nothing and the board rerolls for the next contract', () => {
