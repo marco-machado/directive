@@ -27,7 +27,8 @@ function App() {
   const [saveCode, setSaveCode] = useState<string | null>(null), [connecting, setConnecting] = useState(true), [loadingCode, setLoadingCode] = useState(false);
   useEffect(() => { connection.then(setSaveCode, () => sim.setSaveUnavailable(true)).finally(() => setConnecting(false)); }, []);
   const [onTitle, setOnTitle] = useState(true), [tab, setTab] = useState<Tab>('missions');
-  const [cameraReset, setCameraReset] = useState(0), [help, setHelp] = useState(false), [menu, setMenu] = useState(false), [confirmRestart, setConfirmRestart] = useState(false);
+  // The camera: reset snaps to the current view, focus glides to the selection, overview swaps the mission's tactical view for the whole district.
+  const [cameraReset, setCameraReset] = useState(0), [focus, setFocus] = useState(0), [overview, setOverview] = useState(false), [help, setHelp] = useState(false), [menu, setMenu] = useState(false), [confirmRestart, setConfirmRestart] = useState(false);
   // The Audio dialog, and whether closing it returns to the mission menu.
   const [audio, setAudio] = useState<'open' | 'from-menu' | null>(null);
   const [dismissing, setDismissing] = useState<Operative | null>(null);
@@ -35,7 +36,12 @@ function App() {
   const callout = useCallouts(state);
   const active = state.phase === 'mission';
   const screen: Screen = onTitle ? 'title' : active ? 'mission' : state.phase === 'headquarters' ? 'debrief' : tab === 'hq' ? 'hq' : 'select';
-  const resetCamera = () => setCameraReset(n => n + 1);
+  const resetCamera = () => { setOverview(false); setCameraReset(n => n + 1); };
+  // From the overview, focus returns to the tactical view, which centers on the selection.
+  const focusSelection = () => { if (overview) setOverview(false); else setFocus(n => n + 1); };
+  const toggleOverview = () => setOverview(v => !v);
+  // Every mission opens on the tactical view.
+  useEffect(() => { if (!active) setOverview(false); }, [active]);
   // After useCallouts, so a mission-end stinger is queued before the menu music returns.
   useEffect(() => { setMood({ mission: active, alarm: active && state.alarm, paused: active && state.paused }); }, [active, state.alarm, state.paused]);
   // Focus follows phase changes; switching between the Missions and Headquarters tabs keeps it on the tab.
@@ -54,13 +60,14 @@ function App() {
       else if (e.code === 'Space') { e.preventDefault(); sim.togglePause(); }
       else if (e.code === 'KeyA') { e.preventDefault(); sim.selectAll(); play('select'); }
       else if (e.code === 'KeyS') sim.hold();
-      else if (e.code === 'KeyR') setCameraReset(n => n + 1);
+      else if (e.code === 'KeyF') focusSelection();
+      else if (e.code === 'KeyR') toggleOverview();
       else if (e.key === 'Escape') { if (!sim.cancelAbility()) sim.pause(); }
     };
     const visibility = () => { if (document.hidden) sim.pause(); };
     window.addEventListener('keydown', key); document.addEventListener('visibilitychange', visibility);
     return () => { window.removeEventListener('keydown', key); document.removeEventListener('visibilitychange', visibility); };
-  }, [tooSmall, help, menu, audio, confirmRestart]);
+  }, [tooSmall, help, menu, audio, confirmRestart, overview]);
   const openManual = () => { sim.pause(); setHelp(true); };
   const openMenu = () => { sim.pause(); setMenu(true); };
   const openAudio = () => { sim.pause(); setAudio('open'); };
@@ -70,7 +77,7 @@ function App() {
   return <main className={`app screen-${screen}${active && state.alarm ? ' alarm' : ''}${active && state.paused ? ' paused' : ''}`}
     onClickCapture={e => { const button = e.target instanceof Element ? e.target.closest('button') : null; if (button && !button.dataset.cue) play('click'); }}>
     <div className="scene" aria-label="3D tactical city. Click operatives to select, streets to move, hostiles to attack, and downed operatives to revive." onContextMenu={e => e.preventDefault()}>
-      <RenderBoundary><GameCanvas sim={sim} reset={cameraReset} layout={screen} attract={onTitle && !STILL} frame={frame} /></RenderBoundary>
+      <RenderBoundary><GameCanvas sim={sim} reset={cameraReset} focus={focus} overview={overview} layout={screen} attract={onTitle && !STILL} frame={frame} /></RenderBoundary>
     </div>
     <div className="scene-fx" aria-hidden="true" />
     <div ref={frame} className="view-frame" aria-hidden="true" />
@@ -82,7 +89,7 @@ function App() {
     {screen === 'hq' ? <Headquarters campaign={state.campaign} saveCode={saveCode} titleRef={titleRef} onDismiss={setDismissing}
       connecting={connecting} syncing={state.syncing} loadingCode={loadingCode} setLoadingCode={setLoadingCode} onLoaded={setSaveCode} /> : null}
     {screen === 'debrief' ? <Debrief state={state} saveCode={saveCode} titleRef={titleRef} onBoard={() => toBoard('missions')} onHeadquarters={() => toBoard('hq')} /> : null}
-    {screen === 'mission' ? <Hud state={state} onRecenter={resetCamera} /> : null}
+    {screen === 'mission' ? <Hud state={state} overview={overview} onFocusSelection={focusSelection} onToggleOverview={toggleOverview} /> : null}
     <Callouts callout={screen === 'mission' ? callout : null} />
     {help ? <Manual saveCode={saveCode} onClose={() => setHelp(false)} /> : null}
     {menu ? <Dialog onClose={() => setMenu(false)} className="menu-dialog"><div className="dialog-body">

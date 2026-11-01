@@ -19,6 +19,7 @@ const PATHS = {
   soundOff: <><path d="M3.5 9.5h4l5-4v13l-5-4h-4z" /><path d="M16 9.5l5 5M21 9.5l-5 5" /></>,
   help: <><path d="M8.8 9a3.2 3.2 0 1 1 4.8 2.8c-1 .6-1.6 1.2-1.6 2.4v.6" /><circle cx="12" cy="18.3" r="1.2" fill="currentColor" stroke="none" /></>,
   recenter: <><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" /><circle cx="12" cy="12" r="2.6" /></>,
+  overview: <><path d="M3 6.5l6-2.5 6 2.5 6-2.5v13.5l-6 2.5-6-2.5-6 2.5z" /><path d="M9 4v13.5M15 6.5V20" /></>,
   hold: <path d="M6.5 6.5h11v11h-11z" />,
   squad: <><circle cx="8" cy="8" r="2.6" /><circle cx="16" cy="8" r="2.6" /><path d="M3.3 18.5c.6-2.7 2.4-4.2 4.7-4.2s4.1 1.5 4.7 4.2M11.3 18.5c.6-2.7 2.4-4.2 4.7-4.2s4.1 1.5 4.7 4.2" /></>,
   restart: <><path d="M4.6 12.5A7.5 7.5 0 1 0 6.8 6.7" /><path d="M4.5 3v4.5H9" /></>,
