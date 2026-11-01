@@ -24,7 +24,7 @@ import './style.css';
 function App() {
   const state = useSyncExternalStore(sim.subscribe, sim.getSnapshot);
   const { muted } = useSyncExternalStore(sound.subscribe, sound.settings);
-  const { autoPause } = useSyncExternalStore(gameOptions.subscribe, gameOptions.get);
+  const { autoPause, quality } = useSyncExternalStore(gameOptions.subscribe, gameOptions.get);
   useEffect(() => { sim.setAutoPause(autoPause); }, [autoPause]);
   const tooSmall = useTooSmall();
   const [saveCode, setSaveCode] = useState<string | null>(null), [connecting, setConnecting] = useState(true), [loadingCode, setLoadingCode] = useState(false);
@@ -103,6 +103,8 @@ function App() {
         <button className="menu-item" onClick={() => { setMenu(false); setHelp(true); }}><span className="menu-item-copy"><strong>Operator manual</strong></span><Icon name="help" /></button>
         <button className="menu-item" aria-pressed={autoPause} onClick={gameOptions.toggleAutoPause}><span className="menu-item-copy"><strong>Auto-pause when spotted</strong>
           <small>{autoPause ? 'On · pauses the first time each hostile turns suspicious' : 'Off'}</small></span><Icon name={autoPause ? 'pause' : 'play'} /></button>
+        <button className="menu-item" aria-pressed={quality === 'high'} onClick={gameOptions.toggleQuality}><span className="menu-item-copy"><strong>Graphics quality</strong>
+          <small>{quality === 'high' ? 'High · bloom on neon and windows' : 'Low · no bloom, for slower devices'}</small></span><Icon name="quality" /></button>
         <button className="menu-item" onClick={() => { setMenu(false); setAudio('from-menu'); }}><span className="menu-item-copy"><strong>Audio</strong><small>{muted ? 'Sound off' : 'Volume and mute'}</small></span><Icon name={muted ? 'soundOff' : 'soundOn'} /></button>
       </nav>
     </div></Dialog> : null}

@@ -28,7 +28,9 @@ const REACH = .9; // farthest any model part (the recon's rifle) sits from the u
 // only on pixels with no stencil mark. The silhouette sets the mark too, so it blends once per
 // pixel and never tints a unit over its own visible body or over another unit. The lit pass
 // draws after the rest of the opaque scene (render order 1), so a unit only marks the pixels
-// where it ends up visible.
+// where it ends up visible. At night every part also glows faintly in its own color, so units
+// read on dark streets whichever way the moon catches them.
+const NIGHT_GLOW = .4;
 const stenciled = new Map<string, Material>();
 const LIT: Paint = {
   shadows: true, order: 1,
@@ -36,8 +38,9 @@ const LIT: Paint = {
     const key = `${color}|${emissive ?? ''}`;
     let m = stenciled.get(key);
     if (!m) {
-      m = solid(color, emissive).clone();
-      Object.assign(m, { stencilWrite: true, stencilRef: 1, stencilFunc: AlwaysStencilFunc, stencilZPass: ReplaceStencilOp });
+      const lit = solid(color, emissive).clone();
+      if (!emissive) { lit.emissive.set(color); lit.emissiveIntensity = NIGHT_GLOW; }
+      m = Object.assign(lit, { stencilWrite: true, stencilRef: 1, stencilFunc: AlwaysStencilFunc, stencilZPass: ReplaceStencilOp });
       stenciled.set(key, m);
     }
     return m;
