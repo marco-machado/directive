@@ -22,8 +22,8 @@ export function MissionSelect({ state, titleRef, onChoose, onDeploy, onRecenter,
   state: Snapshot; titleRef: RefObject<HTMLHeadingElement | null>; onChoose: (id: string) => void; onDeploy: () => void; onRecenter: () => void; deployBlocked: boolean; connecting: boolean;
 }) {
   const { campaign, contract, squadPick, plan, objectives } = state;
-  const [details, setDetails] = useState(false), scroller = useRef<HTMLDivElement>(null);
-  useScrollEdges(scroller);
+  const [details, setDetails] = useState(false), scroller = useRef<HTMLDivElement>(null), rosterScroller = useRef<HTMLDivElement>(null);
+  useScrollEdges(scroller); useScrollEdges(rosterScroller);
   const hostiles = plan?.enemies.length ?? 0;
   return <div className="select">
     <section className="select-offers panel" aria-labelledby="ops-title">
@@ -76,14 +76,18 @@ export function MissionSelect({ state, titleRef, onChoose, onDeploy, onRecenter,
       <div className="deploy-dock">
         <fieldset className="squad-pick">
           <legend>Squad <span>{squadPick.length} / {SQUAD_MAX}</span></legend>
-          <div className="roster-grid">{campaign.roster.map(o => {
-            const on = squadPick.includes(o.id), locked = on ? squadPick.length <= 1 : squadPick.length >= SQUAD_MAX;
-            return <button key={o.id} className={`pick cls-${o.cls}${on ? ' on' : ''}`} aria-pressed={on} aria-disabled={locked} aria-describedby={locked ? 'squad-rule' : undefined} onClick={() => { if (!locked) sim.toggleSquad(o.id); }}>
-              <Portrait cls={o.cls} />
-              <span className="pick-copy"><strong>{o.name}</strong><small>{CLASS_STATS[o.cls].title}</small><small className="pick-ability">{ABILITY_STATS[CLASS_STATS[o.cls].ability].name}</small></span>
-              <span className="pick-slot" aria-hidden="true">{on ? squadPick.indexOf(o.id) + 1 : <Icon name="plus" />}</span>
-            </button>;
-          })}</div>
+          <div className="roster-scroll" ref={rosterScroller}>
+            <i className="scroll-fade top" aria-hidden="true" />
+            <div className="roster-grid">{campaign.roster.map(o => {
+              const on = squadPick.includes(o.id), locked = on ? squadPick.length <= 1 : squadPick.length >= SQUAD_MAX;
+              return <button key={o.id} className={`pick cls-${o.cls}${on ? ' on' : ''}`} aria-pressed={on} aria-disabled={locked} aria-describedby={locked ? 'squad-rule' : undefined} onClick={() => { if (!locked) sim.toggleSquad(o.id); }}>
+                <Portrait cls={o.cls} />
+                <span className="pick-copy"><strong>{o.name}</strong><small>{CLASS_STATS[o.cls].title}</small><small className="pick-ability">{ABILITY_STATS[CLASS_STATS[o.cls].ability].name}</small></span>
+                <span className="pick-slot" aria-hidden="true">{on ? squadPick.indexOf(o.id) + 1 : <Icon name="plus" />}</span>
+              </button>;
+            })}</div>
+            <i className="scroll-fade bottom" aria-hidden="true" />
+          </div>
           <small id="squad-rule" className="pick-rule">Deploy 1 to {SQUAD_MAX} operatives.</small>
         </fieldset>
         {state.saveUnavailable ? <SaveWarning /> : null}

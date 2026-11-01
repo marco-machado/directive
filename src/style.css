@@ -203,11 +203,12 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .offer-side .credits { font: 600 17px var(--f-ui); color: var(--gold) }
 .offer-tier { display: flex; align-items: center; gap: 6px; font: 700 11px var(--f-ui); letter-spacing: .1em; color: var(--threat) }
 .select-brief { display: flex; flex-direction: column; min-height: 0; max-height: 100%; container: brief / size; animation: slide-left .45s ease-out both }
-.brief-scroll { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 18px 18px 10px; container-type: scroll-state }
-/* Edge fades over the clipped side of a scroller; the negative margins keep them out of the layout. */
+/* The briefing takes what the dock leaves, but never less than its first line. */
+.brief-scroll { --fade-y: 18px; --fade-x: 18px; flex: 1 1 0; min-height: 56px; overflow: auto; overscroll-behavior: contain; padding: 18px 18px 10px; container-type: scroll-state }
+/* Edge fades over the clipped side of a scroller; the negative margins, set from the scroller's padding, keep them out of the layout. */
 .scroll-fade { position: sticky; z-index: 1; display: block; height: 28px; pointer-events: none; opacity: 0; transition: opacity .2s }
-.scroll-fade.top { top: 0; margin: -18px -18px -10px; background: linear-gradient(var(--panel-solid), transparent) }
-.scroll-fade.bottom { bottom: 0; margin: -28px -18px 0; background: linear-gradient(transparent, var(--panel-solid)) }
+.scroll-fade.top { top: 0; margin: calc(-1 * var(--fade-y)) calc(-1 * var(--fade-x)) calc(var(--fade-y) - 28px); background: linear-gradient(var(--panel-solid), transparent) }
+.scroll-fade.bottom { bottom: 0; margin: -28px calc(-1 * var(--fade-x)) 0; background: linear-gradient(transparent, var(--panel-solid)) }
 .can-up > .scroll-fade.top, .can-down > .scroll-fade.bottom { opacity: 1 }
 @container scroll-state(scrollable: top) { .scroll-fade.top { opacity: 1 } }
 @container scroll-state(scrollable: bottom) { .scroll-fade.bottom { opacity: 1 } }
@@ -236,9 +237,11 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .brief-pay .credits { display: block; margin-top: 4px; font: 600 22px/1 var(--f-ui); color: var(--gold) }
 .brief-pay .bonus { border-color: rgb(94 242 192 / .35) }
 .brief-pay .bonus .credits { color: var(--mint) }
-.squad-pick { min-width: 0; margin: 0 0 12px; padding: 0; border: 0 }
+.squad-pick { display: flex; flex-direction: column; min-width: 0; min-height: 0; margin: 0 0 12px; padding: 0; border: 0 }
 .squad-pick legend { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; padding: 0; font: 600 20px/1 var(--f-display); letter-spacing: .08em; text-transform: uppercase }
 .squad-pick legend span { font: 700 12px var(--f-ui); letter-spacing: .14em; color: var(--amber) }
+/* Scrolls on its own when a big roster outgrows a short panel, so Deploy stays on screen; the padding keeps focus rings unclipped. */
+.roster-scroll { --fade-y: 3px; --fade-x: 3px; min-height: 54px; margin: -3px; padding: 3px; overflow: auto; overscroll-behavior: contain; container-type: scroll-state }
 .roster-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px }
 .pick { position: relative; display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; align-items: center; gap: 10px; min-height: 62px; padding: 6px 10px 6px 6px; text-align: left;
   border: 1px solid var(--line); background: rgb(9 21 25 / .72); color: var(--text); transition: border-color .15s, background .15s }
@@ -255,7 +258,8 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .pick[aria-disabled=true] { cursor: not-allowed }
 .pick[aria-disabled=true]:not(.on) { opacity: .4 }
 .pick-rule { display: block; margin-top: 8px; font: 500 12px var(--f-ui); color: var(--faint) }
-.deploy-dock { padding: 14px 18px 18px; border-top: 1px solid var(--line); background: rgb(3 8 10 / .55) }
+.deploy-dock { display: flex; flex-direction: column; min-height: 0; padding: 14px 18px 18px; border-top: 1px solid var(--line); background: rgb(3 8 10 / .55) }
+.deploy-dock > :not(.squad-pick) { flex: none }
 .btn.deploy { --n: 12px; width: 100%; min-height: 66px; justify-content: space-between; padding: 0 22px }
 .deploy-copy { display: grid; gap: 5px; text-align: left; min-width: 0 }
 .deploy-copy strong { font: 700 21px/1 var(--f-display); letter-spacing: .14em }
@@ -546,7 +550,8 @@ dialog::backdrop { overflow: hidden; overscroll-behavior: contain; background: r
   .sector-tag strong { font-size: 26px }
 }
 @media (max-width: 1100px) {
-  .select { grid-template-columns: minmax(0, 360px) minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); gap: 16px 24px }
+  /* The briefing row keeps room for its first line, one roster row and Deploy; the offers above scroll in what is left. */
+  .select { grid-template-columns: minmax(0, 360px) minmax(0, 1fr); grid-template-rows: minmax(0, auto) minmax(240px, 1fr); gap: 16px 24px }
   .select-offers { grid-column: 1; grid-row: 1 }
   .select-brief { grid-column: 1; grid-row: 2 }
   .select-center { grid-column: 2; grid-row: 1 / 3 }
