@@ -8,7 +8,13 @@ This file provides guidance when working with code in this repository.
 
 ## Starting new work
 
-- Before starting new work, pull the latest `main` (`git switch main && git pull`).
+Start every task from the latest `origin/main`, so the work never conflicts with or duplicates what has already landed.
+
+- In the main checkout: `git switch main && git pull`.
+- In a worktree (where `main` is checked out elsewhere): `git fetch origin main`, then `git merge --ff-only origin/main` if the branch has no commits of its own yet, or `git merge origin/main` if it does.
+- Before opening a PR, fetch again and merge `origin/main` if it moved.
+
+A `SessionStart` hook in `.claude/settings.json` fetches `origin/main` and warns when the branch is behind it.
 
 ## Commands
 
