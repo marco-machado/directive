@@ -1,75 +1,18 @@
 import { useEffect, useMemo, useRef } from 'react';
 import type { RefObject } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { BufferGeometry, CircleGeometry, Color, CylinderGeometry, DoubleSide, Float32BufferAttribute, Group, Mesh, MeshBasicMaterial, RingGeometry, Sphere, SphereGeometry, Vector3 } from 'three';
+import { BufferGeometry, Color, DoubleSide, Float32BufferAttribute, Group, Mesh, MeshBasicMaterial, RingGeometry, Sphere } from 'three';
 import { ABILITY_STATS } from '../game/classes.ts';
 import { HOSTILE_STATS, SUSPICIOUS } from '../game/simulation.ts';
-import type { Blast, Faction, Pending, Shot, Simulation, Unit } from '../game/simulation.ts';
+import type { Pending, Simulation, Unit } from '../game/simulation.ts';
 import type { EnemyKind } from '../game/mapgen.ts';
 import type { Point, World } from '../game/world.ts';
 import { play } from '../ui/audio.ts';
+import { CombatEffects } from './combat.tsx';
 import { shield, SHIELD_COLOR } from './parts.tsx';
-import type { Cue } from '../ui/audio.ts';
 
-const UP = new Vector3(0, 1, 0);
-const BEAM = new CylinderGeometry(1, 1, 1, 6), RING = new RingGeometry(.9, 1, 48), DISC = new CircleGeometry(1, 40), FLASH = new SphereGeometry(1, 16, 10);
+const RING = new RingGeometry(.9, 1, 48);
 const FLAT: [number, number, number] = [-Math.PI / 2, 0, 0];
-
-// Shots
-const TRACER: Record<Faction, Color> = { squad: new Color('#c4ffe4'), hostile: new Color('#ffb08a'), vip: new Color('#ffe1a1') };
-const SNIPE = new Color('#f4fdff');
-const gunfire = (shot: Shot): Cue => shot.kind === 'snipe' ? 'snipe' : shot.shooter === 'turret' ? 'turretShot' : shot.faction === 'squad' ? 'shot' : 'hostileShot';
-function Shots({ sim }: { sim: Simulation }) {
-  const beams = useRef<(Mesh | null)[]>([]), direction = useMemo(() => new Vector3(), []), heard = useRef(-1);
-  useFrame(() => {
-    for (const shot of sim.shots) if (shot.id > heard.current) { heard.current = shot.id; play(gunfire(shot), shot.from); play('impact', shot.to); }
-    beams.current.forEach((mesh, i) => {
-      if (!mesh) return;
-      const shot = sim.shots[i];
-      mesh.visible = !!shot && sim.phase === 'mission';
-      if (!shot) return;
-      const { from, to } = shot, snipe = shot.kind === 'snipe', r = snipe ? .05 : .022;
-      direction.set(to.x - from.x, 0, to.z - from.z);
-      const length = direction.length();
-      if (length < .01) { mesh.visible = false; return; }
-      mesh.position.set((from.x + to.x) / 2, snipe ? .9 : .8, (from.z + to.z) / 2);
-      mesh.scale.set(r, length, r); mesh.quaternion.setFromUnitVectors(UP, direction.normalize());
-      const material = mesh.material as MeshBasicMaterial;
-      material.color.copy(snipe ? SNIPE : TRACER[shot.faction]); material.opacity = snipe ? Math.min(1, shot.ttl / .2) : 1;
-    });
-  });
-  return <>{Array.from({ length: 24 }, (_, i) => <mesh ref={el => { beams.current[i] = el; }} key={i} geometry={BEAM} visible={false}><meshBasicMaterial transparent toneMapped={false} depthWrite={false} /></mesh>)}</>;
-}
-
-// Blasts
-const BLAST: Record<Blast['kind'], { color: Color; ttl: number }> = { grenade: { color: new Color('#ffa25c'), ttl: .7 }, heal: { color: new Color('#8ff5c8'), ttl: .8 }, emp: { color: new Color('#7fc8ff'), ttl: .8 } };
-function Blasts({ sim }: { sim: Simulation }) {
-  const groups = useRef<(Group | null)[]>([]), heard = useRef(-1);
-  useFrame(() => {
-    for (const blast of sim.blasts) if (blast.id > heard.current) { heard.current = blast.id; play(blast.kind, blast); }
-    groups.current.forEach((group, i) => {
-      if (!group) return;
-      const blast = sim.blasts[i];
-      group.visible = !!blast && sim.phase === 'mission';
-      if (!blast) return;
-      const { color, ttl } = BLAST[blast.kind], t = Math.min(1, Math.max(0, 1 - blast.ttl / ttl)), grow = 1 - (1 - t) ** 3;
-      const [ring, disc, flash] = group.children as Mesh[];
-      group.position.set(blast.x, 0, blast.z);
-      ring.scale.setScalar(blast.radius * (.3 + .7 * grow)); disc.scale.setScalar(blast.radius * (.3 + .7 * grow));
-      const ringMat = ring.material as MeshBasicMaterial, discMat = disc.material as MeshBasicMaterial, flashMat = flash.material as MeshBasicMaterial;
-      ringMat.color.copy(color); discMat.color.copy(color); flashMat.color.copy(color);
-      ringMat.opacity = (1 - t) * .95;
-      discMat.opacity = blast.kind === 'grenade' ? Math.max(0, 1 - t * 2.5) * .55 : (1 - t) * .16;
-      flash.visible = blast.kind === 'grenade' && t < .35;
-      flash.scale.setScalar(.4 + t * 2.2); flashMat.opacity = Math.max(0, 1 - t / .35) * .85;
-    });
-  });
-  return <>{Array.from({ length: 8 }, (_, i) => <group ref={el => { groups.current[i] = el; }} key={i} visible={false}>
-    <mesh rotation={FLAT} position={[0, .08, 0]} geometry={RING}><meshBasicMaterial transparent toneMapped={false} depthWrite={false} /></mesh>
-    <mesh rotation={FLAT} position={[0, .06, 0]} geometry={DISC}><meshBasicMaterial transparent toneMapped={false} depthWrite={false} /></mesh>
-    <mesh position={[0, .5, 0]} geometry={FLASH}><meshBasicMaterial transparent toneMapped={false} depthWrite={false} /></mesh>
-  </group>)}</>;
-}
 
 // Vision cones: each one is the hostile's visibility polygon on the ground. RAYS rays fan across its field of view
 // and stop at the first building footprint in the way (World.sightDistance, the same footprints that block
@@ -220,7 +163,7 @@ function CombatAudio({ sim }: { sim: Simulation }) {
 }
 
 export function Effects({ sim }: { sim: Simulation }) {
-  return <><VisionCones sim={sim} /><Shots sim={sim} /><Blasts sim={sim} /><CommandMarker sim={sim} /><CombatAudio sim={sim} /></>;
+  return <><VisionCones sim={sim} /><CombatEffects sim={sim} /><CommandMarker sim={sim} /><CombatAudio sim={sim} /></>;
 }
 
 // Ability targeting: reach around the caster, plus the blast area under the pointer for grenade and EMP.

@@ -10,6 +10,7 @@ import { setAudioCamera } from '../ui/audio.ts';
 import { City } from './city.tsx';
 import { dragged, trackDrags } from './drag.ts';
 import { CoverPreview, Effects, Targeting } from './effects.tsx';
+import { cameraKick } from './kick.ts';
 import { focusPoint, missionMinZoom, overviewZoom, smoothstep, tacticalZoom } from './framing.ts';
 import { AttackHint } from './hint.tsx';
 import { LastSeenGhosts, PatrolIntel } from './intel.tsx';
@@ -37,7 +38,7 @@ type Pose = { target: Vector3; offset: Spherical; zoom: number };
 const GLIDE_SECONDS = .4;
 function CameraRig({ sim, reset, focus, overview, bounds, start, layout, attract, frame, insets }: { sim: Simulation; reset: number; focus: number; overview: boolean; bounds: Bounds; start: Point | null; layout: string; attract: boolean; frame: RefObject<HTMLDivElement | null>; insets: RefObject<Insets> }) {
   const ref = useRef<ComponentRef<typeof OrbitControls>>(null), camera = useThree(s => s.camera), size = useThree(s => s.size), gl = useThree(s => s.gl), look = useMemo(() => new Vector3(), []);
-  const free = useRef({ w: 1, h: 1 }), glide = useRef<{ from: Pose; to: Pose; t: number } | null>(null), mission = layout === 'mission';
+  const free = useRef({ w: 1, h: 1 }), view = useRef({ x: 0, y: 0, kicked: false }), glide = useRef<{ from: Pose; to: Pose; t: number } | null>(null), mission = layout === 'mission';
   useEffect(() => trackDrags(gl.domElement), [gl]);
   // Without damping, one update applies the rest of a drag's glide, so it can't carry on past a reset.
   const settle = () => { const c = ref.current; if (c) { c.enableDamping = false; c.update(); c.enableDamping = true; } };
@@ -71,7 +72,8 @@ function CameraRig({ sim, reset, focus, overview, bounds, start, layout, attract
     const box = gl.domElement.getBoundingClientRect(), f = frame.current?.getBoundingClientRect() ?? box;
     const l = Math.max(0, f.left - box.left), t = Math.max(0, f.top - box.top), r = Math.max(0, box.right - f.right), b = Math.max(0, box.bottom - f.bottom);
     insets.current = { l, t, r, b }; free.current = { w: Math.max(1, size.width - l - r), h: Math.max(1, size.height - t - b) };
-    camera.setViewOffset(size.width, size.height, (r - l) / 2, (b - t) / 2, size.width, size.height);
+    view.current = { x: (r - l) / 2, y: (b - t) / 2, kicked: false };
+    camera.setViewOffset(size.width, size.height, view.current.x, view.current.y, size.width, size.height);
     place(preset()); ref.current?.update();
   }, [camera, gl, reset, size.width, size.height, bounds, start, layout, frame, insets]);
   const toggled = useRef(overview), focused = useRef(focus);
@@ -99,6 +101,12 @@ function CameraRig({ sim, reset, focus, overview, bounds, start, layout, attract
       if (g.t >= 1) glide.current = null;
     }
     c.minZoom = floor(c.getPolarAngle()); c.maxZoom = ceiling();
+    // A blast kicks the view by nudging the projection's offset, which leaves the orbit untouched.
+    const kick = mission ? cameraKick(sim.time) : null, v = view.current;
+    if (kick || v.kicked) {
+      v.kicked = !!kick;
+      camera.setViewOffset(size.width, size.height, v.x + (kick?.[0] ?? 0), v.y + (kick?.[1] ?? 0), size.width, size.height);
+    }
     const zoom = Math.max(c.minZoom, Math.min(c.maxZoom, camera.zoom));
     if (zoom !== camera.zoom) { camera.zoom = zoom; camera.updateProjectionMatrix(); }
   });
