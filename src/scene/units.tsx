@@ -10,7 +10,7 @@ import { REVIVE_SECONDS, SUSPICIOUS, TAKEDOWN_SECONDS } from '../game/simulation
 import type { Faction, Simulation, Unit, UnitKind } from '../game/simulation.ts';
 import { dragged } from './drag.ts';
 import { rectDistance } from './framing.ts';
-import { BOX, DIAMOND, glow, ProgressRing, STILL } from './parts.tsx';
+import { BOX, DIAMOND, glow, ProgressRing, shield, SHIELD_COLOR, STILL } from './parts.tsx';
 import { animate, CLASS_COLOR, makeRig, REACH, SCALE, skin } from './rigs.ts';
 import type { Motion } from './rigs.ts';
 import { mayBeHidden, viewAlong } from './view.ts';
@@ -174,6 +174,24 @@ function DetectMarker({ sim, id, top }: { sim: Simulation; id: string; top: numb
     <mesh ref={arc} geometry={ARCS_BY_STEP[0]} material={DETECT_FILL.noticing} renderOrder={24} />
     <mesh ref={sign} geometry={PLANE} material={QUERY} scale={[21, 21, 1]} renderOrder={25} />
   </group>;
+}
+
+// The cover shield, just right of an operative's health bar, a fixed size on screen.
+const SHIELD_PX = 18, screenRight = new Vector3();
+function CoverMarker({ sim, id, top }: { sim: Simulation; id: string; top: number }) {
+  const icon = useRef<Mesh>(null);
+  useFrame(({ camera }) => {
+    const u = sim.units.find(v => v.id === id), m = icon.current;
+    if (!m) return;
+    const status = u && sim.phase === 'mission' ? sim.coverStatus(u).shield : null;
+    m.visible = !!status;
+    if (!status) return;
+    const px = 1 / camera.zoom;
+    m.material = shield(SHIELD_COLOR[status]);
+    m.quaternion.copy(camera.quaternion); m.scale.set(SHIELD_PX * px, SHIELD_PX * px, 1);
+    m.position.set(0, top + .22, 0).addScaledVector(screenRight.set(1, 0, 0).applyQuaternion(camera.quaternion), BAR_W / 2 + .03 + (SHIELD_PX / 2 + 3) * px);
+  });
+  return <mesh ref={icon} geometry={PLANE} material={shield(SHIELD_COLOR.covered)} visible={false} renderOrder={22} />;
 }
 
 // Faction marks: a chevron in the class color over each operative and a red diamond over each visible
@@ -358,6 +376,7 @@ function Agent({ sim, unit, selected, slot, tagged, labels, hitboxes }: { sim: S
       <group ref={hold} visible={false}><ProgressRing radius={.7} color="#9ff7d1" value={takedownProgress} segments={24} /></group>
       <DetectMarker sim={sim} id={id} top={top} />
     </> : null}
+    {faction === 'squad' ? <CoverMarker sim={sim} id={id} top={top} /> : null}
     {downed ? <group ref={revive} visible={false}><ProgressRing radius={.7} color="#9ff7d1" value={reviveProgress} segments={24} /></group> : null}
     {label ? <Html portal={labels} center position={[0, top + .62, 0]} style={{ pointerEvents: 'none' }}><span className={`unit-label${kind === 'target' ? ' hostile' : kind === 'vip' ? ' vip' : ` squad cls-${kind}`}`}>{label}</span></Html> : null}
   </group>;

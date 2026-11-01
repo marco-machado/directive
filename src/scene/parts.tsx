@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { BoxGeometry, Color, InstancedBufferAttribute, InstancedMesh, MeshBasicMaterial, MeshStandardMaterial, Object3D, OctahedronGeometry } from 'three';
+import { BoxGeometry, CanvasTexture, Color, InstancedBufferAttribute, InstancedMesh, MeshBasicMaterial, MeshStandardMaterial, Object3D, OctahedronGeometry, SRGBColorSpace } from 'three';
 import type { WebGLProgramParametersWithUniforms } from 'three';
 
 // Decorative motion (spins, pulses, the title orbit) stops for players who ask for reduced motion.
@@ -19,6 +19,23 @@ export function solid(color: string, emissive?: string) {
 export function glow(color: string) {
   let m = glows.get(color);
   if (!m) { m = new MeshBasicMaterial({ color, toneMapped: false }); glows.set(color, m); }
+  return m;
+}
+// The cover shield (the HUD's shield icon outline), drawn over everything: mint when covered, red when flanked.
+export const SHIELD_COLOR = { covered: '#5ef2c0', flanked: '#ff5148' } as const;
+const shields = new Map<string, MeshBasicMaterial>();
+export function shield(color: string) {
+  let m = shields.get(color);
+  if (!m) {
+    const canvas = document.createElement('canvas'), g = canvas.getContext('2d')!, path = new Path2D('M12 2.5l8 3v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10v-6z');
+    canvas.width = canvas.height = 64; g.scale(64 / 24, 64 / 24);
+    g.fillStyle = '#04090b'; g.strokeStyle = '#04090b'; g.lineWidth = 4; g.lineJoin = 'round'; g.stroke(path); g.fill(path);
+    g.fillStyle = color; g.globalAlpha = .3; g.fill(path); g.globalAlpha = 1;
+    g.strokeStyle = color; g.lineWidth = 2; g.stroke(path);
+    const map = new CanvasTexture(canvas); map.colorSpace = SRGBColorSpace;
+    m = new MeshBasicMaterial({ map, transparent: true, depthTest: false, depthWrite: false, toneMapped: false });
+    shields.set(color, m);
+  }
   return m;
 }
 

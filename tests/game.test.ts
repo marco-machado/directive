@@ -237,6 +237,75 @@ test('cover halves incoming fire from the far side', () => {
   assert.equal(500 - target.hp, (CLASS_STATS.assault.damage) * COVER_FACTOR);
 });
 
+// A barrier lying across the street north of the squad: from z < 5 it shelters whoever crouches at z ≈ 6.
+const BARRIER = { x: 0, z: 5.3, w: 1.6, d: .45 };
+const withBarrier = (sim: Simulation) => { sim.plan = { ...sim.plan!, world: new World(sim.plan!.world.bounds, [], [BARRIER]) }; };
+
+test('coverStatus reports cover against each visible armed hostile before the alarm, and a flank', () => {
+  const { sim, squad, hostile } = arena();
+  withBarrier(sim);
+  const u = squad[0]; u.x = 0; u.z = 6;
+  assert.deepEqual(sim.coverStatus(u), { threats: [], shield: null });
+  const front = hostile('guard', 0, 1);
+  hostile('camera', 1, 1); // unarmed: never a threat
+  assert.deepEqual(sim.coverStatus(u), { threats: [{ id: front.id, covered: true }], shield: 'covered' });
+  assert.equal(sim.getSnapshot().cover[u.id], null, 'the snapshot catches up at its next emit');
+  step(sim, .2); assert.equal(sim.getSnapshot().cover[u.id], 'covered');
+  const flank = hostile('guard', 6, 6);
+  assert.deepEqual(sim.coverStatus(u), { threats: [{ id: front.id, covered: true }, { id: flank.id, covered: false }], shield: 'flanked' });
+  flank.visible = false; // out of the squad's sight, it is not a threat before the alarm
+  assert.equal(sim.coverStatus(u).shield, 'covered');
+  u.x = 4; // away from the barrier: no shield, though the threat list stays
+  assert.deepEqual(sim.coverStatus(u), { threats: [{ id: front.id, covered: false }], shield: null });
+});
+
+test('during the alarm coverStatus counts only armed hostiles in range and in sight', () => {
+  const { sim, squad, hostile, raise } = alarmed();
+  withBarrier(sim);
+  const u = squad[0]; u.x = 0; u.z = 6;
+  const near = hostile('guard', 0, 2), far = hostile('guard', 0, -1); // 4 m and 7 m away; a guard reaches 5.5 m
+  far.visible = near.visible = false;
+  raise();
+  assert.deepEqual(sim.coverStatus(u), { threats: [{ id: near.id, covered: true }], shield: 'covered' });
+  hostile('turret', -6, 6); // 6 m along the barrier, inside its 7 m reach
+  assert.equal(sim.coverStatus(u).shield, 'flanked');
+});
+
+test('coverSnap moves a point near a barrier to its side away from the nearest known threat', () => {
+  const { sim, hostile } = arena();
+  withBarrier(sim);
+  const click = { x: .3, z: 4.7 }, behind = BARRIER.z + BARRIER.d / 2 + .45, before = BARRIER.z - BARRIER.d / 2 - .45;
+  assert.equal(sim.coverSnap(click), null, 'no known threat');
+  const south = hostile('guard', 0, 0);
+  const snap = sim.coverSnap(click)!;
+  assert.deepEqual({ x: snap.x, z: +snap.z.toFixed(3), along: snap.along }, { x: .3, z: +behind.toFixed(3), along: { x: 1, z: 0 } });
+  assert.ok(sim.plan!.world.coverBetween(south, snap));
+  assert.equal(sim.coverSnap({ x: 3, z: 3 }), null, 'more than 1 m from the barrier');
+  // A nearer threat on the far side flips the spot to the near face.
+  const north = hostile('guard', 0, 9);
+  assert.equal(+sim.coverSnap({ x: 0, z: 6 })!.z.toFixed(3), +before.toFixed(3));
+  // Out of sight, a hostile still counts through its last-seen marker.
+  north.hp = 0; south.visible = false;
+  (sim as unknown as { lastSeen: Map<string, Point & { heading: number; at: number }> }).lastSeen.set(south.id, { x: 0, z: 0, heading: 0, at: 0 });
+  assert.equal(+sim.coverSnap(click)!.z.toFixed(3), +behind.toFixed(3));
+  // The same district, contract and threat always give the same spot.
+  assert.deepEqual(sim.coverSnap(click), sim.coverSnap(click));
+});
+
+test('during the alarm a move order released next to a barrier ends on its covered side', () => {
+  const { sim, squad, hostile, raise } = alarmed();
+  withBarrier(sim);
+  squad.forEach(u => { u.hp = u.maxHp = 1e6; });
+  const guard = hostile('guard', 0, -2, 0, 1e6);
+  raise();
+  sim.selected = squad.map(u => u.id); sim.move({ x: 0, z: 4.6 });
+  const end = sim.commandPoint!;
+  assert.ok(end.z > BARRIER.z, `order ended at z = ${end.z}`);
+  step(sim, 6, () => squad.every(u => !u.path.length));
+  for (const u of squad) assert.ok(u.z > BARRIER.z && Math.abs(u.z - end.z) < 1e-6, `${u.name} at ${u.x.toFixed(2)}, ${u.z.toFixed(2)}`);
+  assert.equal(sim.coverStatus(squad[0]).threats.find(t => t.id === guard.id)?.covered, true);
+});
+
 test('the vault hack pauses when nobody is on the terminal', () => {
   const { sim, squad } = arena('heist');
   const terminal = sim.objectives[0];
@@ -933,4 +1002,15 @@ test('a posted guard opens a window on ground it otherwise watches', () => {
   let watched = 0, total = 0;
   for (let i = 0; i < 30 * 60; i++) { sim.update(1 / 60); total++; if (seen(guard.heading)) watched++; }
   assert.ok(watched > 0 && watched < total * .5, `${watched} / ${total}`);
+});
+
+test('a covered move order near the end of a barrier keeps the whole line behind it', () => {
+  const { sim, squad, hostile, raise } = alarmed('heist', FOUR);
+  withBarrier(sim);
+  squad.forEach((u, i) => { u.hp = u.maxHp = 1e6; u.x = -3 + 2 * i; u.z = 0; });
+  const guard = hostile('guard', 0, 0, 0, 1e6);
+  raise();
+  sim.selected = squad.map(u => u.id); sim.move({ x: .6, z: 4.6 });
+  step(sim, 8, () => squad.every(u => !u.path.length));
+  for (const u of squad) assert.ok(sim.plan!.world.coverBetween(guard, u), `${u.name} at ${u.x.toFixed(2)}, ${u.z.toFixed(2)} is exposed`);
 });
