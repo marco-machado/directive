@@ -45,10 +45,10 @@ export function Debrief({ state, saveCode, titleRef, onBoard, onHeadquarters }: 
           <div className="total"><dt>Payout</dt><dd><span aria-hidden="true">+<Credits value={total} /></span><span className="sr-only">₡ {success ? state.payout : 0}</span></dd></div>
           <div className="funds-row"><dt>Funds</dt><dd><Credits value={state.campaign.cash} /></dd></div>
         </dl>
+        <ul className="debrief-squad" aria-label="Squad">{squad.map(u => <li key={u.id} className={`cls-${u.kind as ClassId}${u.hp <= 0 ? ' down' : ''}`}>
+          <Portrait cls={u.kind as ClassId} /><span><strong>{u.name}</strong><small>{u.hp <= 0 ? 'Down' : `${Math.ceil(u.hp)} / ${u.maxHp} HP`}</small></span>
+        </li>)}</ul>
       </div>
-      <ul className="debrief-squad" aria-label="Squad">{squad.map(u => <li key={u.id} className={`cls-${u.kind as ClassId}${u.hp <= 0 ? ' down' : ''}`}>
-        <Portrait cls={u.kind as ClassId} /><span><strong>{u.name}</strong><small>{u.hp <= 0 ? 'Down' : `${Math.ceil(u.hp)} / ${u.maxHp} HP`}</small></span>
-      </li>)}</ul>
       <div className="debrief-actions">
         <button className="btn primary" onClick={onBoard}><span>Next contract</span><Icon name="arrow" /></button>
         <button className="btn" onClick={onHeadquarters}><Icon name="recruit" /><span>Headquarters</span></button>

@@ -1,5 +1,5 @@
 import { Component, useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import type { CSSProperties, ErrorInfo, FormEvent, ReactNode } from 'react';
+import type { CSSProperties, ErrorInfo, FormEvent, ReactNode, RefObject } from 'react';
 import { client, sim } from '../app.ts';
 import type { ContractType, Operative } from '../game/campaign.ts';
 import { ABILITY_STATS, CLASS_STATS } from '../game/classes.ts';
@@ -28,6 +28,22 @@ export const Credits = ({ value, className }: { value: number; className?: strin
 
 export const Pips = ({ value, max, label, className = '' }: { value: number; max: number; label: string; className?: string }) =>
   <span className={`pips ${className}`} role="img" aria-label={`${label} ${value} of ${max}`}>{Array.from({ length: max }, (_, i) => <i className={value > i ? 'on' : ''} key={i} />)}</span>;
+
+// Marks a scroller .can-up / .can-down for its edge fades where CSS scroll-state queries are missing.
+export function useScrollEdges(ref: RefObject<HTMLElement | null>) {
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || CSS.supports('container-type', 'scroll-state')) return;
+    const mark = () => {
+      el.classList.toggle('can-up', el.scrollTop > 0);
+      el.classList.toggle('can-down', el.scrollTop + el.clientHeight < el.scrollHeight - 1);
+    };
+    const resize = new ResizeObserver(mark), mutate = new MutationObserver(mark);
+    resize.observe(el); mutate.observe(el, { childList: true, subtree: true, attributeFilter: ['class'] });
+    el.addEventListener('scroll', mark, { passive: true }); mark();
+    return () => { resize.disconnect(); mutate.disconnect(); el.removeEventListener('scroll', mark); };
+  }, [ref]);
+}
 
 export const SaveWarning = () => <p className="warning"><Icon name="alert" />Server unreachable. Progress from this session is not saved.</p>;
 

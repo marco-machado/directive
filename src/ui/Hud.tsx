@@ -10,6 +10,7 @@ import type { Pending, Shield, Snapshot, Unit } from '../game/simulation.ts';
 import { clock, CONTRACTS, Credits, threat } from './common.tsx';
 import { Icon, Portrait } from './icons.tsx';
 import { play } from './audio.ts';
+import { TipDock } from './Tips.tsx';
 
 // In portrait the tracker collapses to a drawer under the top bar that shows only the current objective; the toggle exists only there.
 function Tracker({ state, open, onToggle }: { state: Snapshot; open: boolean; onToggle: () => void }) {
@@ -108,7 +109,7 @@ function Spotted({ state }: { state: Snapshot }) {
 export function Hud({ state, overview, onFocusSelection, onToggleOverview }: { state: Snapshot; overview: boolean; onFocusSelection: () => void; onToggleOverview: () => void }) {
   const [drawer, setDrawer] = useState(false);
   return <>
-    <aside id="mission-drawer" className={`hud-left${drawer ? ' open' : ''}`}><Tracker state={state} open={drawer} onToggle={() => setDrawer(v => !v)} /><Comms state={state} /></aside>
+    <aside id="mission-drawer" className={`hud-left${drawer ? ' open' : ''}`}><Tracker state={state} open={drawer} onToggle={() => setDrawer(v => !v)} /><TipDock milestones={state.milestones} /><Comms state={state} /></aside>
     <Spotted state={state} />
     {state.pending ? <Targeting pending={state.pending} /> : null}
     {state.paused ? <div className="pause-banner"><Icon name="pause" /><span><strong>Tactical pause</strong><small><kbd>Shift</kbd>+click or long-press: add a waypoint · <kbd>W</kbd>: wait there</small></span>

@@ -1,9 +1,11 @@
+import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { STEALTH_BONUS } from '../game/campaign.ts';
 import { CALM_SECONDS, FIRST_WAVE_SECONDS, REINFORCE_SECONDS, ROUTE_MAX, WAIT_MAX, WAIT_STEP } from '../game/simulation.ts';
 import { Dialog, SaveCode } from './common.tsx';
 import { Icon } from './icons.tsx';
 import type { IconName } from './icons.tsx';
+import { tipStore } from './tipStore.ts';
 
 const CONTROLS: [ReactNode, string][] = [
   [<><kbd>1</kbd>–<kbd>4</kbd> or click a card</>, 'Select that operative'],
@@ -21,7 +23,7 @@ const CONTROLS: [ReactNode, string][] = [
   ['Right-drag / one-finger drag', 'Rotate and tilt the view'],
   ['Scroll / pinch', 'Zoom the view'],
   ['Middle-drag / two-finger drag', 'Pan the view. The view follows the selection again once it starts moving, or after F or R'],
-  ['Mission menu', 'Auto-pause when spotted: pause the first time each hostile turns suspicious. Graphics quality: turn bloom off on slower devices'],
+  ['Mission menu', 'Auto-pause when spotted: pause the first time each hostile turns suspicious. Graphics quality: turn bloom off on slower devices. Tips: explain each new situation once, beside the tracker'],
   [<><kbd>F</kbd> or double-click a card</>, 'Focus the view on the selection'],
   [<><kbd>R</kbd></>, 'Switch between the tactical view and the district overview'],
 ];
@@ -36,6 +38,7 @@ const RULES: [IconName, string][] = [
 ];
 
 export function Manual({ saveCode, onClose }: { saveCode: string | null; onClose: () => void }) {
+  const [reset, setReset] = useState(false);
   return <Dialog onClose={onClose} className="manual">
     <div className="dialog-body">
       <p className="kicker">Operator manual</p>
@@ -45,7 +48,9 @@ export function Manual({ saveCode, onClose }: { saveCode: string | null; onClose
           <dl className="controls-list">{CONTROLS.map(([key, action], i) => <div key={i}><dt>{key}</dt><dd>{action}</dd></div>)}</dl></section>
         <section aria-labelledby="manual-stealth"><h3 id="manual-stealth" className="section-title">Stealth</h3>
           <ul className="rules">{RULES.map(([icon, text]) => <li key={icon}><Icon name={icon} />{text}</li>)}</ul>
-          {saveCode ? <SaveCode code={saveCode} /> : null}</section>
+          {saveCode ? <SaveCode code={saveCode} /> : null}
+          <div className="tips-reset"><span>{reset ? 'Every tip will show again.' : 'Dismissed tips stay hidden on this device.'}</span>
+            <button className="btn ghost small" onClick={() => { tipStore.reset(); setReset(true); }}><Icon name={reset ? 'check' : 'restart'} />Reset tips</button></div></section>
       </div>
       <button className="btn primary" data-autofocus onClick={onClose}><span>Close manual</span><Icon name="check" /></button>
     </div>
