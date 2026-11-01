@@ -5,6 +5,9 @@ export type Bounds = { minX: number; maxX: number; minZ: number; maxZ: number };
 
 export const distance = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.z - b.z);
 const inside = (p: Point, r: Rect, padding: number) => Math.abs(p.x - r.x) < r.w / 2 + padding && Math.abs(p.z - r.z) < r.d / 2 + padding;
+const edgeDistance = (p: Point, r: Rect) => Math.hypot(Math.max(0, Math.abs(p.x - r.x) - r.w / 2), Math.max(0, Math.abs(p.z - r.z) - r.d / 2));
+const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), Math.max(lo, hi));
+const COVER_GAP = .45; // m between a barrier's face and an operative crouched behind it
 const SIGHT_PAD = .05; // m around a building's footprint that already blocks sight
 const DIRS =[[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]] as const;
 
@@ -91,6 +94,31 @@ export class World {
       }
       return false;
     });
+  }
+  // Close enough to a barrier to crouch behind it (the reach coverBetween allows).
+  besideCover(p: Point): boolean { return this.cover.some(r => inside(p, r, 1.1)); }
+  // A spot against the barrier nearest `p` (within `reach` of its edge) that shelters from `threat`, level with `p`
+  // along the barrier's face, with `along` the face's direction. Of the faces that cover, the one nearest `p`;
+  // if none does, the face farthest from the threat. Null when no barrier is that close. On a covering face, `span`
+  // is how far the shelter runs either way along `along` from the spot (offsets in m, `lo` <= 0 <= `hi`).
+  coverSpot(p: Point, threat: Point, reach = 1): { point: Point; along: Point; covered: boolean; span: { lo: number; hi: number } | null } | null {
+    let r: Rect | null = null, best = Infinity;
+    for (const c of this.cover) { const d = edgeDistance(p, c); if (d <= reach && d < best) { r = c; best = d; } }
+    if (!r) return null;
+    const { x, z, w, d } = r;
+    const faces = [-1, 1].flatMap(s => [
+      { point: { x: clamp(p.x, x - w / 2 + .2, x + w / 2 - .2), z: z + s * (d / 2 + COVER_GAP) }, along: { x: 1, z: 0 } },
+      { point: { x: x + s * (w / 2 + COVER_GAP), z: clamp(p.z, z - d / 2 + .2, z + d / 2 - .2) }, along: { x: 0, z: 1 } },
+    ]).filter(f => this.walkable(f.point)).map(f => ({ ...f, covered: this.coverBetween(threat, f.point) }));
+    const covered = faces.filter(f => f.covered);
+    const face = (covered.length ? covered.sort((a, b) => distance(a.point, p) - distance(b.point, p)) : faces.sort((a, b) => distance(b.point, threat) - distance(a.point, threat)))[0];
+    if (!face) return null;
+    if (!face.covered) return { ...face, span: null };
+    const shelters = (k: number) => { const q = { x: face.point.x + face.along.x * k, z: face.point.z + face.along.z * k }; return this.walkable(q) && this.coverBetween(threat, q); };
+    let lo = 0, hi = 0;
+    while (lo > -3 && shelters(lo - .05)) lo -= .05;
+    while (hi < 3 && shelters(hi + .05)) hi += .05;
+    return { ...face, span: { lo, hi } };
   }
 
   private nearestNode(p: Point): number {

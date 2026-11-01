@@ -1,16 +1,18 @@
-import { memo, useCallback, useRef } from 'react';
-import type { ReactNode, RefObject } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
+import type { RefObject } from 'react';
 import { useFrame } from '@react-three/fiber';
 import type { ThreeEvent } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
-import { AlwaysStencilFunc, CanvasTexture, CircleGeometry, GreaterDepth, MeshBasicMaterial, NotEqualStencilFunc, PlaneGeometry, ReplaceStencilOp, RingGeometry, SRGBColorSpace, Vector3 } from 'three';
-import type { Camera, Group, Material, Mesh } from 'three';
+import { AlwaysStencilFunc, BufferAttribute, CanvasTexture, CircleGeometry, GreaterDepth, MeshBasicMaterial, MeshStandardMaterial, NotEqualStencilFunc, PlaneGeometry, ReplaceStencilOp, RingGeometry, Shape, ShapeGeometry, SRGBColorSpace, Color, Vector2, Vector3 } from 'three';
+import type { BufferGeometry, Camera, Group, Material, Mesh, Object3D } from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { REVIVE_SECONDS, SUSPICIOUS, TAKEDOWN_SECONDS } from '../game/simulation.ts';
 import type { Faction, Simulation, Unit, UnitKind } from '../game/simulation.ts';
 import { dragged } from './drag.ts';
 import { rectDistance } from './framing.ts';
-import { BOX, Box, CYLINDER, DIAMOND, dim, glow, PaintContext, ProgressRing, solid, STILL, usePaint } from './parts.tsx';
-import type { Paint } from './parts.tsx';
+import { BOX, DIAMOND, glow, ProgressRing, shield, SHIELD_COLOR, STILL } from './parts.tsx';
+import { animate, CLASS_COLOR, makeRig, REACH, SCALE, skin } from './rigs.ts';
+import type { Motion } from './rigs.ts';
 import { mayBeHidden, viewAlong } from './view.ts';
 
 type Vec3 = [number, number, number];
@@ -18,47 +20,88 @@ export const TOP: Record<UnitKind, number> = { assault: 1.3, support: 1.3, recon
 const HITBOX: Record<UnitKind, Vec3> = { assault: [.95, 1.5, .95], support: [.95, 1.5, .95], recon: [.95, 1.5, .95], tech: [.95, 1.5, .95], guard: [.95, 1.5, .95], heavy: [1.15, 1.8, 1.15], camera: [.7, 2.3, .7], turret: [1.1, 1, 1.1], target: [.95, 1.5, .95], vip: [.95, 1.5, .95] };
 const ACCENT: Record<UnitKind, string> = { assault: '#9ff7d1', support: '#9ff7d1', recon: '#9ff7d1', tech: '#8ff0e6', guard: '#ed7e70', heavy: '#ff6d5c', camera: '#ff5a4a', turret: '#ff6d5c', target: '#ffbd83', vip: '#ffe7a8' };
 const GROUND: Record<Faction, string> = { squad: '#9ff7d1', hostile: '#ed7e70', vip: '#ffe7a8' };
-// Silhouette colors: operatives in their class color (the .cls-* colors in style.css), hostiles red, the VIP gold.
-const CLASS_COLOR: Partial<Record<UnitKind, string>> = { assault: '#ff8a5b', support: '#5ef2c0', recon: '#ffd166', tech: '#62d0ff' };
+// Silhouette colors: operatives in their class color, hostiles red, the VIP gold.
 const silhouetteColor = (kind: UnitKind, faction: Faction) => faction === 'hostile' ? '#ff5148' : faction === 'vip' ? '#ffd77a' : CLASS_COLOR[kind] ?? '#9ff7d1';
-const REACH = .9; // farthest any model part (the recon's rifle) sits from the unit's center
+const DIM = .42; // a downed operative's colors, darkened
+const dim = (color: string) => `#${new Color(color).multiplyScalar(DIM).getHexString()}`;
 
 // Occluded units: the lit pass sets the stencil under every pixel a unit covers, then the same
 // model draws again flat, only where it lies behind something already drawn (GreaterDepth) and
 // only on pixels with no stencil mark. The silhouette sets the mark too, so it blends once per
 // pixel and never tints a unit over its own visible body or over another unit. The lit pass
 // draws after the rest of the opaque scene (render order 1), so a unit only marks the pixels
-// where it ends up visible. At night every part also glows faintly in its own color, so units
+// where it ends up visible. At night the body also glows faintly in its own colors, so units
 // read on dark streets whichever way the moon catches them.
 const NIGHT_GLOW = .4;
-const stenciled = new Map<string, Material>();
-const LIT: Paint = {
-  shadows: true, order: 1,
-  material: (color, emissive) => {
-    const key = `${color}|${emissive ?? ''}`;
-    let m = stenciled.get(key);
-    if (!m) {
-      const lit = solid(color, emissive).clone();
-      if (!emissive) { lit.emissive.set(color); lit.emissiveIntensity = NIGHT_GLOW; }
-      m = Object.assign(lit, { stencilWrite: true, stencilRef: 1, stencilFunc: AlwaysStencilFunc, stencilZPass: ReplaceStencilOp });
-      stenciled.set(key, m);
-    }
-    return m;
-  },
+const nightGlow = (m: MeshStandardMaterial) => {
+  m.onBeforeCompile = shader => { shader.fragmentShader = shader.fragmentShader.replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>\ntotalEmissiveRadiance += diffuseColor.rgb * ${NIGHT_GLOW.toFixed(2)};`); };
+  m.customProgramCacheKey = () => 'night-glow';
+  return m;
 };
-const silhouettes = new Map<string, Paint>();
-function silhouette(color: string): Paint {
-  let paint = silhouettes.get(color);
-  if (!paint) {
-    const m = new MeshBasicMaterial({
+const MARKS = { stencilWrite: true, stencilRef: 1, stencilFunc: AlwaysStencilFunc, stencilZPass: ReplaceStencilOp };
+const BODY = nightGlow(Object.assign(new MeshStandardMaterial({ vertexColors: true, roughness: .72, metalness: .2 }), MARKS));
+const GLOW = Object.assign(new MeshBasicMaterial({ vertexColors: true, toneMapped: false }), MARKS);
+const BODY_DIM = nightGlow(BODY.clone()), GLOW_DIM = GLOW.clone();
+BODY_DIM.color.setScalar(DIM); GLOW_DIM.color.setScalar(DIM);
+const silhouettes = new Map<string, Material>();
+function silhouette(color: string) {
+  let m = silhouettes.get(color);
+  if (!m) {
+    m = new MeshBasicMaterial({
       color, transparent: true, opacity: .5, depthWrite: false, depthFunc: GreaterDepth, toneMapped: false,
       stencilWrite: true, stencilRef: 1, stencilFunc: NotEqualStencilFunc, stencilZPass: ReplaceStencilOp,
     });
-    paint = { shadows: false, order: 1, material: () => m };
-    silhouettes.set(color, paint);
+    silhouettes.set(color, m);
   }
-  return paint;
+  return m;
 }
+
+// Combat looks for the lit pass: a hit turns the model white for HIT_FLASH_SECONDS, an EMP stun adds a pulsing
+// blue rim, and a dead hostile dims, then fades. They swap materials on the model's meshes rather than adding
+// any, so they cost no draw calls. Flash and rim materials are shared; a death clones the unit's own, to fade it.
+const HIT_FLASH_SECONDS = .1, COLLAPSE_SECONDS = .4, FADE_AFTER = 1.5, FADE_SECONDS = .6;
+type Look = 'normal' | 'flash' | 'stun' | 'dead';
+type Tinted = MeshStandardMaterial | MeshBasicMaterial;
+const variants = new WeakSet<Material>();
+const HIT_FLASH = Object.assign(new MeshBasicMaterial({ color: '#fff3e2', toneMapped: false }), MARKS);
+variants.add(HIT_FLASH);
+const stunPulse = { value: 1 }, stunned = new Map<Material, Material>();
+// The rim needs a lit material's normals; the glow keeps its own look.
+function stunVariant(base: Material) {
+  if (!(base as MeshStandardMaterial).isMeshStandardMaterial) return base;
+  let m = stunned.get(base);
+  if (!m) {
+    m = base.clone();
+    m.onBeforeCompile = shader => {
+      shader.uniforms.uStun = stunPulse;
+      shader.fragmentShader = shader.fragmentShader.replace('#include <common>', '#include <common>\nuniform float uStun;').replace('#include <opaque_fragment>',
+        'outgoingLight += vec3(.3, .7, 1.) * (pow(1. - abs(dot(geometryViewDir, normal)), 1.5) * 1.6 + .12) * uStun;\n#include <opaque_fragment>');
+    };
+    m.customProgramCacheKey = () => 'stun-rim';
+    stunned.set(base, m); variants.add(m);
+  }
+  return m;
+}
+function deadVariant(cache: Map<Material, Tinted>, base: Material) {
+  let m = cache.get(base);
+  if (!m) {
+    m = (base as Tinted).clone();
+    m.color.multiplyScalar(.42); if ('emissive' in m) m.emissive.multiplyScalar(.12); m.transparent = true;
+    cache.set(base, m); variants.add(m);
+  }
+  return m;
+}
+// Puts `look` on every mesh under `model`, remembering each mesh's own material to restore it.
+function dress(model: Object3D, look: Look, base: Map<Mesh, Material>, dead: Map<Material, Tinted>) {
+  model.traverse(o => {
+    const mesh = o as Mesh;
+    if (!mesh.isMesh) return;
+    if (!variants.has(mesh.material as Material)) base.set(mesh, mesh.material as Material);
+    const own = base.get(mesh)!;
+    mesh.material = look === 'flash' ? HIT_FLASH : look === 'stun' ? stunVariant(own) : look === 'dead' ? deadVariant(dead, own) : own;
+  });
+}
+const HUMAN = (kind: UnitKind) => kind !== 'camera' && kind !== 'turret';
 
 // Unit hitboxes by mesh, for the canvas cursor; a unit is clickable when unitClick would act on it.
 export type Hitboxes = Map<Mesh, string>;
@@ -140,125 +183,153 @@ function DetectMarker({ sim, id, top }: { sim: Simulation; id: string; top: numb
   </group>;
 }
 
-function Humanoid({ body, head, visor, legs, legColor = '#192f33', torso = [.47, .62, .32], children }: { body: string; head: string; visor: string; legs: RefObject<Group | null>; legColor?: string; torso?: Vec3; children?: ReactNode }) {
-  return <>
-    <Box position={[0, .65, 0]} size={torso} color={body} castShadow />
-    <Box position={[0, 1.12, .02]} size={[.29, .32, .3]} color={head} castShadow />
-    <Box position={[0, 1.16, .18]} size={[.29, .07, .035]} color={visor} emissive={visor} />
-    <group ref={legs} position={[0, .35, 0]}>
-      <Box position={[-.13, -.15, 0]} size={[.15, .35, .2]} color={legColor} castShadow />
-      <Box position={[.13, -.15, 0]} size={[.15, .35, .2]} color={legColor} castShadow />
-    </group>
-    {children}
-  </>;
+// The cover shield, just right of an operative's health bar, a fixed size on screen.
+const SHIELD_PX = 18, screenRight = new Vector3();
+function CoverMarker({ sim, id, top }: { sim: Simulation; id: string; top: number }) {
+  const icon = useRef<Mesh>(null);
+  useFrame(({ camera }) => {
+    const u = sim.units.find(v => v.id === id), m = icon.current;
+    if (!m) return;
+    const status = u && sim.phase === 'mission' ? sim.coverStatus(u).shield : null;
+    m.visible = !!status;
+    if (!status) return;
+    const px = 1 / camera.zoom;
+    m.material = shield(SHIELD_COLOR[status]);
+    m.quaternion.copy(camera.quaternion); m.scale.set(SHIELD_PX * px, SHIELD_PX * px, 1);
+    m.position.set(0, top + .22, 0).addScaledVector(screenRight.set(1, 0, 0).applyQuaternion(camera.quaternion), BAR_W / 2 + .03 + (SHIELD_PX / 2 + 3) * px);
+  });
+  return <mesh ref={icon} geometry={PLANE} material={shield(SHIELD_COLOR.covered)} visible={false} renderOrder={22} />;
 }
 
-// Forward is +z: rotation.y = heading turns the model toward (sin h, cos h). Round bases hide that turn for fixed hostiles.
-const Model = memo(function Model({ kind, legs, downed }: { kind: UnitKind; legs: RefObject<Group | null>; downed: boolean }) {
-  const c = (color: string) => downed ? dim(color) : color, paint = usePaint();
-  const accent = c(ACCENT[kind]), gun = c('#122429'), arm = c('#526b66'), body = c('#466766'), head = c('#697e7a'), pack = c('#3e5c5a');
-  switch (kind) {
-    case 'assault': return <Humanoid body={body} head={head} visor={accent} legs={legs} torso={[.56, .66, .38]}>
-      <Box position={[.33, .93, 0]} size={[.18, .12, .4]} color={c('#3b5a58')} castShadow />
-      <Box position={[-.33, .93, 0]} size={[.18, .12, .4]} color={c('#3b5a58')} castShadow />
-      <Box position={[.36, .72, .2]} size={[.15, .18, .42]} color={gun} castShadow />
-      <Box position={[-.36, .72, .03]} size={[.12, .4, .13]} color={arm} />
-      <Box position={[0, .84, .2]} size={[.26, .04, .02]} color={accent} emissive={accent} />
-    </Humanoid>;
-    case 'support': return <Humanoid body={body} head={head} visor={accent} legs={legs}>
-      <Box position={[0, .76, -.26]} size={[.38, .44, .2]} color={pack} castShadow />
-      <Box position={[0, .8, -.365]} size={[.2, .06, .02]} color={accent} emissive={accent} />
-      <Box position={[0, .8, -.365]} size={[.06, .2, .02]} color={accent} emissive={accent} />
-      <Box position={[.31, .72, .24]} size={[.13, .15, .59]} color={gun} castShadow />
-      <Box position={[-.31, .72, .03]} size={[.12, .4, .13]} color={arm} />
-    </Humanoid>;
-    case 'recon': return <Humanoid body={body} head={head} visor={accent} legs={legs} torso={[.4, .6, .28]}>
-      <Box position={[.27, .74, .34]} size={[.09, .11, .98]} color={gun} castShadow />
-      <Box position={[.27, .83, .22]} size={[.06, .07, .22]} color={c('#2a4044')} />
-      <Box position={[-.27, .72, .03]} size={[.11, .4, .12]} color={arm} />
-      <Box position={[0, .8, -.17]} size={[.3, .3, .06]} color={pack} />
-    </Humanoid>;
-    case 'tech': return <Humanoid body={body} head={head} visor={accent} legs={legs}>
-      <Box position={[0, .82, -.25]} size={[.32, .26, .2]} color={pack} castShadow />
-      <Box position={[0, .97, -.25]} size={[.46, .03, .07]} color={c('#2a4044')} />
-      <Box position={[0, .97, -.25]} size={[.07, .03, .46]} color={c('#2a4044')} />
-      <Box position={[-.14, 1.25, -.27]} size={[.03, .6, .03]} color={arm} />
-      <Box position={[-.14, 1.57, -.27]} size={[.07, .07, .07]} color={accent} emissive={accent} />
-      <Box position={[.31, .72, .18]} size={[.12, .14, .4]} color={gun} castShadow />
-      <Box position={[-.31, .72, .03]} size={[.12, .4, .13]} color={arm} />
-    </Humanoid>;
-    case 'guard': return <Humanoid body="#673e3b" head="#697e7a" visor={accent} legs={legs}>
-      <Box position={[.31, .72, .24]} size={[.13, .15, .59]} color="#122429" castShadow />
-      <Box position={[-.31, .72, .03]} size={[.12, .4, .13]} color="#526b66" />
-    </Humanoid>;
-    case 'heavy': return <group scale={1.18}><Humanoid body="#5c3532" head="#5d6765" visor={accent} legs={legs} legColor="#1d2729" torso={[.58, .7, .4]}>
-      <Box position={[.35, .95, 0]} size={[.2, .14, .44]} color="#4a3a3a" castShadow />
-      <Box position={[-.35, .95, 0]} size={[.2, .14, .44]} color="#4a3a3a" castShadow />
-      <Box position={[-.3, .68, .32]} size={[.44, .78, .07]} color="#463c3d" castShadow />
-      <Box position={[-.3, .96, .36]} size={[.3, .04, .02]} color={accent} emissive={accent} />
-      <Box position={[.36, .72, .26]} size={[.17, .19, .66]} color="#122429" castShadow />
-    </Humanoid></group>;
-    case 'camera': return <>
-      <mesh position={[0, .04, 0]} scale={[.22, .08, .22]} geometry={CYLINDER} material={paint.material('#3c4a4a')} renderOrder={paint.order} />
-      <Box position={[0, 1, 0]} size={[.09, 1.9, .09]} color="#5c6d6a" castShadow />
-      <Box position={[0, 1.94, 0]} size={[.16, .12, .16]} color="#465452" />
-      <Box position={[0, 2.02, .1]} size={[.24, .2, .42]} color="#2a3436" castShadow />
-      <Box position={[0, 2.02, .32]} size={[.13, .13, .03]} color={accent} emissive={accent} />
-      <Box position={[0, 2.14, -.05]} size={[.05, .04, .05]} color={accent} emissive={accent} />
-    </>;
-    case 'turret': return <>
-      <mesh position={[0, .14, 0]} scale={[.46, .28, .46]} geometry={CYLINDER} material={paint.material('#3d4447')} castShadow={paint.shadows} renderOrder={paint.order} />
-      <mesh position={[0, .33, 0]} scale={[.32, .1, .32]} geometry={CYLINDER} material={paint.material('#4b3b3a')} renderOrder={paint.order} />
-      <Box position={[0, .52, 0]} size={[.5, .3, .55]} color="#5a3936" castShadow />
-      <Box position={[0, .55, .55]} size={[.1, .1, .62]} color="#1c2427" castShadow />
-      <Box position={[0, .62, .28]} size={[.3, .05, .02]} color={accent} emissive={accent} />
-      <Box position={[.3, .5, -.05]} size={[.12, .2, .3]} color="#2e3436" />
-    </>;
-    case 'target': return <Humanoid body="#6e5040" head="#b0a18d" visor={accent} legs={legs} legColor="#2a2421">
-      <Box position={[0, .76, .165]} size={[.07, .32, .02]} color={accent} emissive={accent} />
-      <Box position={[.31, .42, .05]} size={[.1, .24, .34]} color="#3a2a22" castShadow />
-      <Box position={[.31, .72, .03]} size={[.12, .4, .13]} color="#5d4637" />
-      <Box position={[-.31, .72, .03]} size={[.12, .4, .13]} color="#5d4637" />
-    </Humanoid>;
-    case 'vip': return <Humanoid body="#2c363c" head="#c9bfae" visor={accent} legs={legs} legColor="#1d2328">
-      <Box position={[0, .76, .165]} size={[.07, .32, .02]} color="#e8c574" emissive="#e8c574" />
-      <Box position={[.31, .72, .03]} size={[.12, .4, .13]} color="#353f45" />
-      <Box position={[-.31, .72, .03]} size={[.12, .4, .13]} color="#353f45" />
-    </Humanoid>;
-  }
-});
+// Faction marks: a chevron in the class color over each operative and a red diamond over each visible
+// hostile, outlined in black. Like the detection marker they are built in screen pixels and drawn over
+// buildings, so a unit's side reads even when its model is a few pixels tall.
+function mark(points: [number, number][], color: string) {
+  const layer = (scale: number, tint: string) => {
+    const g = new ShapeGeometry(new Shape(points.map(([x, y]) => new Vector2(x * scale, y * scale))));
+    const c = new Color(tint), n = g.getAttribute('position').count;
+    g.setAttribute('color', new BufferAttribute(new Float32Array(Array.from({ length: n }, () => [c.r, c.g, c.b]).flat()), 3));
+    g.deleteAttribute('uv');
+    return g;
+  };
+  // The outline draws first; the mark draws over it in the same call.
+  return mergeGeometries([layer(1.4, '#04090b'), layer(1, color)])!;
+}
+const CHEVRON: [number, number][] = [[-6, 4], [0, -1.5], [6, 4], [6, .5], [0, -5], [-6, .5]];
+const MARK_SHAPES = new Map<string, BufferGeometry>();
+const markShape = (faction: Faction, kind: UnitKind) => {
+  const key = faction === 'squad' ? kind : 'hostile';
+  let g = MARK_SHAPES.get(key);
+  if (!g) { g = faction === 'squad' ? mark(CHEVRON, CLASS_COLOR[kind] ?? GROUND.squad) : mark([[0, 5.5], [4.5, 0], [0, -5.5], [-4.5, 0]], '#ff5148'); MARK_SHAPES.set(key, g); }
+  return g;
+};
+const MARK_PAINT = new MeshBasicMaterial({ vertexColors: true, transparent: true, depthTest: false, depthWrite: false, toneMapped: false });
+const MARK_LIFT = 12; // pixels above the health bar
+function FactionMark({ sim, id, kind, faction, top }: { sim: Simulation; id: string; kind: UnitKind; faction: Faction; top: number }) {
+  const ref = useRef<Mesh>(null);
+  useFrame(({ camera }) => {
+    const u = sim.units.find(v => v.id === id), m = ref.current;
+    if (!m) return;
+    // A hostile's detection or ability mark takes the diamond's place.
+    const show = !!u && u.hp > 0 && sim.phase === 'mission' && (u.faction === 'squad' || u.visible && u.detect <= 0 && u.marked <= 0);
+    m.visible = show;
+    if (!show) return;
+    const px = 1 / camera.zoom;
+    m.quaternion.copy(camera.quaternion); m.scale.setScalar(px);
+    m.position.set(0, top + .22, 0).addScaledVector(screenUp.set(0, 1, 0).applyQuaternion(camera.quaternion), .1 + MARK_LIFT * px);
+  });
+  return <mesh ref={ref} geometry={markShape(faction, kind)} material={MARK_PAINT} renderOrder={22} visible={false} />;
+}
+
+// Animation state the scene keeps per unit, read off the simulation's changes: a new shot from the unit's
+// position kicks and raises the weapon, lost health flinches.
+const STEP_RATE = 14, AIM_HOLD = 1.6;
+const newestShot = (sim: Simulation) => sim.shots.reduce((n, s) => Math.max(n, s.id), -1);
 
 function Agent({ sim, unit, selected, slot, tagged, labels, hitboxes }: { sim: Simulation; unit: Unit; selected: boolean; slot: number; tagged: boolean; labels: RefObject<HTMLDivElement>; hitboxes: Hitboxes }) {
   const { id, kind, faction } = unit;
-  const root = useRef<Group>(null), model = useRef<Group>(null), pose = useRef<Group>(null), legs = useRef<Group>(null), ring = useRef<Group>(null), spin = useRef<Group>(null);
-  const ghost = useRef<Group>(null), ghostLegs = useRef<Group>(null), look = useRef(new Vector3()).current;
+  const root = useRef<Group>(null), model = useRef<Group>(null), pose = useRef<Group>(null), ring = useRef<Group>(null), spin = useRef<Group>(null), look = useRef(new Vector3()).current;
   const bar = useRef<Group>(null), fill = useRef<Mesh>(null);
-  const stun = useRef<Group>(null), mark = useRef<Mesh>(null), revive = useRef<Group>(null), hold = useRef<Group>(null);
+  const stun = useRef<Group>(null), markRef = useRef<Mesh>(null), revive = useRef<Group>(null), hold = useRef<Group>(null), lit = useRef<Group>(null), disc = useRef<Mesh>(null);
   const downed = faction === 'squad' && unit.hp <= 0, top = TOP[kind], hitbox = HITBOX[kind];
   const register = useCallback((mesh: Mesh) => { hitboxes.set(mesh, id); return () => { hitboxes.delete(mesh); }; }, [hitboxes, id]);
   const c = (color: string) => downed ? dim(color) : color;
+  // The rig and its silhouette skin share one skeleton; only their materials follow the downed state.
+  const { rig, ghost } = useMemo(() => {
+    const rig = makeRig(kind, BODY, GLOW), ghost = skin(rig, BODY);
+    rig.body.castShadow = true;
+    for (const m of [rig.body, rig.glow, ghost]) if (m) m.renderOrder = 1;
+    return { rig, ghost };
+  }, [kind]);
+  useEffect(() => () => rig.skeleton.dispose(), [rig]);
+  // Set once per change, not every render, so a combat look swapped in by dress() survives snapshots.
+  useEffect(() => {
+    rig.body.material = downed ? BODY_DIM : BODY;
+    if (rig.glow) rig.glow.material = downed ? GLOW_DIM : GLOW;
+  }, [rig, downed]);
+  ghost.material = silhouette(c(silhouetteColor(kind, faction)));
+  const motion = useRef<Motion>({ t: 0, walk: 0, phase: 0, aim: 0, kick: 0, kickSide: 0, flinch: 0, down: 0, die: 0 }).current;
+  const seen = useRef({ shot: newestShot(sim), fired: -Infinity }).current;
+  // Combat state, kept in mission time: when the last hit landed and when the unit went down (-Infinity: before this view saw it).
+  // It resets for a new plan or when the clock runs back, since a restart keeps the plan and rewinds time.
+  const combat = useRef({ plan: null as Simulation['plan'], time: 0, hp: 0, hitAt: -Infinity, downAt: null as number | null, look: 'normal' as Look, base: new Map<Mesh, Material>(), dead: new Map<Material, Tinted>() }).current;
+  useEffect(() => () => combat.dead.forEach(m => m.dispose()), [combat]);
   const reviveProgress = () => { let p = 0; for (const v of sim.units) if (v.reviveTarget === id) p = Math.max(p, v.revive / REVIVE_SECONDS); return p; };
   const takedownProgress = () => (sim.units.find(v => v.id === id)?.held ?? 0) / TAKEDOWN_SECONDS;
-  useFrame(({ clock, camera }) => {
+  useFrame(({ clock, camera }, frame) => {
     const u = sim.units.find(v => v.id === id);
     if (!root.current || !model.current || !pose.current) return;
-    const hidden = !u || (u.faction === 'hostile' && (u.hp <= 0 || !u.visible));
+    if (!u) { root.current.visible = false; return; }
+    const t = clock.elapsedTime, dt = Math.min(frame, .1);
+    if (combat.plan !== sim.plan || sim.time < combat.time) {
+      combat.plan = sim.plan; combat.hp = u.hp; combat.hitAt = -Infinity; combat.downAt = u.hp > 0 ? null : -Infinity;
+      combat.dead.forEach(m => m.dispose()); combat.dead.clear();
+      if (lit.current && combat.look !== 'normal') dress(lit.current, combat.look = 'normal', combat.base, combat.dead);
+      seen.fired = -Infinity; motion.kick = motion.flinch = 0;
+    }
+    if (u.hp < combat.hp) { combat.hitAt = sim.time; motion.flinch = 1; }
+    if (u.hp <= 0 && combat.downAt === null) combat.downAt = sim.time;
+    if (u.hp > 0) combat.downAt = null;
+    combat.hp = u.hp; combat.time = sim.time;
+    let newest = seen.shot;
+    for (const s of sim.shots) if (s.id > seen.shot) {
+      newest = Math.max(newest, s.id);
+      if (Math.hypot(s.from.x - u.x, s.from.z - u.z) < .3) { motion.kick = 1; motion.kickSide ^= 1; seen.fired = t; }
+    }
+    seen.shot = newest;
+    const downFor = combat.downAt === null ? -1 : sim.time - combat.downAt, dead = u.faction === 'hostile' && u.hp <= 0;
+    const gone = dead && (combat.downAt === -Infinity || HUMAN(kind) && downFor >= FADE_AFTER + FADE_SECONDS);
+    const hidden = u.faction === 'hostile' && (!u.visible || gone);
     root.current.visible = !hidden;
-    if (!u || hidden) return;
-    const t = clock.elapsedTime, down = u.faction === 'squad' && u.hp <= 0, walking = u.moving && !sim.paused && !down;
+    if (hidden) return;
+    const down = u.hp <= 0, walking = u.moving && !sim.paused && !down;
+    const dressed: Look = sim.time - combat.hitAt < HIT_FLASH_SECONDS ? 'flash' : dead ? 'dead' : u.stunned > 0 ? 'stun' : 'normal';
+    if (lit.current && dressed !== combat.look) dress(lit.current, combat.look = dressed, combat.base, combat.dead);
+    if (dressed === 'stun') stunPulse.value = .7 + .3 * Math.sin(t * 16);
+    if (dead && HUMAN(kind)) { const fade = 1 - Math.min(1, Math.max(0, (downFor - FADE_AFTER) / FADE_SECONDS)); combat.dead.forEach(m => { m.opacity = fade; }); }
     root.current.position.set(u.x, 0, u.z);
     model.current.rotation.y = u.heading;
-    model.current.position.y = walking ? Math.sin(t * 17) * .035 : 0;
-    pose.current.rotation.x = down ? -Math.PI / 2 : 0; pose.current.position.y = down ? .2 : 0;
-    const stride = walking ? Math.sin(t * 17) * .4 : 0;
-    if (legs.current) legs.current.rotation.x = stride;
-    if (ghostLegs.current) ghostLegs.current.rotation.x = stride;
+    // Animation layers: walk, aim, recoil and flinch on the bones; the fall to the ground on the whole model.
+    const toward = (from: number, to: number, rate: number) => from + (to - from) * Math.min(1, dt * rate);
+    const aiming = u.hp > 0 && (t - seen.fired < AIM_HOLD || u.faction === 'squad' && !!u.targetId && !u.moving);
+    motion.t = t;
+    motion.walk = toward(motion.walk, walking ? 1 : 0, 10);
+    motion.phase += dt * STEP_RATE * motion.walk;
+    motion.aim = toward(motion.aim, aiming ? 1 : 0, 8);
+    motion.kick *= Math.exp(-dt * 10); motion.flinch *= Math.exp(-dt * 6);
+    // A unit that goes down falls over COLLAPSE_SECONDS, accelerating like a body would; a camera or turret droops.
+    const collapse = down ? Math.min(1, downFor / COLLAPSE_SECONDS) : 0, fall = collapse * collapse;
+    motion.down = dead ? 0 : fall;
+    motion.die = dead ? HUMAN(kind) ? fall : collapse : 0;
+    animate(rig, motion);
+    // Downed operatives lie on their side, hostiles fall on their backs; both settle centered on the unit.
+    const side = motion.down, back = HUMAN(kind) ? motion.die : 0;
+    pose.current.rotation.set(-back * Math.PI / 2, 0, side * Math.PI / 2);
+    pose.current.position.set(side * .6, (side + back) * .15 - (HUMAN(kind) ? 0 : motion.die * .1), back * .6);
+    if (disc.current) disc.current.visible = !dead;
     // The silhouette only draws when a building or barrier could be in front of the unit.
-    const world = sim.plan?.world;
-    if (ghost.current) {
-      const d = camera.getWorldDirection(look);
-      ghost.current.visible = !!world && mayBeHidden(world.buildings, world.cover, viewAlong(d.x, d.y, d.z), u, REACH);
-    }
+    const world = sim.plan?.world, d = camera.getWorldDirection(look);
+    ghost.visible = !dead && !!world && mayBeHidden(world.buildings, world.cover, viewAlong(d.x, d.y, d.z), u, REACH);
     if (ring.current) ring.current.visible = sim.selected.includes(id);
     if (spin.current && !STILL) spin.current.rotation.z = t * .9;
     if (bar.current && fill.current) {
@@ -271,10 +342,10 @@ function Agent({ sim, unit, selected, slot, tagged, labels, hitboxes }: { sim: S
       }
     }
     if (stun.current) {
-      stun.current.visible = u.stunned > 0; stun.current.rotation.y = t * 5;
+      stun.current.visible = u.hp > 0 && u.stunned > 0; stun.current.rotation.y = t * 5;
       stun.current.children.forEach((spark, k) => { spark.visible = Math.sin(t * 31 + k * 2.1) > -.3; });
     }
-    if (mark.current) { mark.current.visible = u.marked > 0; mark.current.rotation.y = t * 2.4; mark.current.position.y = top + .5 + Math.sin(t * 4) * .05; }
+    if (markRef.current) { markRef.current.visible = u.hp > 0 && u.marked > 0; markRef.current.rotation.y = t * 2.4; markRef.current.position.y = top + .5 + Math.sin(t * 4) * .05; }
     if (revive.current) revive.current.visible = down && sim.units.some(v => v.reviveTarget === id);
     if (hold.current) hold.current.visible = u.held > 0;
   });
@@ -291,10 +362,7 @@ function Agent({ sim, unit, selected, slot, tagged, labels, hitboxes }: { sim: S
     <group ref={model}>
       <group ref={pose} onClick={click}>
         <mesh ref={register} position={[0, hitbox[1] / 2, 0]} scale={hitbox} geometry={BOX} visible={false} />
-        <PaintContext.Provider value={LIT}><Model kind={kind} legs={legs} downed={downed} /></PaintContext.Provider>
-        <group ref={ghost} visible={false}>
-          <PaintContext.Provider value={silhouette(c(silhouetteColor(kind, faction)))}><Model kind={kind} legs={ghostLegs} downed={downed} /></PaintContext.Provider>
-        </group>
+        <group scale={SCALE[kind] ?? 1}><group ref={lit}><primitive object={rig.body} /></group><primitive object={ghost} /></group>
       </group>
     </group>
     {faction === 'squad' ? <group ref={ring} rotation={[-Math.PI / 2, 0, 0]} position={[0, .045, 0]} visible={false}>
@@ -305,15 +373,17 @@ function Agent({ sim, unit, selected, slot, tagged, labels, hitboxes }: { sim: S
       <mesh geometry={PLANE} material={BAR_BACK} scale={[BAR_W + .06, BAR_H + .06, 1]} renderOrder={20} />
       <mesh ref={fill} geometry={PLANE} material={BAR.mint} scale={[BAR_W, BAR_H, 1]} position={[0, 0, .001]} renderOrder={21} />
     </group>
-    {kind !== 'camera' ? <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, .035, 0]}><circleGeometry args={[kind === 'heavy' || kind === 'turret' ? .45 : .32, 20]} /><meshBasicMaterial color={ground} transparent opacity={.18} depthWrite={false} /></mesh> : null}
+    {faction !== 'vip' ? <FactionMark sim={sim} id={id} kind={kind} faction={faction} top={top} /> : null}
+    {kind !== 'camera' ? <mesh ref={disc} rotation={[-Math.PI / 2, 0, 0]} position={[0, .035, 0]}><circleGeometry args={[kind === 'heavy' || kind === 'turret' ? .45 : .32, 20]} /><meshBasicMaterial color={ground} transparent opacity={.18} depthWrite={false} /></mesh> : null}
     {faction === 'hostile' ? <>
       <group ref={stun} position={[0, top - .1, 0]} visible={false}>
         {[0, 1, 2, 3].map(k => <mesh key={k} position={[Math.sin(k * 1.57) * .34, (k % 2) * .18, Math.cos(k * 1.57) * .34]} rotation={[k * .7, 0, k * .4]} scale={[.05, .16, .05]} geometry={BOX} material={glow('#8fd8ff')} />)}
       </group>
-      <mesh ref={mark} geometry={DIAMOND} material={glow('#ffb17d')} scale={[1, 1.5, 1]} visible={false} />
+      <mesh ref={markRef} geometry={DIAMOND} material={glow('#ffb17d')} scale={[1, 1.5, 1]} visible={false} />
       <group ref={hold} visible={false}><ProgressRing radius={.7} color="#9ff7d1" value={takedownProgress} segments={24} /></group>
       <DetectMarker sim={sim} id={id} top={top} />
     </> : null}
+    {faction === 'squad' ? <CoverMarker sim={sim} id={id} top={top} /> : null}
     {downed ? <group ref={revive} visible={false}><ProgressRing radius={.7} color="#9ff7d1" value={reviveProgress} segments={24} /></group> : null}
     {label ? <Html portal={labels} center position={[0, top + .62, 0]} style={{ pointerEvents: 'none' }}><span className={`unit-label${kind === 'target' ? ' hostile' : kind === 'vip' ? ' vip' : ` squad cls-${kind}`}`}>{label}</span></Html> : null}
   </group>;

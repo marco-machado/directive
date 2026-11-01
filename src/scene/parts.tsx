@@ -1,6 +1,6 @@
-import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { BoxGeometry, Color, CylinderGeometry, InstancedBufferAttribute, InstancedMesh, MeshBasicMaterial, MeshStandardMaterial, Object3D, OctahedronGeometry, PlaneGeometry } from 'three';
+import { BoxGeometry, CanvasTexture, Color, CylinderGeometry, InstancedBufferAttribute, InstancedMesh, MeshBasicMaterial, MeshStandardMaterial, Object3D, OctahedronGeometry, PlaneGeometry, SRGBColorSpace } from 'three';
 import type { BufferGeometry, Material } from 'three';
 import type { Part } from './district.ts';
 
@@ -9,11 +9,10 @@ export const STILL = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 // Shared geometry and materials keep the many small boxes cheap: each Box only scales a unit cube.
 export const BOX = new BoxGeometry();
-export const CYLINDER = new CylinderGeometry(1, 1, 1, 12);
 export const DIAMOND = new OctahedronGeometry(.13);
 // Unit-sized shapes for instanced parts: a cylinder one meter across and a plane facing +z.
 export const ROUND = new CylinderGeometry(.5, .5, 1, 14), PLANE = new PlaneGeometry();
-const solids = new Map<string, MeshStandardMaterial>(), glows = new Map<string, MeshBasicMaterial>(), dimmed = new Map<string, string>();
+const solids = new Map<string, MeshStandardMaterial>(), glows = new Map<string, MeshBasicMaterial>();
 export function solid(color: string, emissive?: string) {
   const key = `${color}|${emissive ?? ''}`;
   let m = solids.get(key);
@@ -25,22 +24,27 @@ export function glow(color: string) {
   if (!m) { m = new MeshBasicMaterial({ color, toneMapped: false }); glows.set(color, m); }
   return m;
 }
-export function dim(color: string) {
-  let d = dimmed.get(color);
-  if (!d) { d = `#${new Color(color).multiplyScalar(.42).getHexString()}`; dimmed.set(color, d); }
-  return d;
+// The cover shield (the HUD's shield icon outline), drawn over everything: mint when covered, red when flanked.
+export const SHIELD_COLOR = { covered: '#5ef2c0', flanked: '#ff5148' } as const;
+const shields = new Map<string, MeshBasicMaterial>();
+export function shield(color: string) {
+  let m = shields.get(color);
+  if (!m) {
+    const canvas = document.createElement('canvas'), g = canvas.getContext('2d')!, path = new Path2D('M12 2.5l8 3v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10v-6z');
+    canvas.width = canvas.height = 64; g.scale(64 / 24, 64 / 24);
+    g.fillStyle = '#04090b'; g.strokeStyle = '#04090b'; g.lineWidth = 4; g.lineJoin = 'round'; g.stroke(path); g.fill(path);
+    g.fillStyle = color; g.globalAlpha = .3; g.fill(path); g.globalAlpha = 1;
+    g.strokeStyle = color; g.lineWidth = 2; g.stroke(path);
+    const map = new CanvasTexture(canvas); map.colorSpace = SRGBColorSpace;
+    m = new MeshBasicMaterial({ map, transparent: true, depthTest: false, depthWrite: false, toneMapped: false });
+    shields.set(color, m);
+  }
+  return m;
 }
-
-// How a Box and the unit models get their material and render order. Units draw twice, lit and
-// then as a flat silhouette where something hides them, by rendering the same model under two paints.
-export type Paint = { material: (color: string, emissive?: string) => Material; shadows: boolean; order: number };
-export const PaintContext = createContext<Paint>({ material: solid, shadows: true, order: 0 });
-export const usePaint = () => useContext(PaintContext);
 
 type Vec3 = [number, number, number];
 export function Box({ position, size, color, emissive, castShadow }: { position: Vec3; size: Vec3; color: string; emissive?: string; castShadow?: boolean }) {
-  const paint = usePaint();
-  return <mesh position={position} scale={size} geometry={BOX} material={paint.material(color, emissive)} castShadow={castShadow && paint.shadows} renderOrder={paint.order} />;
+  return <mesh position={position} scale={size} geometry={BOX} material={solid(color, emissive)} castShadow={castShadow} />;
 }
 
 // Per-building fade levels (the share of pixels dropped); `version` changes whenever any level does.

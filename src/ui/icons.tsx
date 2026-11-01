@@ -33,6 +33,7 @@ const PATHS = {
   clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5.2l3.6 2.1" /></>,
   kills: <><path d="M12 3v4M12 17v4M3 12h4M17 12h4" /><path d="M8.5 8.5l7 7M15.5 8.5l-7 7" /></>,
   ammo: <><path d="M5.5 20V9.5l2.25-5 2.25 5V20zM14 20V9.5l2.25-5 2.25 5V20z" /><path d="M5.5 15.5H10M14 15.5h4.5" /></>,
+  cover: <path d="M12 2.5l8 3v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10v-6z" />,
   plating: <><path d="M12 2.5l8 3v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10v-6z" /><path d="M8 10.5h8M8 14h8" /></>,
   recruit: <><circle cx="9.5" cy="8" r="3.5" /><path d="M3 20c.8-3.6 3.3-5.5 6.5-5.5s5.7 1.9 6.5 5.5M18.5 7v6M15.5 10h6" /></>,
   dismiss: <><path d="M4 7h16M9 7V4h6v3M6.2 7l1 13h9.6l1-13" /></>,
