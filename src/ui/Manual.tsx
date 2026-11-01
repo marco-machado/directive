@@ -19,13 +19,14 @@ const CONTROLS: [ReactNode, string][] = [
   ['Drag / one-finger drag', 'Rotate and tilt the view'],
   ['Scroll / pinch', 'Zoom the view'],
   ['Right-drag / two-finger drag', 'Pan the view'],
+  ['Mission menu', 'Auto-pause when spotted: pause the first time each hostile turns suspicious'],
   [<><kbd>F</kbd> or double-click a card</>, 'Focus the view on the selection'],
   [<><kbd>R</kbd></>, 'Switch between the tactical view and the district overview'],
 ];
 const RULES: [IconName, string][] = [
   ['eye', 'Before the alarm, the squad only fires at targets you order, and operatives on one target fire together once all can hit.'],
   ['guard', 'Ordered onto an unaware guard the volley would not kill, the nearest operative circles out of its sight and takes it down in 1.5 s. A heavy needs two. Another hostile seeing it raises the alarm.'],
-  ['camera', 'Hostiles and cameras see in vision cones. Stay in one too long and the alarm sounds. Posted guards glance aside every few seconds.'],
+  ['camera', 'Hostiles and cameras see in vision cones. A ring over a hostile fills as it notices you: "?" means suspicious, "!" the alarm. Up close it takes about 1.5 s, at the edge of a guard\'s cone about 4 s; cameras are quicker. Posted guards glance aside every few seconds.'],
   ['snipe', 'Sniper shots are silent. Grenades are loud and raise the alarm at once. A hostile that survives a hit raises it too.'],
   ['flag', 'Extraction counts only when every operative, downed ones included, is in the zone. Revive the fallen first.'],
   ['alert', `After the alarm, reinforcements arrive every ${REINFORCE_SECONDS} s. Stay out of every hostile's sight and range for ${CALM_SECONDS} s and it stands down.`],

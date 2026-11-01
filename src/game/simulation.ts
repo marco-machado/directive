@@ -59,6 +59,12 @@ export const FLEE_MIN_EXIT = 16;    // and picks an exit at least this far away
 export const SIGHT_RANGE = 10;      // fog of war: hostiles beyond this or behind buildings are hidden
 export const CONVERGE_RADIUS = 14;  // guards this close to the alarm hunt the squad
 export const SUSPICIOUS = .3;       // detection above this makes a guard stop and stare
+// Detection fills in DETECT_BASE + DETECT_PER_METER × distance seconds: 1.5 s at 2 m, 4 s at a guard's full 7 m.
+export const DETECT_BASE = .5;
+export const DETECT_PER_METER = .5;
+export const CAMERA_DETECT = .75;   // a camera fills in this share of a guard's time at the same distance
+export const DETECT_DRAIN = .25;    // per second, with nobody in sight
+export const detectSeconds = (kind: EnemyKind, d: number) => (DETECT_BASE + DETECT_PER_METER * d) * (kind === 'camera' ? CAMERA_DETECT : 1);
 export const REINFORCE_SECONDS = 20;
 export const CALM_SECONDS = 25;     // the alarm stands down after this long without contact
 export const SEARCH_TURN = 1.5;     // a hunter at the last known position turns this fast (rad/s)
@@ -130,6 +136,7 @@ export class Simulation {
   syncing = false;
   commandPoint: Point | null = null;
   pending: Pending = null;
+  autoPause = false; // pause the first time each hostile turns suspicious
   private reinforced = 0;
   private vipJoined = false;
   private lastKnown: Point | null = null;
@@ -137,6 +144,7 @@ export class Simulation {
   private casts: { unitId: string; ability: AbilityId; point: Point; targetId: string | null }[] = [];
   private hitThisFrame = new Set<Unit>();
   private volleyReady = new Set<Unit>();
+  private autoPaused = new Set<string>();
   private rng: Rng = Math.random;
   private nextId = 0;
   private listeners = new Set<() => void>();
@@ -212,7 +220,7 @@ export class Simulation {
   }
   private resetUnits() {
     const plan = this.plan;
-    this.units = []; this.objectives = []; this.shots = []; this.blasts = []; this.casts = []; this.hitThisFrame.clear(); this.volleyReady.clear();
+    this.units = []; this.objectives = []; this.shots = []; this.blasts = []; this.casts = []; this.hitThisFrame.clear(); this.volleyReady.clear(); this.autoPaused.clear();
     this.alarm = false; this.detected = false; this.calmIn = 0; this.lastKnown = null;
     this.reinforceIn = 0; this.reinforced = 0; this.vipJoined = false; this.holdup = ''; this.pending = null; this.commandPoint = null;
     if (!plan) { this.squad = []; this.selected = []; return; }
@@ -266,6 +274,7 @@ export class Simulation {
   selectAll = () => { this.selected = this.livingSquad().map(u => u.id); this.emit(); };
   togglePause = () => { if (this.phase === 'mission') { this.paused = !this.paused; this.emit(); } };
   pause = () => { if (this.phase === 'mission' && !this.paused) { this.paused = true; this.emit(); } };
+  setAutoPause(on: boolean) { this.autoPause = on; }
   private orderable() { return this.selected.map(id => this.unit(id)).filter((u): u is Unit => !!u && u.hp > 0); }
   private clearOrders(u: Unit) { u.targetId = null; u.reviveTarget = null; u.revive = 0; u.takedownId = null; }
   // Operatives line up side by side; where the street is too narrow for that, they queue in single file.
@@ -459,6 +468,12 @@ export class Simulation {
     for (const u of this.units) if (u.faction === 'hostile' && u.hp > 0) { if (u.hunting && posted(u)) u.sweep = u.heading; u.detect = 0; u.hunting = false; if (!u.exit) u.path = []; }
     this.message = 'Contact lost. Alarm standing down. Holding fire.';
   }
+  // With auto-pause on, the first time a hostile turns suspicious pauses the mission so the player can react.
+  private suspicious(u: Unit) {
+    if (!this.autoPause || this.autoPaused.has(u.id)) return;
+    this.autoPaused.add(u.id); this.paused = true;
+    this.message = `${u.name} is suspicious. Auto-paused.`;
+  }
   private damage(target: Unit, amount: number, from: Point | null) {
     if (target.hp <= 0) return;
     const covered = from && this.plan?.world.coverBetween(from, target);
@@ -540,9 +555,11 @@ export class Simulation {
       .sort((a, b) => distance(u, a) - distance(u, b))[0];
     if (this.alarm) { if (seen) this.contact(seen); }
     else if (seen) {
-      u.detect = Math.min(1, u.detect + dt / (.35 + .12 * distance(u, seen)));
+      const was = u.detect;
+      u.detect = Math.min(1, u.detect + dt / detectSeconds(u.kind as EnemyKind, distance(u, seen)));
       if (u.detect >= 1) { this.raiseAlarm(u, `${stats.name} spotted the squad`, seen); return; }
-    } else u.detect = Math.max(0, u.detect - .25 * dt);
+      if (was <= SUSPICIOUS && u.detect > SUSPICIOUS) this.suspicious(u);
+    } else u.detect = Math.max(0, u.detect - DETECT_DRAIN * dt);
     if (!this.alarm && !(u.kind === 'target' && u.exit)) {
       // A suspicious guard stops and stares instead of walking on.
       if (seen && u.detect > SUSPICIOUS && mobile) { u.heading = headingTo(u, seen); return; }
@@ -784,6 +801,6 @@ export class Simulation {
     if (this.alarm && (this.calmIn -= dt) <= 0) this.standDown();
     this.updateVisibility();
     this.uiTimer += dt;
-    if (this.uiTimer >= .1 || this.alarm !== wasAlarm) { this.uiTimer = 0; this.emit(); }
+    if (this.uiTimer >= .1 || this.alarm !== wasAlarm || this.paused) { this.uiTimer = 0; this.emit(); }
   }
 }

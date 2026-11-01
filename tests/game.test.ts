@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Simulation, parseCampaign, CALM_SECONDS, COVER_FACTOR, HACK_SECONDS, LOOK_ANGLE, LOOK_EVERY, LOOK_PAUSE, QUEUE_SPACING, REINFORCE_CAP, SUSPICIOUS, REINFORCE_SECONDS, REVIVE_SECONDS, TAKEDOWN_REACH, TAKEDOWN_SECONDS } from '../src/game/simulation.ts';
+import { Simulation, parseCampaign, CALM_SECONDS, CAMERA_DETECT, COVER_FACTOR, DETECT_DRAIN, detectSeconds, HACK_SECONDS, LOOK_ANGLE, LOOK_EVERY, LOOK_PAUSE, QUEUE_SPACING, REINFORCE_CAP, SUSPICIOUS, REINFORCE_SECONDS, REVIVE_SECONDS, TAKEDOWN_REACH, TAKEDOWN_SECONDS } from '../src/game/simulation.ts';
 import type { CampaignSync, Unit, Upgrade } from '../src/game/simulation.ts';
 import { contractPayout, freshCampaign, MAX_TIER } from '../src/game/campaign.ts';
 import type { Campaign, ContractType } from '../src/game/campaign.ts';
@@ -108,6 +108,70 @@ test('detection fills faster up close and raises the alarm', () => {
   assert.ok(near.sim.alarm && far.sim.alarm);
   assert.ok(tNear < tFar, `${tNear} vs ${tFar}`);
   near.sim.update(.1); assert.equal(near.sim.getSnapshot().stealth, false);
+});
+
+// Seconds until the alarm with one hostile watching ROOK (at x = 1) from `d` m down the x axis.
+const timeToAlarm = (kind: EnemyKind, d: number) => {
+  const { sim, hostile } = arena();
+  const h = hostile(kind, 1 + d, 0, -Math.PI / 2, 40);
+  h.lookEvery = 1e9; // no look-around in the way
+  for (let i = 0; i < 1200 && !sim.alarm; i++) sim.update(1 / 60);
+  assert.ok(sim.alarm, `${kind} at ${d} m raised the alarm`);
+  return sim.time;
+};
+
+test('detection takes about 1.5 s at 2 m and 4 s at a guard\'s full range; cameras are faster', () => {
+  assert.equal(detectSeconds('guard', 2), 1.5); assert.equal(detectSeconds('guard', 7), 4);
+  for (const [kind, d] of [['guard', 2], ['guard', 7], ['heavy', 4], ['camera', 2]] as const) {
+    const t = timeToAlarm(kind, d);
+    assert.ok(Math.abs(t - detectSeconds(kind, d)) <= 1 / 60 + 1e-9, `${kind} at ${d} m: ${t.toFixed(3)} s`);
+  }
+  for (const d of [1, 4, 7]) assert.ok(detectSeconds('camera', d) < detectSeconds('guard', d));
+  assert.ok(CAMERA_DETECT < 1);
+});
+
+test('detection drains at 0.25 per second once the squad is out of sight', () => {
+  const { sim, hostile } = arena();
+  const guard = hostile('guard', 3, 0, -Math.PI / 2);
+  guard.lookEvery = 1e9;
+  step(sim, 1);
+  assert.ok(Math.abs(guard.detect - 1 / 1.5) < .02, String(guard.detect));
+  guard.heading = guard.sweep = Math.PI / 2; // turns its back
+  const before = guard.detect;
+  step(sim, 1);
+  assert.equal(DETECT_DRAIN, .25);
+  assert.ok(Math.abs(before - guard.detect - DETECT_DRAIN) < 1e-6, `${before} → ${guard.detect}`);
+  assert.equal(sim.alarm, false);
+});
+
+test('auto-pause stops the mission once per hostile as it turns suspicious', () => {
+  const off = arena();
+  off.hostile('guard', 3, 0, -Math.PI / 2).lookEvery = 1e9;
+  step(off.sim, 1, () => off.sim.paused);
+  assert.equal(off.sim.paused, false, 'off by default');
+
+  const { sim, hostile } = arena();
+  sim.setAutoPause(true);
+  const guard = hostile('guard', 3, 0, -Math.PI / 2);
+  guard.lookEvery = 1e9;
+  step(sim, 2, () => sim.paused);
+  assert.equal(sim.paused, true);
+  assert.ok(guard.detect > SUSPICIOUS && guard.detect < SUSPICIOUS + .02, String(guard.detect));
+  assert.match(sim.message, /GUARD is suspicious\. Auto-paused/);
+  assert.equal(sim.getSnapshot().paused, true);
+  // It looks away, calms below the threshold, then sees the squad again: no second pause for the same guard.
+  sim.togglePause(); guard.heading = guard.sweep = Math.PI / 2;
+  step(sim, 1); assert.ok(guard.detect < SUSPICIOUS);
+  guard.heading = guard.sweep = -Math.PI / 2;
+  step(sim, 1, () => guard.detect > SUSPICIOUS + .05);
+  assert.equal(sim.paused, false);
+  // A second hostile turning suspicious pauses again.
+  guard.heading = guard.sweep = Math.PI / 2; guard.detect = 0;
+  hostile('heavy', 1, 3, Math.PI).lookEvery = 1e9;
+  step(sim, 2, () => sim.paused);
+  assert.equal(sim.paused, true); assert.match(sim.message, /HEAVY is suspicious/);
+  sim.restart(); sim.setAutoPause(true);
+  assert.equal(internals(sim).autoPaused.size, 0, 'a restart forgets who already paused');
 });
 
 test('a guard facing away never notices; a camera cone does', () => {
@@ -370,7 +434,7 @@ test('the sync flag reaches the snapshot and notifies only when it changes', () 
 });
 
 // ---- Alarm stand-down ----
-const internals = (sim: Simulation) => sim as unknown as { raiseAlarm(p: Point, r: string): void; reinforced: number; lastKnown: Point | null };
+const internals = (sim: Simulation) => sim as unknown as { raiseAlarm(p: Point, r: string): void; reinforced: number; lastKnown: Point | null; autoPaused: Set<string> };
 // An alarm with no reinforcement waves left, so only the units a test places can keep contact.
 function alarmed(type: ContractType = 'heist', extra: Partial<Campaign> = {}, sync?: CampaignSync) {
   const a = arena(type, extra, sync);
