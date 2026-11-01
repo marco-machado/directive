@@ -3,7 +3,7 @@ import type { AbilityId, ClassId } from './classes.ts';
 import { applyDismiss, applyPayout, applyPurchase, applyRecruit, dealBoard, freshCampaign, missionPayout, SQUAD_MAX } from './campaign.ts';
 import type { Campaign, Contract, Upgrade } from './campaign.ts';
 import { planMission } from './mapgen.ts';
-import type { EnemyKind, MissionPlan } from './mapgen.ts';
+import type { Area, EnemyKind, MissionPlan } from './mapgen.ts';
 import { mulberry32 } from './rng.ts';
 import type { Rng } from './rng.ts';
 import { distance } from './world.ts';
@@ -130,6 +130,8 @@ export class Simulation {
   blasts: Blast[] = [];
   objectives: Objective[] = [];
   plan: MissionPlan | null = null;
+  // Where the squad last knew the target to be: the briefing's intel, then wherever the target was last seen.
+  targetArea: Area | null = null;
   contract: Contract | null = null;
   alarm = false;
   detected = false; // stays set once the alarm has sounded, even after it stands down
@@ -236,6 +238,7 @@ export class Simulation {
     this.units = []; this.objectives = []; this.shots = []; this.blasts = []; this.casts = []; this.hitThisFrame.clear(); this.volleyReady.clear(); this.autoPaused.clear();
     this.alarm = false; this.detected = false; this.calmIn = 0; this.lastKnown = null; this.lastSeen = new Map(); this.intel = new Map();
     this.reinforceIn = 0; this.reinforced = 0; this.vipJoined = false; this.vipThreat = null; this.holdup = ''; this.pending = null; this.commandPoint = null;
+    this.targetArea = plan?.targetArea ? { ...plan.targetArea } : null;
     if (!plan) { this.squad = []; this.selected = []; return; }
     this.rng = mulberry32(plan.contract.seed ^ 0x5bd1e995);
     this.squad = this.squadPick.filter(id => this.campaign.roster.some(o => o.id === id));
@@ -554,6 +557,7 @@ export class Simulation {
       if (u.faction !== 'hostile') { u.visible = true; continue; }
       const was = u.visible;
       u.visible = u.marked > 0 || (!!world && eyes.some(e => distance(e, u) <= SIGHT_RANGE && world.sightClear(e, u)));
+      if (u.kind === 'target' && u.visible && u.hp > 0 && this.targetArea) { this.targetArea.x = u.x; this.targetArea.z = u.z; }
       if (u.visible || u.hp <= 0) this.lastSeen.delete(u.id);
       else if (was) this.lastSeen.set(u.id, { x: u.x, z: u.z, heading: u.heading, at: this.time });
     }

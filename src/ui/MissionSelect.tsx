@@ -10,7 +10,7 @@ import { Icon, Portrait } from './icons.tsx';
 import type { IconName } from './icons.tsx';
 
 const INTEL: { kind: EnemyKind; label: string; icon: IconName }[] = [
-  { kind: 'guard', label: 'Guards', icon: 'guard' }, { kind: 'heavy', label: 'Heavies', icon: 'heavy' },
+  { kind: 'target', label: 'Target', icon: 'assassination' }, { kind: 'guard', label: 'Guards', icon: 'guard' }, { kind: 'heavy', label: 'Heavies', icon: 'heavy' },
   { kind: 'camera', label: 'Cameras', icon: 'camera' }, { kind: 'turret', label: 'Turrets', icon: 'turret' },
 ];
 

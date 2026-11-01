@@ -7,14 +7,18 @@ import type { Bounds, Building, Point, Rect } from './world.ts';
 export type EnemyKind = 'guard' | 'heavy' | 'camera' | 'turret' | 'target';
 export type EnemySpawn = Point & { kind: EnemyKind; heading: number; patrol: Point[] };
 export type ObjectiveSite = Point & { kind: 'terminal' | 'charge' };
+export type Area = Point & { r: number };
 export type MissionPlan = {
   contract: Contract; world: World; label: string;
   spawn: Point[]; extract: Point; enemies: EnemySpawn[]; sites: ObjectiveSite[]; vip: Point | null; exits: Point[];
+  targetArea: Area | null; // assassination intel: where the target was last reported
 };
 
 const STREET = 1.5; // clearance between a block's edge and its building
 const EDGE = .9;    // lattice inset from the map edge
 const SAFE_RADIUS = 9; // no hostile starts this close to the squad
+export const TARGET_AREA_RADIUS = 6;
+export const TARGET_AREA_OFFSET = 3; // the area's center lies within this of the target, so the area always contains it
 const ACCENTS = ['#b9d6cc', '#ffb17d', '#73dfca', '#bad3c8', '#e2a078'];
 const NAMES = ['KESSLER', 'DATA / 04', 'NEXUS', 'RELAY', '07', 'METRO', 'LOGISTICS', 'ARCOLOGY', 'VAULT', 'HYDRO', 'PRISM', 'SPIRE', 'DEPOT', 'ATLAS', 'GRID 9', 'KIOSK'];
 
@@ -160,11 +164,20 @@ function attempt(contract: Contract, rng: Rng, withCover: boolean): MissionPlan 
   const reach = [extract, ...used, ...exits, ...enemies.flatMap(e => e.patrol)];
   if (!reach.every(p => world.findPath(spawn[0], p).length)) return null;
   const label = `SECTOR ${String(contract.sector).padStart(2, '0')} / ${contract.district}`;
-  return { contract, world, label, spawn, extract, enemies, sites, vip, exits };
+  return { contract, world, label, spawn, extract, enemies, sites, vip, exits, targetArea: null };
+}
+
+// Drawn from its own stream so the intel never shifts the district's layout.
+function lastKnownArea(seed: number, target: Point): Area {
+  const rng = mulberry32(seed ^ 0x2c1b3c6d), angle = rng() * Math.PI * 2, offset = Math.sqrt(rng()) * TARGET_AREA_OFFSET;
+  return { x: target.x + Math.cos(angle) * offset, z: target.z + Math.sin(angle) * offset, r: TARGET_AREA_RADIUS };
 }
 
 export function planMission(contract: Contract): MissionPlan {
   const rng = mulberry32(contract.seed);
-  for (let k = 0; k < 12; k++) { const plan = attempt(contract, rng, k < 8); if (plan) return plan; }
+  for (let k = 0; k < 12; k++) {
+    const plan = attempt(contract, rng, k < 8), target = plan?.enemies.find(e => e.kind === 'target');
+    if (plan) return target ? { ...plan, targetArea: lastKnownArea(contract.seed, target) } : plan;
+  }
   throw new Error(`No playable layout for contract seed ${contract.seed}.`);
 }
