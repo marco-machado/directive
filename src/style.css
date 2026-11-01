@@ -25,7 +25,7 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 /* ---- Stage: the 3D scene, its screen treatment, and the free frame the camera fits into ---- */
 .app { position: relative; height: 100dvh; overflow: hidden; isolation: isolate }
 .scene { position: absolute; inset: 0; z-index: 0 }
-.scene canvas { touch-action: none; transition: filter .3s }
+.scene canvas { touch-action: none; -webkit-touch-callout: none; user-select: none; -webkit-user-select: none; transition: filter .3s }
 .paused .scene canvas { filter: saturate(.3) brightness(.78) }
 .scene-labels { position: absolute; inset: 0; overflow: hidden; pointer-events: none }
 .scene-fx { position: absolute; inset: 0; z-index: 1; pointer-events: none; transition: background .4s;
