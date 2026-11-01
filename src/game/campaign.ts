@@ -65,6 +65,18 @@ export function offerTiers(completed: number): number[] {
   const low = Math.min(MAX_TIER - 2, Math.max(1, base - 1));
   return [low, low + 1, low + 2];
 }
+// The highest tier on a board dealt after `completed` contracts. Boards are dealt at each deployment.
+export const topTier = (completed: number) => Math.max(...offerTiers(completed));
+// The next tier a board will add, how many more completed contracts that takes, and how far the campaign is from the
+// last unlock to it (0 to 1); null once boards reach MAX_TIER.
+export function nextUnlock(completed: number): { tier: number; after: number; progress: number } | null {
+  const top = topTier(completed);
+  if (top >= MAX_TIER) return null;
+  let after = 1, since = completed;
+  while (topTier(completed + after) <= top) after++;
+  while (since > 0 && topTier(since - 1) === top) since--;
+  return { tier: topTier(completed + after), after, progress: (completed - since) / (completed + after - since) };
+}
 function dealOffers(completed: number, rng: Rng): Contract[] {
   const tiers = offerTiers(completed);
   const types = shuffle(rng, CONTRACT_TYPES);

@@ -321,6 +321,29 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .debrief-actions .btn.primary { flex: 1; justify-content: space-between; font-size: 15px }
 .debrief .save-code { margin: 16px 0 0 }
 .debrief .warning { margin: 14px 0 0 }
+.debrief-intel { display: grid; grid-template-columns: 1.1fr 1fr; gap: 18px; margin-top: 18px }
+.debrief-intel.single { grid-template-columns: 1fr }
+.alarm-report { display: grid; grid-template-columns: 132px minmax(0, 1fr); gap: 14px; align-items: start; padding: 12px; border: 1px solid rgb(255 81 72 / .4); border-left: 3px solid var(--red); background: rgb(255 81 72 / .06) }
+.alarm-map { display: block; width: 132px; height: auto; max-height: 132px; overflow: visible; border: 1px solid var(--line) }
+.alarm-map-ground { fill: rgb(3 8 10 / .7) }
+.alarm-map-block { fill: rgb(120 200 185 / .14); stroke: var(--line-2); stroke-width: .2 }
+.alarm-map-objective { fill: var(--amber) }
+.alarm-map-extract { fill: none; stroke: var(--mint); stroke-width: .5 }
+.alarm-map-pin { fill: var(--red) }
+.alarm-map-ring { fill: rgb(255 81 72 / .18); stroke: var(--red); stroke-width: .35 }
+.alarm-copy { display: grid; gap: 6px; min-width: 0 }
+.alarm-copy small, .clearance small { font: 600 10px var(--f-ui); letter-spacing: .18em; text-transform: uppercase; color: var(--dim) }
+.alarm-copy strong { font: 600 18px/1.2 var(--f-ui); color: #ffd6d2 }
+.alarm-time { display: inline-flex; align-items: center; gap: 6px; font: 600 15px var(--f-ui); font-variant-numeric: tabular-nums; color: var(--red) }
+.alarm-time .icon { width: 16px; height: 16px }
+.clearance p { margin: 0; font: 400 13px/1.45 var(--f-body); color: var(--dim) }
+.clearance { --accent: var(--threat); display: grid; gap: 8px; align-content: start; padding: 12px 14px; border: 1px solid var(--line); border-left: 3px solid var(--threat); background: rgb(3 8 10 / .5) }
+.clearance header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap }
+.clearance header strong { font: 600 18px/1 var(--f-display); letter-spacing: .08em; text-transform: uppercase; color: var(--threat) }
+.clearance-new { padding: 2px 8px; border: 1px solid var(--threat); font: 700 10px var(--f-ui); letter-spacing: .16em; text-transform: uppercase; color: var(--threat) }
+.clearance-meter { display: block; height: 4px; background: var(--line) }
+.clearance-meter i { display: block; height: 100%; background: var(--threat) }
+.board-clearance { margin: 0 14px 14px }
 
 /* ---- Mission HUD ---- */
 .hud-left { position: absolute; z-index: 3; top: calc(var(--top) + 16px); left: calc(20px + var(--sl)); width: var(--left-col); display: grid; gap: 10px; pointer-events: none }
@@ -390,6 +413,7 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .comms li:last-child { border-left-color: var(--mint); color: var(--text) }
 .comms li:nth-last-child(n+3) { opacity: .5 }
 .comms li.danger { border-left-color: var(--red); color: #ffc2bc }
+.comms-count { font-weight: 700; color: var(--faint) }
 .comms time { padding-top: 1px; font: 600 11px var(--f-ui); font-variant-numeric: tabular-nums; color: var(--faint) }
 .squad { grid-area: squad; display: flex; gap: 8px; animation: rise .4s ease-out both }
 .agent { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 56px; width: 228px; min-width: 0; border: 1px solid var(--line); background: var(--panel); backdrop-filter: blur(10px);
@@ -545,7 +569,6 @@ dialog::backdrop { overflow: hidden; overscroll-behavior: contain; background: r
   .agent-portrait { display: none }
   .cmd { width: 52px; height: 52px }
   .cmd span { display: none }
-  .debrief-grid { grid-template-columns: 1fr }
   .debrief { place-items: start center }
   .roster-grid { grid-template-columns: 1fr }
 }
@@ -570,6 +593,7 @@ dialog::backdrop { overflow: hidden; overscroll-behavior: contain; background: r
 /* The mission menu carries Audio and the manual, so the top bar drops them when space runs short. */
 @media (max-width: 899.98px) {
   .screen-mission .topbar .optional { display: none }
+  .debrief-grid, .debrief-intel { grid-template-columns: 1fr }
 }
 @media (max-width: 1000px) and (max-height: 760px) {
   .comms li:nth-last-child(n+3) { display: none }

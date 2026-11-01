@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyDismiss, applyPurchase, applyRecruit, baseTier, clampCampaign, completeMission, contractPayout, dealBoard, freshCampaign, MIN_MISSION_MS, OPENING_CONTRACTS, RECRUIT_COST, ROSTER_CAP, SILENT_CLASSES, squadRating, startMission, threatFor } from '../src/game/campaign.ts';
+import { applyDismiss, applyPurchase, applyRecruit, baseTier, clampCampaign, completeMission, contractPayout, dealBoard, freshCampaign, MAX_TIER, MIN_MISSION_MS, nextUnlock, OPENING_CONTRACTS, RECRUIT_COST, ROSTER_CAP, SILENT_CLASSES, squadRating, startMission, threatFor, topTier } from '../src/game/campaign.ts';
 import type { Ledger } from '../src/game/campaign.ts';
 import { mulberry32 } from '../src/game/rng.ts';
 import { formatSaveCode, generateSaveCode, normalizeSaveCode } from '../src/game/saveCode.ts';
@@ -45,6 +45,15 @@ test('offers bracket the base tier, which rises with completed contracts', () =>
   assert.equal(new Set(veteran.offers.map(o => o.type)).size, 3);
   assert.equal(contractPayout(5), 1500);
   assert.deepEqual(clampCampaign({ completed: 40 }, rng).offers.map(o => o.tier), [3, 4, 5]);
+});
+
+test('the next tier unlock counts the contracts left and stops at the top tier', () => {
+  assert.deepEqual([0, 1, 2, 4, 6, 9].map(topTier), [2, 2, 3, 4, 5, 5]);
+  assert.deepEqual(nextUnlock(0), { tier: 3, after: 2, progress: 0 });
+  assert.deepEqual(nextUnlock(1), { tier: 3, after: 1, progress: .5 });
+  assert.deepEqual(nextUnlock(5), { tier: 5, after: 1, progress: .5 });
+  for (let c = 0; c < 6; c++) { const n = nextUnlock(c)!; assert.equal(topTier(c + n.after), n.tier); assert.equal(topTier(c + n.after - 1), n.tier - 1); }
+  assert.equal(topTier(6), MAX_TIER); assert.equal(nextUnlock(6), null);
 });
 
 test('recruiting costs credits, respects the cap, and dismissal keeps one operative', () => {
