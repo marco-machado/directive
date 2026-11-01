@@ -83,12 +83,16 @@ export class World {
     return best;
   }
 
-  findPath(from: Point, to: Point): Point[] {
+  // `avoid` marks ground the route must keep off (a hostile's vision cone); the goal's own node is exempt.
+  findPath(from: Point, to: Point, avoid?: (p: Point) => boolean): Point[] {
     if (!this.walkable(to)) return [];
-    if (this.passable(from, to, .4)) return [to];
+    const clear = (a: Point, b: Point) => !avoid || this.sample(a, b, p => !avoid(p));
+    if (this.passable(from, to, .4) && clear(from, to)) return [to];
     const start = this.nearestNode(from), goal = this.nearestNode(to);
     if (start < 0 || goal < 0) return [];
     const goalPoint = this.point(goal);
+    const banned = new Int8Array(avoid ? this.open.length : 0).fill(-1);
+    const off = (j: number) => { if (!avoid || j === goal) return false; if (banned[j] < 0) banned[j] = avoid(this.point(j)) ? 1 : 0; return banned[j] === 1; };
     const cost = new Float32Array(this.open.length).fill(Infinity);
     const came = new Int32Array(this.open.length).fill(-1);
     const closed = new Uint8Array(this.open.length);
@@ -117,26 +121,26 @@ export class World {
       if (i === goal) {
         const path: Point[] = [to];
         for (let k = goal; k >= 0; k = came[k]) path.unshift(this.point(k));
-        return this.smooth(from, path);
+        return this.smooth(from, path, clear);
       }
       closed[i] = 1;
       const p = this.point(i);
       DIRS.forEach(([dx, dz], d) => {
         if (!(this.edges[i] & (1 << d))) return;
         const j = i + dz * this.cols + dx, next = cost[i] + Math.hypot(dx, dz);
-        if (closed[j] || next >= cost[j]) return;
+        if (closed[j] || next >= cost[j] || off(j)) return;
         cost[j] = next; came[j] = i; push(j, next + distance({ x: p.x + dx, z: p.z + dz }, goalPoint));
       });
     }
     return [];
   }
   // Drops waypoints that a straight walk can skip, so units do not zigzag along the grid.
-  private smooth(from: Point, path: Point[]): Point[] {
+  private smooth(from: Point, path: Point[], clear: (a: Point, b: Point) => boolean): Point[] {
     const out: Point[] = [];
     let anchor = from;
     for (let i = 0; i < path.length; i++) {
       const next = path[i + 1];
-      if (next && this.passable(anchor, next, .4)) continue;
+      if (next && this.passable(anchor, next, .4) && clear(anchor, next)) continue;
       out.push(path[i]); anchor = path[i];
     }
     return out;

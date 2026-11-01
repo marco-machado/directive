@@ -12,7 +12,7 @@ const CONTROLS: [ReactNode, string][] = [
   [<><kbd>Shift</kbd> + <kbd>1</kbd>–<kbd>4</kbd></>, "Use that operative's ability; aimed abilities then need a target on the map"],
   [<><kbd>Esc</kbd></>, 'Cancel an ability; otherwise pause'],
   ['Click street', 'Move around buildings'],
-  ['Click hostile', 'Approach and concentrate fire'],
+  ['Click hostile', 'Take an unaware hostile down up close, or fire a volley; hover to preview'],
   ['Click a downed operative', 'The nearest selected teammate revives them'],
   [<><kbd>S</kbd></>, 'Hold position'],
   [<><kbd>Space</kbd></>, 'Pause and queue orders'],
@@ -22,8 +22,9 @@ const CONTROLS: [ReactNode, string][] = [
   [<><kbd>R</kbd></>, 'Recenter the view'],
 ];
 const RULES: [IconName, string][] = [
-  ['eye', 'Before the alarm, the squad only fires at targets you order.'],
-  ['camera', 'Hostiles and cameras see in vision cones. Stay in one too long and the alarm sounds.'],
+  ['eye', 'Before the alarm, the squad only fires at targets you order, and operatives on one target fire together once all can hit.'],
+  ['guard', 'Ordered onto an unaware guard the volley would not kill, the nearest operative circles out of its sight and takes it down in 1.5 s. A heavy needs two. Another hostile seeing it raises the alarm.'],
+  ['camera', 'Hostiles and cameras see in vision cones. Stay in one too long and the alarm sounds. Posted guards glance aside every few seconds.'],
   ['snipe', 'Sniper shots are silent. Grenades are loud and raise the alarm at once. A hostile that survives a hit raises it too.'],
   ['flag', 'Extraction counts only when every operative, downed ones included, is in the zone. Revive the fallen first.'],
   ['alert', `After the alarm, reinforcements arrive every ${REINFORCE_SECONDS} s. Stay out of every hostile's sight and range for ${CALM_SECONDS} s and it stands down.`],

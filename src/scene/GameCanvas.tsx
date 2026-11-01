@@ -11,6 +11,7 @@ import { setAudioCamera } from '../ui/audio.ts';
 import { City } from './city.tsx';
 import { dragged, trackDrags } from './drag.ts';
 import { Effects, Targeting } from './effects.tsx';
+import { AttackHint } from './hint.tsx';
 import type { Pointer } from './effects.tsx';
 import { Objectives } from './objectives.tsx';
 import { Pointers } from './pointers.tsx';
@@ -80,20 +81,21 @@ function World({ sim, reset, layout, attract, frame, labels }: Props & { labels:
   const pointer = useRef<Pointer>({ x: 0, z: 0, on: false }), insets = useRef<Insets>({ l: 0, t: 0, r: 0, b: 0 }), gl = useThree(s => s.gl);
   // The canvas cursor: a crosshair while aiming, a hand over any unit a click would act on.
   // Re-picked every frame, since units walk under a resting pointer and hostiles drop out of sight.
-  const hitboxes = useRef<Hitboxes>(new Map()).current, inside = useRef(false), cursor = useRef('');
+  const hitboxes = useRef<Hitboxes>(new Map()).current, inside = useRef(false), cursor = useRef(''), hovered = useRef<string | null>(null);
   useEffect(() => {
     const el = gl.domElement, enter = () => { inside.current = true; }, leave = () => { inside.current = false; };
     el.addEventListener('pointerenter', enter); el.addEventListener('pointerleave', leave);
     return () => { el.removeEventListener('pointerenter', enter); el.removeEventListener('pointerleave', leave); };
   }, [gl]);
   useFrame(({ raycaster, pointer: ndc, camera }) => {
-    let next = '';
+    let next = '', over: string | null = null;
     if (sim.pending) next = 'crosshair';
     else if (inside.current && hitboxes.size) {
       raycaster.setFromCamera(ndc, camera);
       const hit = raycaster.intersectObjects([...hitboxes.keys()], false).find(h => clickable(sim, sim.units.find(u => u.id === hitboxes.get(h.object as Mesh))));
-      if (hit) next = 'pointer';
+      if (hit) { next = 'pointer'; over = hitboxes.get(hit.object as Mesh) ?? null; }
     }
+    hovered.current = over;
     if (next !== cursor.current) gl.domElement.style.cursor = cursor.current = next;
   });
   return <>
@@ -114,6 +116,7 @@ function World({ sim, reset, layout, attract, frame, labels }: Props & { labels:
       <Units sim={sim} units={state.units} selected={state.selected} squad={state.squad} live={state.phase === 'mission'} labels={labels} hitboxes={hitboxes} />
       <Effects sim={sim} />
       <Pointers sim={sim} labels={labels} insets={insets} />
+      <AttackHint sim={sim} labels={labels} hovered={hovered} />
       {pending ? <Targeting key={`${pending.unitId}:${pending.ability}`} sim={sim} pending={pending} pointer={pointer} /> : null}
     </> : null}
   </>;

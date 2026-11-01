@@ -95,7 +95,7 @@ export function Hud({ state, onRecenter }: { state: Snapshot; onRecenter: () => 
         <button className="cmd" onClick={sim.selectAll} aria-keyshortcuts="A"><Icon name="squad" /><span>All</span><kbd>A</kbd></button>
         <button className="cmd" onClick={onRecenter} aria-keyshortcuts="R" aria-label="Recenter view"><Icon name="recenter" /><span>View</span><kbd>R</kbd></button>
       </div>
-      {state.campaign.completed ? null : <p className="controls-hint" aria-hidden="true">Click street: move · click hostile: attack · <kbd>1</kbd>–<kbd>4</kbd> select · <kbd>Shift</kbd>+<kbd>1</kbd>–<kbd>4</kbd> ability · <kbd>Space</kbd> pause</p>}
+      {state.campaign.completed ? null : <p className="controls-hint" aria-hidden="true">Click street: move · click hostile: takedown or volley · <kbd>1</kbd>–<kbd>4</kbd> select · <kbd>Shift</kbd>+<kbd>1</kbd>–<kbd>4</kbd> ability · <kbd>Space</kbd> pause</p>}
     </footer>
   </>;
 }

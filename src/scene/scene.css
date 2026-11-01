@@ -15,3 +15,8 @@
 .pointer-arrow { position: absolute; left: -18px; top: -18px; width: 36px; height: 36px }
 .pointer-arrow::before { content: ''; position: absolute; right: -4px; top: 50%; margin-top: -6px; border: 6px solid transparent; border-left: 10px solid var(--c); filter: drop-shadow(0 0 4px var(--c)) }
 .pointer-label { position: absolute; top: 14px; left: 0; padding: 1px 5px; background: rgb(3 8 10 / .86); white-space: nowrap; font: 700 10px var(--f-ui); letter-spacing: .16em; color: var(--c); transform: translateX(-50%) }
+/* Attack hint over a hovered hostile, positioned by scene/hint.tsx. */
+.attack-hint { --c: #ffb454; position: absolute; left: 0; top: 0; padding: 2px 7px; border: 1px solid var(--c); border-left-width: 3px; background: rgb(3 10 10 / .88); white-space: nowrap; font: 700 11px/1.2 var(--f-ui); letter-spacing: .08em; color: #f2efe4 }
+.attack-hint[hidden] { display: none }
+.attack-hint[data-tone=quiet] { --c: #5ef2c0; color: #c9fbe8 }
+.attack-hint[data-tone=loud] { --c: #ff5148; color: #ffd0c8 }
