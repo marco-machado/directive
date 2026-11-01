@@ -58,6 +58,17 @@ const horizon = (bounds: { value: Vector4 }): Step => shader => {
 }`);
 };
 
+// Direct highlights stop at GLINT, keeping their hue, so a lit surface never reaches the bloom threshold
+// (BLOOM.threshold, bloom.tsx). Without it, a camera orbited onto the moon's mirror direction catches the moon
+// in every wet patch of asphalt and every puddle, and the bloom pass smears the glints over the whole frame.
+const GLINT = .45;
+const glintCap: Step = shader => {
+  after(shader, 'fragmentShader', 'lights_fragment_end', `{
+  vec3 s = reflectedLight.directSpecular;
+  reflectedLight.directSpecular = s * min(1., ${GLINT.toFixed(2)} / max(max(s.r, max(s.g, s.b)), 1e-4));
+}`);
+};
+
 // Roughness and metalness per instance, so one instanced mesh carries every solid material role.
 const surface: Step = shader => {
   after(shader, 'fragmentShader', 'roughnessmap_fragment', 'roughnessFactor = vNdData.x;');
@@ -165,16 +176,16 @@ const signRect: Step = shader => {
 export type DistrictMaterials = ReturnType<typeof districtMaterials>;
 export function districtMaterials(atlas: Texture, signs: Texture, pool: Texture, puddle: Texture, environment: Texture) {
   const bounds = { value: new Vector4() };
-  const lit = (key: string, ...steps: Step[]) => program(new MeshStandardMaterial({ envMap: environment, envMapIntensity: .35 }), key, fade, data, world, surface, horizon(bounds), ...steps);
+  const lit = (key: string, ...steps: Step[]) => program(new MeshStandardMaterial({ envMap: environment, envMapIntensity: .35 }), key, fade, data, world, surface, horizon(bounds), glintCap, ...steps);
   const materials = {
     bounds,
     solid: lit('nd-solid'),
-    facade: program(new MeshStandardMaterial({ roughness: .82, metalness: .05, envMap: environment, envMapIntensity: .3 }), 'nd-facade', fade, data, world, horizon(bounds), facade(atlas, { window: 1.7, store: 1.7 })),
+    facade: program(new MeshStandardMaterial({ roughness: .82, metalness: .05, envMap: environment, envMapIntensity: .3 }), 'nd-facade', fade, data, world, horizon(bounds), glintCap, facade(atlas, { window: 1.7, store: 1.7 })),
     neon: program(new MeshBasicMaterial(), 'nd-neon', fade, world, horizon(bounds)),
     signs: program(new MeshBasicMaterial({ map: signs }), 'nd-signs', fade, data, world, horizon(bounds), signRect),
     pools: program(new MeshBasicMaterial({ map: pool, transparent: true, depthWrite: false, blending: AdditiveBlending }), 'nd-pools', world, horizon(bounds)),
-    puddles: program(new MeshStandardMaterial({ alphaMap: puddle, transparent: true, depthWrite: false, roughness: .12, metalness: 1, envMap: environment, envMapIntensity: 2.4, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }), 'nd-puddles', world, horizon(bounds), wetReflection),
-    ground: program(new MeshStandardMaterial({ color: '#3b424c', roughness: .9, metalness: 0, envMap: environment, envMapIntensity: .3 }), 'nd-ground', world, horizon(bounds), asphalt(atlas)),
+    puddles: program(new MeshStandardMaterial({ alphaMap: puddle, transparent: true, depthWrite: false, roughness: .12, metalness: 1, envMap: environment, envMapIntensity: 2.4, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }), 'nd-puddles', world, horizon(bounds), glintCap, wetReflection),
+    ground: program(new MeshStandardMaterial({ color: '#3b424c', roughness: .9, metalness: 0, envMap: environment, envMapIntensity: .3 }), 'nd-ground', world, horizon(bounds), glintCap, asphalt(atlas)),
   };
   return materials;
 }
