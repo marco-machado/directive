@@ -418,6 +418,7 @@ export class Simulation {
   }
   hold = () => {
     this.orderable().forEach(u => { u.path = []; this.clearOrders(u); });
+    this.commandPoint = null;
     this.message = this.alarm ? 'Holding position. Weapons free.' : 'Holding position. Holding fire.'; this.emit();
   };
   ability(slot: number) {

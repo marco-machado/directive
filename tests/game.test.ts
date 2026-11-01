@@ -840,6 +840,15 @@ test('a point nobody can reach is refused and leaves every order alone', () => {
   for (const u of squad) assert.deepEqual(u.path, [{ x: -10, z: -10 }]);
 });
 
+test('holding position stops the squad and clears the move destination', () => {
+  const { sim, squad } = streets([]);
+  sim.move({ x: 10, z: 10 });
+  assert.ok(sim.commandPoint);
+  sim.hold();
+  assert.equal(sim.commandPoint, null);
+  for (const u of squad) assert.deepEqual(u.path, []);
+});
+
 test('a click on the VIP sends the squad to where the VIP stood', () => {
   const { sim, squad } = streets(ALLEY, 'escort');
   const vip = sim.units.find(u => u.faction === 'vip')!; vip.x = 0; vip.z = 8;
