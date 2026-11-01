@@ -12,7 +12,8 @@ import { kickCamera } from './kick.ts';
 // Combat effects, driven by the simulation's shots, blasts and unit hp. Every effect lives in a fixed pool that
 // recycles its oldest entry, and every pool draws as one instanced batch, so a firefight adds seven draw calls
 // however busy it gets: beams (tracers and EMP arcs), sparks, flashes, smoke, debris, ground rings and decals.
-// Ages run on mission time (Simulation.time), so effects freeze with the pause.
+// Ages run on mission time (Simulation.time), so effects freeze with the pause. A new plan, or the clock running
+// back (a restart keeps the plan and rewinds time), starts a new attempt and clears every pool.
 
 const gunfire = (shot: Shot): Cue => shot.kind === 'snipe' ? 'snipe' : shot.shooter === 'turret' ? 'turretShot' : shot.faction === 'squad' ? 'shot' : 'hostileShot';
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
@@ -270,8 +271,9 @@ class CombatFx {
   }
 
   frame(sim: Simulation, width: number, height: number) {
-    if (sim.plan !== this.plan) { this.plan = sim.plan; this.clear(); }
-    const now = sim.time, dt = Math.min(.05, Math.max(0, now - this.last));
+    const now = sim.time;
+    if (sim.plan !== this.plan || now < this.last) { this.plan = sim.plan; this.clear(); }
+    const dt = Math.min(.05, Math.max(0, now - this.last));
     this.last = now;
     this.root.visible = sim.phase === 'mission';
     resolution.value.set(width, height);

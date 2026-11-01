@@ -276,7 +276,8 @@ function Agent({ sim, unit, selected, slot, tagged, labels, hitboxes }: { sim: S
   const bar = useRef<Group>(null), fill = useRef<Mesh>(null);
   const stun = useRef<Group>(null), mark = useRef<Mesh>(null), revive = useRef<Group>(null), hold = useRef<Group>(null), lit = useRef<Group>(null), disc = useRef<Mesh>(null);
   // Combat state, kept in mission time: when the last hit landed and when the unit went down (-Infinity: before this view saw it).
-  const combat = useRef({ plan: null as Simulation['plan'], hp: 0, hitAt: -Infinity, downAt: null as number | null, look: 'normal' as Look, base: new Map<Mesh, Material>(), dead: new Map<Material, MeshStandardMaterial>() }).current;
+  // It resets for a new plan or when the clock runs back, since a restart keeps the plan and rewinds time.
+  const combat = useRef({ plan: null as Simulation['plan'], time: 0, hp: 0, hitAt: -Infinity, downAt: null as number | null, look: 'normal' as Look, base: new Map<Mesh, Material>(), dead: new Map<Material, MeshStandardMaterial>() }).current;
   useEffect(() => () => combat.dead.forEach(m => m.dispose()), [combat]);
   const downed = faction === 'squad' && unit.hp <= 0, top = TOP[kind], hitbox = HITBOX[kind];
   const register = useCallback((mesh: Mesh) => { hitboxes.set(mesh, id); return () => { hitboxes.delete(mesh); }; }, [hitboxes, id]);
@@ -286,7 +287,7 @@ function Agent({ sim, unit, selected, slot, tagged, labels, hitboxes }: { sim: S
   useFrame(({ clock, camera }) => {
     const u = sim.units.find(v => v.id === id);
     if (!root.current || !model.current || !pose.current) return;
-    if (u && combat.plan !== sim.plan) {
+    if (u && (combat.plan !== sim.plan || sim.time < combat.time)) {
       combat.plan = sim.plan; combat.hp = u.hp; combat.hitAt = -Infinity; combat.downAt = u.hp > 0 ? null : -Infinity;
       combat.dead.forEach(m => m.dispose()); combat.dead.clear();
       if (lit.current && combat.look !== 'normal') dress(lit.current, combat.look = 'normal', combat.base, combat.dead);
@@ -295,7 +296,7 @@ function Agent({ sim, unit, selected, slot, tagged, labels, hitboxes }: { sim: S
       if (u.hp < combat.hp) combat.hitAt = sim.time;
       if (u.hp <= 0 && combat.downAt === null) combat.downAt = sim.time;
       if (u.hp > 0) combat.downAt = null;
-      combat.hp = u.hp;
+      combat.hp = u.hp; combat.time = sim.time;
     }
     const downFor = combat.downAt === null ? -1 : sim.time - combat.downAt, dead = !!u && u.faction === 'hostile' && u.hp <= 0;
     const gone = dead && (combat.downAt === -Infinity || HUMAN(kind) && downFor >= FADE_AFTER + FADE_SECONDS);

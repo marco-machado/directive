@@ -7,6 +7,7 @@ let start = Infinity, strength = 0;
 export function kickCamera(at: number, px: number) { if (!STILL) { start = at; strength = px; } }
 export function cameraKick(now: number): [number, number] | null {
   const t = now - start;
+  if (t < 0) start = Infinity; // the clock ran back: a restart drops the kick
   if (t < 0 || t > KICK_SECONDS) return null;
   const k = strength * (1 - t / KICK_SECONDS) ** 2;
   return [Math.sin(t * 95) * k, Math.cos(t * 71) * k * .7];
