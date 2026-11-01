@@ -3,7 +3,7 @@ import type { AbilityId, ClassId } from './classes.ts';
 import { applyDismiss, applyPayout, applyPurchase, applyRecruit, dealBoard, freshCampaign, missionPayout, SQUAD_MAX } from './campaign.ts';
 import type { Campaign, Contract, Upgrade } from './campaign.ts';
 import { planMission } from './mapgen.ts';
-import type { EnemyKind, MissionPlan } from './mapgen.ts';
+import type { Area, EnemyKind, MissionPlan } from './mapgen.ts';
 import { mulberry32 } from './rng.ts';
 import type { Rng } from './rng.ts';
 import { distance } from './world.ts';
@@ -23,6 +23,8 @@ export type Unit = Point & {
   // A posted guard's look-around: seconds into the current cycle, that cycle's length, and its count.
   look: number; lookEvery: number; lookCycle: number;
 };
+// Where a hostile was, and which way it faced, when the squad lost sight of it (`at` is mission time).
+export type Sighting = Point & { heading: number; at: number };
 export type Shot = { id: number; from: Point; to: Point; faction: Faction; shooter: UnitKind; kind: 'bullet' | 'snipe'; ttl: number };
 export type Blast = { id: number; kind: 'grenade' | 'heal' | 'emp'; x: number; z: number; radius: number; ttl: number };
 export type Objective = Point & { kind: 'target' | 'terminal' | 'charge' | 'vip' | 'extract'; label: string; progress: number; done: boolean };
@@ -42,21 +44,26 @@ export type CampaignSync = {
 
 export type HostileStats = { name: string; hp: number; damage: number; range: number; fireCooldown: number; speed: number; alertSpeed: number; vision: number; fov: number };
 export const HOSTILE_STATS: Record<EnemyKind, HostileStats> = {
-  guard: { name: 'SECURITY', hp: 75, damage: 10, range: 5.5, fireCooldown: 1.25, speed: 1.8, alertSpeed: 3, vision: 7, fov: .87 },
+  guard: { name: 'SECURITY', hp: 75, damage: 14, range: 5.5, fireCooldown: 1.25, speed: 1.8, alertSpeed: 3, vision: 7, fov: .87 },
   heavy: { name: 'HEAVY', hp: 180, damage: 16, range: 5, fireCooldown: 1.4, speed: 1.5, alertSpeed: 2.2, vision: 6, fov: .87 },
   camera: { name: 'CAMERA', hp: 40, damage: 0, range: 0, fireCooldown: 0, speed: 0, alertSpeed: 0, vision: 8, fov: .61 },
   turret: { name: 'TURRET', hp: 140, damage: 18, range: 7, fireCooldown: 1.1, speed: 0, alertSpeed: 0, vision: 7, fov: .79 },
   target: { name: 'TARGET', hp: 110, damage: 0, range: 0, fireCooldown: 0, speed: 0, alertSpeed: 1.8, vision: 6, fov: .87 },
 };
-// Each tier above the first makes hostiles 10% tougher and 15% deadlier.
-export const tierHp = (tier: number) => 1 + .1 * (tier - 1);
-export const tierDamage = (tier: number) => 1 + .15 * (tier - 1);
+// Hostiles grow 5% tougher and 4% deadlier per tier up to tier 3, then a further 10% and 15% per tier.
+export const tierHp = (tier: number) => 1 + .05 * (tier - 1) + .1 * Math.max(0, tier - 3);
+export const tierDamage = (tier: number) => 1 + .04 * (tier - 1) + .15 * Math.max(0, tier - 3);
 export const SQUAD_SPEED = 3.4;
 export const VIP_SPEED = 3.2;
 export const VIP_HP = 160;
+export const VIP_REACH = 3;           // an operative this close to the VIP
+export const VIP_SECURE_SECONDS = 5; // takes this long to free them
+export const VIP_DAMAGE_TAKEN = .5; // the VIP wears body armor: hostile fire does half damage
+export const VIP_COVER_REACH = 4;   // under fire, the VIP ducks behind cover this close to its operative
 export const FLEE_DELAY = 5;        // the target hesitates before running for an exit
 export const FLEE_MIN_EXIT = 16;    // and picks an exit at least this far away
 export const SIGHT_RANGE = 10;      // fog of war: hostiles beyond this or behind buildings are hidden
+export const GHOST_SECONDS = 12;    // a hostile that drops out of sight leaves a last-seen marker this long
 export const CONVERGE_RADIUS = 14;  // guards this close to the alarm hunt the squad
 export const SUSPICIOUS = .3;       // detection above this makes a guard stop and stare
 // Detection fills in DETECT_BASE + DETECT_PER_METER × distance seconds: 1.5 s at 2 m, 4 s at a guard's full 7 m.
@@ -65,7 +72,8 @@ export const DETECT_PER_METER = .5;
 export const CAMERA_DETECT = .75;   // a camera fills in this share of a guard's time at the same distance
 export const DETECT_DRAIN = .25;    // per second, with nobody in sight
 export const detectSeconds = (kind: EnemyKind, d: number) => (DETECT_BASE + DETECT_PER_METER * d) * (kind === 'camera' ? CAMERA_DETECT : 1);
-export const REINFORCE_SECONDS = 20;
+export const FIRST_WAVE_SECONDS = 5; // the first reinforcement wave follows the alarm this quickly
+export const REINFORCE_SECONDS = 20; // and later waves this far apart
 export const CALM_SECONDS = 25;     // the alarm stands down after this long without contact
 export const SEARCH_TURN = 1.5;     // a hunter at the last known position turns this fast (rad/s)
 export const REINFORCE_CAP = 8;
@@ -122,6 +130,8 @@ export class Simulation {
   blasts: Blast[] = [];
   objectives: Objective[] = [];
   plan: MissionPlan | null = null;
+  // Where the squad last knew the target to be: the briefing's intel, then wherever the target was last seen.
+  targetArea: Area | null = null;
   contract: Contract | null = null;
   alarm = false;
   detected = false; // stays set once the alarm has sounded, even after it stands down
@@ -137,8 +147,13 @@ export class Simulation {
   commandPoint: Point | null = null;
   pending: Pending = null;
   autoPause = false; // pause the first time each hostile turns suspicious
+  // Fog-of-war memory, by hostile id: the last sighting of each hostile now out of sight, and the full patrol
+  // route of each guard the squad has watched finish a leg. Both are replaced with each mission.
+  lastSeen = new Map<string, Sighting>();
+  intel = new Map<string, Point[]>();
   private reinforced = 0;
   private vipJoined = false;
+  private vipThreat: Point | null = null; // where the last shot at the VIP came from
   private lastKnown: Point | null = null;
   private holdup = '';
   private casts: { unitId: string; ability: AbilityId; point: Point; targetId: string | null }[] = [];
@@ -221,8 +236,9 @@ export class Simulation {
   private resetUnits() {
     const plan = this.plan;
     this.units = []; this.objectives = []; this.shots = []; this.blasts = []; this.casts = []; this.hitThisFrame.clear(); this.volleyReady.clear(); this.autoPaused.clear();
-    this.alarm = false; this.detected = false; this.calmIn = 0; this.lastKnown = null;
-    this.reinforceIn = 0; this.reinforced = 0; this.vipJoined = false; this.holdup = ''; this.pending = null; this.commandPoint = null;
+    this.alarm = false; this.detected = false; this.calmIn = 0; this.lastKnown = null; this.lastSeen = new Map(); this.intel = new Map();
+    this.reinforceIn = 0; this.reinforced = 0; this.vipJoined = false; this.vipThreat = null; this.holdup = ''; this.pending = null; this.commandPoint = null;
+    this.targetArea = plan?.targetArea ? { ...plan.targetArea } : null;
     if (!plan) { this.squad = []; this.selected = []; return; }
     this.rng = mulberry32(plan.contract.seed ^ 0x5bd1e995);
     this.squad = this.squadPick.filter(id => this.campaign.roster.some(o => o.id === id));
@@ -243,7 +259,7 @@ export class Simulation {
     if (t === 'assassination' && target) this.objectives.push(o('target', 'Neutralize the target', target));
     if (t === 'heist') this.objectives.push(o('terminal', 'Download the vault data', plan.sites[0]));
     if (t === 'sabotage') plan.sites.forEach((s, i) => this.objectives.push(o('charge', `Plant charge ${'AB'[i]}`, s)));
-    if (t === 'escort' && plan.vip) this.objectives.push(o('vip', 'Reach the VIP', plan.vip));
+    if (t === 'escort' && plan.vip) this.objectives.push(o('vip', 'Free the VIP', plan.vip));
     this.objectives.push(o('extract', t === 'escort' ? 'Escort the VIP and the whole squad to extraction' : 'Get the whole squad to extraction', plan.extract));
     this.updateVisibility();
   }
@@ -440,7 +456,7 @@ export class Simulation {
     // A fresh trigger during the alarm only restarts the stand-down countdown.
     this.contact(null);
     if (this.alarm) return;
-    this.alarm = true; this.detected = true; this.reinforceIn = REINFORCE_SECONDS; this.calmIn = CALM_SECONDS;
+    this.alarm = true; this.detected = true; this.reinforceIn = this.reinforced ? REINFORCE_SECONDS : FIRST_WAVE_SECONDS; this.calmIn = CALM_SECONDS;
     const known = seen ?? at; this.lastKnown = { x: known.x, z: known.z };
     for (const u of this.units) {
       if (u.faction !== 'hostile' || u.hp <= 0) continue;
@@ -477,6 +493,7 @@ export class Simulation {
   private damage(target: Unit, amount: number, from: Point | null) {
     if (target.hp <= 0) return;
     const covered = from && this.plan?.world.coverBetween(from, target);
+    if (target.faction === 'vip') { amount *= VIP_DAMAGE_TAKEN; if (from) this.vipThreat = { x: from.x, z: from.z }; }
     target.hp = Math.max(0, target.hp - amount * (covered ? COVER_FACTOR : 1));
     if (target.faction === 'hostile') this.hitThisFrame.add(target);
     else {
@@ -538,8 +555,13 @@ export class Simulation {
     const eyes = this.units.filter(u => u.faction === 'squad' && u.hp > 0), world = this.plan?.world;
     for (const u of this.units) {
       if (u.faction !== 'hostile') { u.visible = true; continue; }
+      const was = u.visible;
       u.visible = u.marked > 0 || (!!world && eyes.some(e => distance(e, u) <= SIGHT_RANGE && world.sightClear(e, u)));
+      if (u.kind === 'target' && u.visible && u.hp > 0 && this.targetArea) { this.targetArea.x = u.x; this.targetArea.z = u.z; }
+      if (u.visible || u.hp <= 0) this.lastSeen.delete(u.id);
+      else if (was) this.lastSeen.set(u.id, { x: u.x, z: u.z, heading: u.heading, at: this.time });
     }
+    for (const [id, s] of this.lastSeen) if (this.time - s.at >= GHOST_SECONDS) this.lastSeen.delete(id);
   }
 
   private updateHostile(u: Unit, dt: number, intruders: Unit[]) {
@@ -597,11 +619,20 @@ export class Simulation {
   private patrol(u: Unit, speed: number, dt: number) {
     if (u.patrol.length < 2) return this.lookAround(u, dt);
     if (!u.path.length) {
+      // Watching a guard stand at the end of a leg it just walked (its pause there is still running) gives away its whole route.
+      const end = u.patrol[u.patrolIndex];
+      if (u.visible && u.wait > 0 && u.x === end.x && u.z === end.z && !this.intel.has(u.id)) this.intel.set(u.id, this.route(u.patrol));
       if (u.wait > 0) { u.wait -= dt; return; }
       u.patrolIndex = (u.patrolIndex + 1) % u.patrol.length;
       u.path = this.plan!.world.findPath(u, u.patrol[u.patrolIndex]); u.wait = 1.2;
     }
     this.walk(u, speed, dt);
+  }
+  // The loop a patrol walks, leg by leg, as the paths the guard takes between its points.
+  private route(patrol: Point[]): Point[] {
+    const world = this.plan!.world, route = [{ x: patrol[0].x, z: patrol[0].z }];
+    patrol.forEach((p, i) => route.push(...world.findPath(p, patrol[(i + 1) % patrol.length])));
+    return route;
   }
 
   // A posted guard faces its post, and every 6 to 8 s turns 60° to one side (alternating), holds that look
@@ -721,16 +752,38 @@ export class Simulation {
     const leader = [...squad].sort((a, b) => distance(u, a) - distance(u, b))[0];
     if (!leader) return;
     if (!this.vipJoined) {
-      if (distance(u, leader) > 3) return;
+      const secure = this.objectives.find(o => o.kind === 'vip')!;
+      if (distance(u, leader) > VIP_REACH) return;
+      secure.progress = Math.min(1, secure.progress + dt / VIP_SECURE_SECONDS);
+      if (secure.progress < 1) return;
       this.vipJoined = true; this.message = 'VIP secured. Escort them to extraction.';
     }
-    // The VIP follows the nearest operative but freezes while under fire; at an open extraction it walks into the zone.
+    // The VIP follows the nearest operative; under fire it ducks behind cover near that operative instead.
+    // At an open extraction it walks into the zone.
     const extract = this.objectives.at(-1)!;
-    const goal = this.extractReady && distance(leader, extract) < 2 ? extract : leader;
-    if (u.hurt > 0 || distance(u, goal) <= (goal === leader ? 1.6 : .5)) { u.path = []; return; }
+    const shelter = u.hurt > 0 && this.vipThreat ? this.shelter(u, leader, this.vipThreat) : null;
+    const goal = this.extractReady && distance(leader, extract) < 2 ? extract : shelter ?? leader;
+    if (distance(u, goal) <= (goal === leader ? 1.6 : .3)) { u.path = []; return; }
     u.repath -= dt;
-    if (u.repath <= 0 || !u.path.length) { u.repath = .5; u.path = this.plan!.world.findPath(u, { x: goal.x, z: goal.z }); }
+    const end = u.path.at(-1);
+    if (u.repath <= 0 || !end || distance(end, goal) > 1) { u.repath = .5; u.path = this.plan!.world.findPath(u, { x: goal.x, z: goal.z }); }
     this.walk(u, VIP_SPEED, dt);
+  }
+  // The nearest spot behind a barrier, as seen from `threat`, within VIP_COVER_REACH of the operative.
+  private shelter(u: Unit, leader: Unit, threat: Point): Point | null {
+    const world = this.plan!.world;
+    let best: Point | null = null;
+    for (const r of world.cover) {
+      if (distance(r, leader) > VIP_COVER_REACH) continue;
+      const d = distance(r, threat) || 1;
+      for (const depth of [Math.min(r.w, r.d) / 2 + .45, Math.max(r.w, r.d) / 2 + .45]) {
+        const spot = { x: r.x + (r.x - threat.x) / d * depth, z: r.z + (r.z - threat.z) / d * depth };
+        if (!world.walkable(spot) || !world.coverBetween(threat, spot)) continue;
+        if (!best || distance(u, spot) < distance(u, best)) best = spot;
+        break;
+      }
+    }
+    return best;
   }
   private updateObjectives(dt: number, squad: Unit[]) {
     const vip = this.unit('vip');
@@ -762,7 +815,9 @@ export class Simulation {
     this.reinforceIn -= dt;
     if (this.reinforceIn > 0) return;
     this.reinforceIn = REINFORCE_SECONDS;
-    const exit = this.plan.exits[Math.floor(this.rng() * this.plan.exits.length)];
+    // The first wave flanks: it enters at the exit nearest extraction, between the squad and its way out.
+    const exits = this.plan.exits, extract = this.plan.extract;
+    const exit = this.reinforced ? exits[Math.floor(this.rng() * exits.length)] : exits.reduce((a, b) => distance(b, extract) < distance(a, extract) ? b : a);
     const count = Math.min(this.plan.contract.tier >= 4 ? 3 : 2, REINFORCE_CAP - this.reinforced);
     for (let k = 0; k < count; k++) {
       const u = this.makeUnit(`r${this.reinforced++}`, 'SECURITY', 'guard', 'hostile', { x: exit.x + (k - 1) * .6, z: exit.z }, Math.round(HOSTILE_STATS.guard.hp * tierHp(this.plan.contract.tier)));
