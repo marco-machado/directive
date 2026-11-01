@@ -5,7 +5,8 @@ export type Bounds = { minX: number; maxX: number; minZ: number; maxZ: number };
 
 export const distance = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.z - b.z);
 const inside = (p: Point, r: Rect, padding: number) => Math.abs(p.x - r.x) < r.w / 2 + padding && Math.abs(p.z - r.z) < r.d / 2 + padding;
-const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]] as const;
+const SIGHT_PAD = .05; // m around a building's footprint that already blocks sight
+const DIRS =[[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]] as const;
 
 // Buildings block movement and sight; low cover blocks movement only.
 export class World {
@@ -48,7 +49,28 @@ export class World {
   passable(a: Point, b: Point, padding = .1): boolean { return this.sample(a, b, p => this.walkable(p, padding)); }
   // Line of sight: only buildings block it.
   sightClear(a: Point, b: Point): boolean {
-    return this.sample(a, b, p => !this.buildings.some(r => inside(p, r, .05)));
+    return this.sample(a, b, p => !this.buildings.some(r => inside(p, r, SIGHT_PAD)));
+  }
+  // How far a ray from `from` along the unit vector (dx, dz) travels before it enters a building, up to `max`:
+  // a 2D slab test against each footprint, padded as in sightClear. Allocation-free, so it can run every frame.
+  sightDistance(from: Point, dx: number, dz: number, max: number): number {
+    let best = max;
+    for (const r of this.buildings) {
+      const hx = r.w / 2 + SIGHT_PAD, hz = r.d / 2 + SIGHT_PAD;
+      let near = 0, far = best;
+      if (dx === 0) { if (Math.abs(from.x - r.x) >= hx) continue; }
+      else {
+        const t1 = (r.x - hx - from.x) / dx, t2 = (r.x + hx - from.x) / dx;
+        near = Math.max(near, Math.min(t1, t2)); far = Math.min(far, Math.max(t1, t2));
+      }
+      if (dz === 0) { if (Math.abs(from.z - r.z) >= hz) continue; }
+      else {
+        const t1 = (r.z - hz - from.z) / dz, t2 = (r.z + hz - from.z) / dz;
+        near = Math.max(near, Math.min(t1, t2)); far = Math.min(far, Math.max(t1, t2));
+      }
+      if (near <= far) best = near;
+    }
+    return best;
   }
   private sample(a: Point, b: Point, ok: (p: Point) => boolean) {
     const steps = Math.ceil(distance(a, b) * 6);
