@@ -79,10 +79,55 @@ function Extraction({ sim, o, labels }: Props) {
   </group>;
 }
 
+const TARGET_RED = '#ff6d5c', EXIT_RED = '#ff5148';
+const targetUnit = (sim: Simulation) => sim.units.find(u => u.kind === 'target');
+
+// The target's last known area while it is out of sight, a reticle on it once seen, and its exit once it runs.
+function Target({ sim, index, labels }: Props) {
+  const area = useRef<Group>(null), spin = useRef<Mesh>(null), reticle = useRef<Group>(null), exit = useRef<Group>(null);
+  const areaLabel = useRef<HTMLSpanElement>(null), exitLabel = useRef<HTMLSpanElement>(null);
+  const r = sim.targetArea?.r ?? 6;
+  const show = (el: HTMLElement | null, on: boolean) => { if (el && el.hidden === on) el.hidden = !on; };
+  useFrame(({ clock }) => {
+    const u = targetUnit(sim), live = open(sim, index)() && !!u && u.hp > 0, seen = live && sim.phase === 'mission' && !!u?.visible, a = sim.targetArea;
+    if (area.current) { area.current.visible = live && !seen && !!a; if (a) area.current.position.set(a.x, .05, a.z); }
+    if (spin.current) spin.current.rotation.z = STILL ? 0 : clock.elapsedTime * -.12;
+    show(areaLabel.current, live && !seen && !!a);
+    if (reticle.current) {
+      reticle.current.visible = seen;
+      if (u) reticle.current.position.set(u.x, .05, u.z);
+      reticle.current.rotation.y = STILL ? 0 : clock.elapsedTime * 1.2;
+    }
+    const to = live && sim.phase === 'mission' ? u?.exit : null;
+    if (exit.current) { exit.current.visible = !!to; if (to) exit.current.position.set(to.x, 0, to.z); }
+    show(exitLabel.current, !!to);
+  });
+  return <>
+    <group ref={area} visible={false}>
+      <mesh rotation={[-Math.PI / 2, 0, 0]}><ringGeometry args={[r - .09, r, 64]} /><meshBasicMaterial color={TARGET_RED} transparent opacity={.75} depthWrite={false} toneMapped={false} /></mesh>
+      <mesh ref={spin} rotation={[-Math.PI / 2, 0, 0]} position={[0, .005, 0]}><ringGeometry args={[r + .18, r + .3, 48, 1, 0, Math.PI / 6]} /><meshBasicMaterial color={TARGET_RED} transparent opacity={.55} depthWrite={false} toneMapped={false} /></mesh>
+      <mesh rotation={[-Math.PI / 2, 0, 0]}><circleGeometry args={[r, 64]} /><meshBasicMaterial color={TARGET_RED} transparent opacity={.06} depthWrite={false} /></mesh>
+      <Html portal={labels} center position={[0, .05, 0]} style={{ pointerEvents: 'none' }}><span ref={areaLabel} hidden className="objective-label target">TARGET AREA</span></Html>
+    </group>
+    <group ref={reticle} visible={false}>
+      <mesh rotation={[-Math.PI / 2, 0, 0]}><ringGeometry args={[.85, .95, 4, 1, Math.PI / 4]} /><meshBasicMaterial color={TARGET_RED} transparent opacity={.9} depthWrite={false} toneMapped={false} /></mesh>
+      <Beacon color={TARGET_RED} active={() => true} />
+    </group>
+    <group ref={exit} visible={false}>
+      <Box position={[0, 1.2, 0]} size={[.08, 2.4, .08]} color="#2a1f1e" />
+      <mesh position={[.48, 2.1, 0]}><planeGeometry args={[.95, .6]} /><meshBasicMaterial color={EXIT_RED} side={DoubleSide} toneMapped={false} /></mesh>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, .05, 0]}><ringGeometry args={[1, 1.08, 40]} /><meshBasicMaterial color={EXIT_RED} transparent opacity={.8} depthWrite={false} toneMapped={false} /></mesh>
+      <Beacon color={EXIT_RED} active={() => true} />
+      <Html portal={labels} center position={[0, .05, 1.6]} style={{ pointerEvents: 'none' }}><span ref={exitLabel} hidden className="objective-label exit">TARGET EXIT</span></Html>
+    </group>
+  </>;
+}
+
 export function Objectives({ sim, objectives, labels }: { sim: Simulation; objectives: Objective[]; labels: RefObject<HTMLDivElement> }) {
   let charges = 0;
   return <>{objectives.map((o, i) => {
     const key = `${o.kind}-${i}`, props = { sim, index: i, o, labels };
+    if (o.kind === 'target') return <Target key={key} {...props} />;
     if (o.kind === 'terminal') return <Terminal key={key} {...props} />;
     if (o.kind === 'charge') return <Charge key={key} {...props} letter={'AB'[charges++] ?? ''} />;
     if (o.kind === 'extract') return <Extraction key={key} {...props} />;

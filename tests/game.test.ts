@@ -5,7 +5,7 @@ import type { CampaignSync, Unit, Upgrade } from '../src/game/simulation.ts';
 import { contractPayout, freshCampaign, MAX_TIER } from '../src/game/campaign.ts';
 import type { Campaign, ContractType } from '../src/game/campaign.ts';
 import { abilityCooldown, CLASS_STATS } from '../src/game/classes.ts';
-import { mapSize, planMission } from '../src/game/mapgen.ts';
+import { mapSize, planMission, TARGET_AREA_OFFSET, TARGET_AREA_RADIUS } from '../src/game/mapgen.ts';
 import type { EnemyKind } from '../src/game/mapgen.ts';
 import { mulberry32 } from '../src/game/rng.ts';
 import { distance, World } from '../src/game/world.ts';
@@ -321,6 +321,28 @@ test('the escort VIP joins, follows, and its death fails the contract', () => {
   step(sim, 3); assert.ok(distance(vip, squad[0]) < 2.5, String(distance(vip, squad[0])));
   vip.hp = 0; sim.update(1 / 60);
   assert.equal(sim.result, 'failure'); assert.equal(sim.failReason, 'The VIP was killed.');
+});
+
+test('the last known area always contains the assassination target at spawn', () => {
+  for (let seed = 1; seed <= 300; seed++) {
+    const plan = planMission(contract('assassination', 1 + seed % MAX_TIER, seed)), target = plan.enemies.find(e => e.kind === 'target')!, area = plan.targetArea!;
+    assert.equal(area.r, TARGET_AREA_RADIUS);
+    assert.ok(distance(area, target) <= TARGET_AREA_OFFSET + 1e-9, `seed ${seed}: center ${distance(area, target).toFixed(2)} m from the target`);
+    assert.ok(distance(area, target) < area.r, `seed ${seed}: target outside its area`);
+    assert.deepEqual(planMission(contract('assassination', 1 + seed % MAX_TIER, seed)).targetArea, area);
+  }
+  assert.equal(planMission(contract('heist')).targetArea, null);
+});
+
+test('the target area recenters on where the target was last seen', () => {
+  const { sim, squad, hostile } = arena('assassination');
+  const target = hostile('target', 8, 0, Math.PI, 110);
+  target.visible = false; sim.targetArea = { x: -5, z: -5, r: TARGET_AREA_RADIUS };
+  sim.update(1 / 60);
+  assert.ok(target.visible); assert.deepEqual([sim.targetArea.x, sim.targetArea.z], [8, 0]);
+  squad.forEach(u => { u.x -= 15; });
+  sim.update(1 / 60);
+  assert.ok(!target.visible); assert.deepEqual([sim.targetArea.x, sim.targetArea.z], [8, 0]);
 });
 
 test('the assassination target flees on alarm and escaping fails', () => {
