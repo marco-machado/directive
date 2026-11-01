@@ -99,8 +99,9 @@ export class World {
   besideCover(p: Point): boolean { return this.cover.some(r => inside(p, r, 1.1)); }
   // A spot against the barrier nearest `p` (within `reach` of its edge) that shelters from `threat`, level with `p`
   // along the barrier's face, with `along` the face's direction. Of the faces that cover, the one nearest `p`;
-  // if none does, the face farthest from the threat. Null when no barrier is that close.
-  coverSpot(p: Point, threat: Point, reach = 1): { point: Point; along: Point; covered: boolean } | null {
+  // if none does, the face farthest from the threat. Null when no barrier is that close. On a covering face, `span`
+  // is how far the shelter runs either way along `along` from the spot (offsets in m, `lo` <= 0 <= `hi`).
+  coverSpot(p: Point, threat: Point, reach = 1): { point: Point; along: Point; covered: boolean; span: { lo: number; hi: number } | null } | null {
     let r: Rect | null = null, best = Infinity;
     for (const c of this.cover) { const d = edgeDistance(p, c); if (d <= reach && d < best) { r = c; best = d; } }
     if (!r) return null;
@@ -110,7 +111,14 @@ export class World {
       { point: { x: x + s * (w / 2 + COVER_GAP), z: clamp(p.z, z - d / 2 + .2, z + d / 2 - .2) }, along: { x: 0, z: 1 } },
     ]).filter(f => this.walkable(f.point)).map(f => ({ ...f, covered: this.coverBetween(threat, f.point) }));
     const covered = faces.filter(f => f.covered);
-    return (covered.length ? covered.sort((a, b) => distance(a.point, p) - distance(b.point, p)) : faces.sort((a, b) => distance(b.point, threat) - distance(a.point, threat)))[0] ?? null;
+    const face = (covered.length ? covered.sort((a, b) => distance(a.point, p) - distance(b.point, p)) : faces.sort((a, b) => distance(b.point, threat) - distance(a.point, threat)))[0];
+    if (!face) return null;
+    if (!face.covered) return { ...face, span: null };
+    const shelters = (k: number) => { const q = { x: face.point.x + face.along.x * k, z: face.point.z + face.along.z * k }; return this.walkable(q) && this.coverBetween(threat, q); };
+    let lo = 0, hi = 0;
+    while (lo > -3 && shelters(lo - .05)) lo -= .05;
+    while (hi < 3 && shelters(hi + .05)) hi += .05;
+    return { ...face, span: { lo, hi } };
   }
 
   private nearestNode(p: Point): number {

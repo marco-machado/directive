@@ -1003,3 +1003,14 @@ test('a posted guard opens a window on ground it otherwise watches', () => {
   for (let i = 0; i < 30 * 60; i++) { sim.update(1 / 60); total++; if (seen(guard.heading)) watched++; }
   assert.ok(watched > 0 && watched < total * .5, `${watched} / ${total}`);
 });
+
+test('a covered move order near the end of a barrier keeps the whole line behind it', () => {
+  const { sim, squad, hostile, raise } = alarmed('heist', FOUR);
+  withBarrier(sim);
+  squad.forEach((u, i) => { u.hp = u.maxHp = 1e6; u.x = -3 + 2 * i; u.z = 0; });
+  const guard = hostile('guard', 0, 0, 0, 1e6);
+  raise();
+  sim.selected = squad.map(u => u.id); sim.move({ x: .6, z: 4.6 });
+  step(sim, 8, () => squad.every(u => !u.path.length));
+  for (const u of squad) assert.ok(sim.plan!.world.coverBetween(guard, u), `${u.name} at ${u.x.toFixed(2)}, ${u.z.toFixed(2)} is exposed`);
+});

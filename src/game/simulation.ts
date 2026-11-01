@@ -33,7 +33,7 @@ export type Pending = { unitId: string; ability: AbilityId } | null;
 // 'covered' when every threat fires into the barrier the unit crouches behind, 'flanked' when one of them has a clear shot.
 export type Shield = 'covered' | 'flanked' | null;
 export type CoverStatus = { threats: { id: string; covered: boolean }[]; shield: Shield };
-export type CoverSnap = Point & { along: Point };
+export type CoverSnap = Point & { along: Point; span: { lo: number; hi: number } | null };
 export type Snapshot = {
   phase: Phase; paused: boolean; selected: string[]; squad: string[]; squadPick: string[]; units: Unit[]; campaign: Campaign;
   contract: Contract | null; plan: MissionPlan | null; objectives: Objective[]; alarm: boolean; calmIn: number; reinforceIn: number; reinforced: number;
@@ -299,14 +299,17 @@ export class Simulation {
   private orderable() { return this.selected.map(id => this.unit(id)).filter((u): u is Unit => !!u && u.hp > 0); }
   private clearOrders(u: Unit) { u.targetId = null; u.reviveTarget = null; u.revive = 0; u.takedownId = null; }
   // Operatives line up side by side; where the street is too narrow for that, they queue in single file.
-  // An order next to a barrier ends on its sheltered side (see coverSnap), the line running along the barrier.
+  // An order next to a barrier ends on its sheltered side (see coverSnap), the line running along the barrier and
+  // packed closer, if it has to, to stay within the stretch the barrier shelters.
   move(click: Point) {
     if (this.phase !== 'mission' || !this.plan) return;
-    const snap = this.coverSnap(click), along = snap?.along ?? { x: 1, z: 0 };
-    const world = this.plan.world, point = { x: snap?.x ?? click.x, z: snap?.z ?? click.z }, units = this.orderable();
+    const world = this.plan.world, units = this.orderable(), n = units.length;
+    const snap = this.coverSnap(click), point = { x: snap?.x ?? click.x, z: snap?.z ?? click.z }, along = snap?.along ?? { x: 1, z: 0 }, span = snap?.span;
+    const gap = span && n > 1 ? Math.min(QUEUE_SPACING, (span.hi - span.lo) / (n - 1)) : QUEUE_SPACING, half = gap * (n - 1) / 2;
+    const middle = span ? Math.min(Math.max(0, span.lo + half), span.hi - half) : 0;
     const line = units.map((u, i) => {
       // A formation slot off the map (extraction sits by the edge) falls back to the clicked point itself.
-      const k = (i - (units.length - 1) / 2) * QUEUE_SPACING, slot = { x: point.x + along.x * k, z: point.z + along.z * k }, path = world.findPath(u, slot);
+      const k = middle + (i - (n - 1) / 2) * gap, slot = { x: point.x + along.x * k, z: point.z + along.z * k }, path = world.findPath(u, slot);
       return path.length || world.inBounds(slot) ? path : world.findPath(u, point);
     });
     const orders = line.every(path => path.length) ? new Map(units.map((u, i) => [u, line[i]])) : this.queue(units, point);
@@ -804,7 +807,7 @@ export class Simulation {
     if (!known.length) for (const [id, s] of this.lastSeen) if (HOSTILE_STATS[this.unit(id)?.kind as EnemyKind]?.damage) known.push(s);
     const threat = known.sort((a, b) => distance(a, p) - distance(b, p))[0];
     const spot = threat && this.plan.world.coverSpot(p, threat);
-    return spot ? { ...spot.point, along: spot.along } : null;
+    return spot ? { ...spot.point, along: spot.along, span: spot.span } : null;
   }
   // The nearest spot behind a barrier, as seen from `threat`, within VIP_COVER_REACH of the operative.
   private shelter(u: Unit, leader: Unit, threat: Point): Point | null {
