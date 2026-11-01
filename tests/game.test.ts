@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Simulation, parseCampaign, CALM_SECONDS, COVER_FACTOR, HACK_SECONDS, QUEUE_SPACING, REINFORCE_CAP, REINFORCE_SECONDS, REVIVE_SECONDS } from '../src/game/simulation.ts';
+import { Simulation, parseCampaign, CALM_SECONDS, COVER_FACTOR, HACK_SECONDS, LOOK_ANGLE, LOOK_EVERY, LOOK_PAUSE, QUEUE_SPACING, REINFORCE_CAP, SUSPICIOUS, REINFORCE_SECONDS, REVIVE_SECONDS, TAKEDOWN_REACH, TAKEDOWN_SECONDS } from '../src/game/simulation.ts';
 import type { CampaignSync, Unit, Upgrade } from '../src/game/simulation.ts';
 import { contractPayout, freshCampaign, MAX_TIER } from '../src/game/campaign.ts';
 import type { Campaign, ContractType } from '../src/game/campaign.ts';
@@ -92,11 +92,11 @@ test('pause freezes the mission; queued movement resumes', () => {
 
 test('before the alarm the squad holds fire unless ordered', () => {
   const { sim, hostile } = arena();
-  const guard = hostile('guard', 4, 0, Math.PI); // facing away
+  const guard = hostile('guard', 4, 0, Math.PI / 2, 40); // facing straight away; the volley kills, so the order is to fire
   step(sim, 1);
-  assert.equal(guard.hp, 75); assert.equal(sim.alarm, false);
+  assert.equal(guard.hp, 40); assert.equal(sim.alarm, false);
   sim.attack(guard.id); step(sim, .2);
-  assert.ok(guard.hp < 75);
+  assert.ok(guard.hp < 40);
 });
 
 test('detection fills faster up close and raises the alarm', () => {
@@ -157,7 +157,7 @@ test('a single-frame volley that kills stays quiet; a grenade always raises the 
 
 test('cover halves incoming fire from the far side', () => {
   const { sim, squad, hostile } = arena();
-  const target = hostile('guard', 0, 6, 0, 500);
+  const target = hostile('turret', 0, 6, 0, 500); // a turret is never taken down
   sim.plan = { ...sim.plan!, world: new World(sim.plan!.world.bounds, [], [{ x: 0, z: 5.3, w: 1.6, d: .45 }]) };
   sim.selected = [squad[0].id]; sim.attack(target.id); sim.update(1 / 60);
   assert.equal(500 - target.hp, (CLASS_STATS.assault.damage) * COVER_FACTOR);
@@ -603,4 +603,155 @@ test('a move order cancels attack and revive orders, abreast or in a queue', () 
 test('the same order in the same alley gives the same queue', () => {
   const runs = [streets(), streets()].map(({ sim, squad }) => { sim.move({ x: 0, z: 8 }); return squad.map(u => u.path); });
   assert.deepEqual(runs[0], runs[1]);
+});
+
+// ---- Takedowns, synchronized volleys and posted guards looking around ----
+test('an attack order on an unaware guard sends the nearest operative around its sight for a silent takedown', () => {
+  const { sim, squad, hostile } = arena();
+  const [vex, rook] = squad;
+  // The guard faces the squad from just beyond its vision range: walking straight at it would cross its cone.
+  const guard = hostile('guard', 12, 0, -Math.PI / 2);
+  assert.equal(sim.attackHint(guard.id), 'Takedown · ROOK');
+  sim.attack(guard.id);
+  assert.equal(rook.takedownId, guard.id); assert.equal(vex.takedownId, null); assert.equal(rook.targetId, null);
+  assert.match(sim.message, /ROOK circling out of sight for a takedown on GUARD/);
+  let peak = 0, reached = -1, shots = 0;
+  step(sim, 20, () => {
+    peak = Math.max(peak, guard.detect); shots += sim.shots.length;
+    if (reached < 0 && distance(rook, guard) <= TAKEDOWN_REACH) reached = sim.time;
+    return guard.hp <= 0;
+  });
+  assert.equal(guard.hp, 0); assert.equal(sim.alarm, false); assert.equal(sim.getSnapshot().stealth, true);
+  assert.equal(peak, 0, 'the guard never saw ROOK coming');
+  assert.equal(shots, 0, 'no shots fired');
+  assert.ok(rook.x > guard.x, `ROOK finished it from behind, at ${rook.x.toFixed(2)}, ${rook.z.toFixed(2)}`);
+  assert.ok(Math.abs(sim.time - reached - TAKEDOWN_SECONDS) < .05, `${(sim.time - reached).toFixed(3)} s in reach`);
+  assert.deepEqual([vex.x, vex.z], [0, 0], 'VEX stays put');
+  assert.equal(rook.takedownId, null); assert.match(sim.message, /ROOK took down GUARD/);
+});
+
+test('a takedown stays quiet unless another hostile sees it happen', () => {
+  for (const watching of [false, true]) {
+    const { sim, squad, hostile } = arena();
+    const rook = squad[1];
+    const guard = hostile('guard', 6, 0, Math.PI / 2); // facing away from the squad
+    rook.x = 5; // already at its back
+    // A second guard 6 m off, facing the struggle or looking away from it.
+    hostile('guard', 6, 6, watching ? Math.PI : 0);
+    sim.selected = [rook.id]; sim.attack(guard.id);
+    assert.equal(rook.takedownId, guard.id);
+    sim.update(1 / 60);
+    assert.ok(guard.held > 0, 'pinned at once');
+    if (watching) { assert.equal(sim.alarm, true); assert.match(sim.message, /GUARD saw the takedown/); continue; }
+    step(sim, TAKEDOWN_SECONDS - .1); assert.ok(guard.hp > 0, 'not before 1.5 s');
+    step(sim, .2); assert.equal(guard.hp, 0); assert.equal(sim.alarm, false);
+  }
+});
+
+test('a guard that turns suspicious as the operative reaches it is not pinned', () => {
+  const { sim, squad, hostile } = arena();
+  const rook = squad[1];
+  // ROOK stands 1 m in front of a guard that is just short of suspicious, so the order is still a takedown.
+  const guard = hostile('guard', 2, 0, -Math.PI / 2);
+  guard.detect = SUSPICIOUS - .01;
+  sim.selected = [rook.id]; sim.attack(guard.id);
+  assert.equal(rook.takedownId, guard.id);
+  sim.update(1 / 60);
+  assert.ok(guard.detect > SUSPICIOUS);
+  assert.equal(guard.held, 0); assert.equal(rook.takedownId, null);
+  assert.match(sim.message, /GUARD turned suspicious\. ROOK holding/);
+  step(sim, 2, () => sim.alarm);
+  assert.equal(sim.alarm, true); assert.ok(guard.hp > 0);
+});
+
+test('a heavy takedown needs two operatives, and only starts with both in reach', () => {
+  const { sim, squad, hostile } = arena();
+  const [vex, rook] = squad;
+  const heavy = hostile('heavy', 8, 0, Math.PI / 2, 180); // facing away
+  vex.x = -12; // VEX has the longer walk
+  sim.selected = [rook.id];
+  assert.equal(sim.attackHint(heavy.id), '20 / 180 · will alert · takedown needs 2');
+  sim.selectAll();
+  assert.equal(sim.attackHint(heavy.id), 'Takedown · ROOK + VEX');
+  sim.attack(heavy.id);
+  assert.ok(squad.every(u => u.takedownId === heavy.id));
+  let early = false;
+  step(sim, 15, () => {
+    if (heavy.held > 0 && squad.some(u => distance(u, heavy) > TAKEDOWN_REACH)) early = true;
+    return heavy.hp <= 0;
+  });
+  assert.equal(early, false, 'the hold waited for the second operative');
+  assert.equal(heavy.hp, 0); assert.equal(sim.alarm, false);
+  assert.ok(distance(vex, rook) > .3, 'they take either shoulder');
+});
+
+test('ordered operatives hold fire until all can hit, then fire on the same frame', () => {
+  const { sim, squad, hostile } = arena();
+  const [vex, rook] = squad;
+  rook.x = -12; // out of range
+  const guard = hostile('guard', 4, 0, Math.PI / 2, 40); // VEX 28 + ROOK 20 kills it, so this is a volley
+  assert.equal(sim.attackHint(guard.id), '48 / 40 · silent kill');
+  sim.attack(guard.id);
+  assert.ok(squad.every(u => u.targetId === guard.id && !u.takedownId));
+  assert.match(sim.message, /Volley 48 \/ 40, silent kill\. Firing together once all can hit/);
+  step(sim, 1);
+  assert.equal(guard.hp, 40, 'VEX, already in range, waits for ROOK'); assert.equal(sim.shots.length, 0);
+  step(sim, 10, () => guard.hp <= 0);
+  assert.equal(guard.hp, 0); assert.equal(sim.alarm, false);
+  const volley = sim.shots.filter(s => s.faction === 'squad');
+  assert.equal(volley.length, 2); assert.ok(volley.every(s => s.ttl === volley[0].ttl), 'both shots on one frame');
+});
+
+test('a volley that cannot kill says it will alert, and does', () => {
+  const { sim, squad, hostile } = arena();
+  const guard = hostile('guard', 4, 0, Math.PI / 2);
+  guard.detect = .5; // suspicious, so no takedown
+  assert.equal(sim.attackHint(guard.id), '48 / 75 · will alert');
+  sim.attack(guard.id); sim.update(1 / 60);
+  assert.equal(guard.hp, 75 - 48); assert.equal(sim.alarm, true);
+  assert.equal(sim.attackHint(guard.id), '48 / 27');
+  assert.ok(squad.every(u => u.cooldown > 0));
+});
+
+test('posted guards look 60° to either side every 6 to 8 s, holding each look for 2 s', () => {
+  const run = () => {
+    const { sim, hostile } = arena();
+    const guard = hostile('guard', 12, 12, 0); // posted: no patrol route
+    const trace: number[] = [];
+    for (let i = 0; i < 45 * 60; i++) { sim.update(1 / 60); trace.push(Math.atan2(Math.sin(guard.heading), Math.cos(guard.heading))); }
+    assert.deepEqual([guard.x, guard.z], [12, 12], 'it never leaves its post');
+    return trace;
+  };
+  const trace = run();
+  assert.deepEqual(run(), trace, 'the schedule replays exactly');
+  // Look-arounds are the stretches away from the post heading.
+  const looks: { start: number; side: number; held: number; peak: number }[] = [];
+  trace.forEach((h, i) => {
+    const away = Math.abs(h) > 1e-9, last = looks.at(-1);
+    if (away && (!i || Math.abs(trace[i - 1]) <= 1e-9)) looks.push({ start: i, side: Math.sign(h), held: 0, peak: 0 });
+    if (away && last && i > last.start) { last.peak = Math.max(last.peak, Math.abs(h)); if (Math.abs(Math.abs(h) - LOOK_ANGLE) < 1e-9) last.held++; }
+  });
+  const whole = looks.slice(1, -1); // the first and last may be cut off
+  assert.ok(whole.length >= 3, String(looks.length));
+  for (const l of whole) {
+    assert.ok(Math.abs(l.peak - LOOK_ANGLE) < 1e-9, `peak ${l.peak}`);
+    assert.ok(Math.abs(l.held / 60 - LOOK_PAUSE) <= 2 / 60, `held ${l.held / 60} s`);
+  }
+  for (let k = 2; k < looks.length; k++) {
+    const gap = (looks[k].start - looks[k - 1].start) / 60;
+    assert.ok(gap >= LOOK_EVERY[0] - 2 / 60 && gap <= LOOK_EVERY[1] + 2 / 60, `gap ${gap} s`);
+    assert.equal(looks[k].side, -looks[k - 1].side, 'sides alternate');
+  }
+});
+
+test('a posted guard opens a window on ground it otherwise watches', () => {
+  const { sim, squad, hostile } = arena();
+  squad.forEach(u => { u.x = -18; u.z = 18; });
+  const guard = hostile('guard', 10, 10, 0);
+  // 4 m off the post heading by 75°: outside the cone at rest, inside it at the far end of one look.
+  const spot = { x: 10 + 4 * Math.sin(75 * Math.PI / 180), z: 10 + 4 * Math.cos(75 * Math.PI / 180) };
+  const seen = (h: number) => Math.abs(Math.atan2(spot.x - 10, spot.z - 10) - h) <= .87;
+  let watched = 0, total = 0;
+  for (let i = 0; i < 30 * 60; i++) { sim.update(1 / 60); total++; if (seen(guard.heading)) watched++; }
+  assert.ok(watched > 0 && watched < total * .5, `${watched} / ${total}`);
 });

@@ -50,12 +50,16 @@ function dealOffers(completed: number, rng: Rng): Contract[] {
   const types = shuffle(rng, CONTRACT_TYPES);
   return tiers.map((tier, i) => ({ id: token(rng), type: types[i], tier, seed: Math.floor(rng() * 2 ** 31), payout: contractPayout(tier), district: pick(rng, DISTRICTS), sector: 1 + Math.floor(rng() * 99) }));
 }
-function dealRecruits(roster: Operative[], rng: Rng): Operative[] {
-  const free = shuffle(rng, NAMES.filter(n => !roster.some(o => o.name === n)));
-  return free.slice(0, RECRUIT_OFFERS).map(name => ({ id: `r-${token(rng)}`, name, cls: pick(rng, CLASSES) }));
+// Recon and Tech carry the only silent tools (sniper shot, EMP).
+export const SILENT_CLASSES: readonly ClassId[] = ['recon', 'tech'];
+// Until the first contract is completed, the first recruit is always a Recon or a Tech. That covers the
+// new campaign's board and the boards dealt by its first deployments, the first ones a payout can afford.
+function dealRecruits(c: Campaign, rng: Rng): Operative[] {
+  const free = shuffle(rng, NAMES.filter(n => !c.roster.some(o => o.name === n)));
+  return free.slice(0, RECRUIT_OFFERS).map((name, i) => ({ id: `r-${token(rng)}`, name, cls: pick(rng, i === 0 && !c.completed ? SILENT_CLASSES : CLASSES) }));
 }
 // New contract offers and recruits; dealt for a new campaign and after every deployment.
-export const dealBoard = (c: Campaign, rng: Rng): Campaign => ({ ...c, offers: dealOffers(c.completed, rng), recruits: dealRecruits(c.roster, rng) });
+export const dealBoard = (c: Campaign, rng: Rng): Campaign => ({ ...c, offers: dealOffers(c.completed, rng), recruits: dealRecruits(c, rng) });
 
 export function freshCampaign(rng: Rng = Math.random): Campaign {
   return dealBoard({ version: 3, cash: 0, weapon: 0, armor: 0, completed: 0, abilities: { assault: 0, support: 0, recon: 0, tech: 0 }, roster: STARTERS.map(o => ({ ...o })), recruits: [], offers: [] }, rng);

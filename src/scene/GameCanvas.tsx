@@ -11,6 +11,7 @@ import { City } from './city.tsx';
 import { dragged, trackDrags } from './drag.ts';
 import { Effects, Targeting } from './effects.tsx';
 import { focusPoint, missionMinZoom, overviewZoom, smoothstep, tacticalZoom } from './framing.ts';
+import { AttackHint } from './hint.tsx';
 import type { Pointer } from './effects.tsx';
 import { Objectives } from './objectives.tsx';
 import { Pointers } from './pointers.tsx';
@@ -123,16 +124,17 @@ function World({ sim, reset, focus, overview, layout, attract, frame, labels, mi
   const pointer = useRef<Pointer>({ x: 0, z: 0, on: false }), insets = useRef<Insets>({ l: 0, t: 0, r: 0, b: 0 }), gl = useThree(s => s.gl), camera = useThree(s => s.camera);
   // The canvas cursor: a crosshair while aiming, a hand wherever a click would act on a unit (on its hitbox or
   // within PICK_SLOP of it). Re-picked every frame, since units walk under a resting pointer and hostiles drop out of sight.
-  const hitboxes = useRef<Hitboxes>(new Map()).current, inside = useRef(false), cursor = useRef('');
+  const hitboxes = useRef<Hitboxes>(new Map()).current, inside = useRef(false), cursor = useRef(''), hovered = useRef<string | null>(null);
   useEffect(() => {
     const el = gl.domElement, enter = () => { inside.current = true; }, leave = () => { inside.current = false; };
     el.addEventListener('pointerenter', enter); el.addEventListener('pointerleave', leave);
     return () => { el.removeEventListener('pointerenter', enter); el.removeEventListener('pointerleave', leave); };
   }, [gl]);
   useFrame(({ pointer: ndc, camera, size }) => {
-    let next = '';
+    let next = '', over: string | null = null;
     if (sim.pending) next = 'crosshair';
-    else if (inside.current && nearestClickable(sim, hitboxes, camera, size.width, size.height, (ndc.x + 1) / 2 * size.width, (1 - ndc.y) / 2 * size.height)) next = 'pointer';
+    else if (inside.current && (over = nearestClickable(sim, hitboxes, camera, size.width, size.height, (ndc.x + 1) / 2 * size.width, (1 - ndc.y) / 2 * size.height))) next = 'pointer';
+    hovered.current = over;
     if (next !== cursor.current) gl.domElement.style.cursor = cursor.current = next;
   });
   // A click or tap that hits no unit, on the street or off the district, still picks one drawn near it.
@@ -160,6 +162,7 @@ function World({ sim, reset, focus, overview, layout, attract, frame, labels, mi
       <Units sim={sim} units={state.units} selected={state.selected} squad={state.squad} live={state.phase === 'mission'} labels={labels} hitboxes={hitboxes} />
       <Effects sim={sim} />
       <Pointers sim={sim} labels={labels} insets={insets} />
+      <AttackHint sim={sim} labels={labels} hovered={hovered} />
       {pending ? <Targeting key={`${pending.unitId}:${pending.ability}`} sim={sim} pending={pending} pointer={pointer} /> : null}
     </> : null}
   </>;

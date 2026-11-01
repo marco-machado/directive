@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyDismiss, applyPurchase, applyRecruit, baseTier, clampCampaign, completeMission, contractPayout, freshCampaign, MIN_MISSION_MS, RECRUIT_COST, ROSTER_CAP, startMission } from '../src/game/campaign.ts';
+import { applyDismiss, applyPurchase, applyRecruit, baseTier, clampCampaign, completeMission, contractPayout, dealBoard, freshCampaign, MIN_MISSION_MS, RECRUIT_COST, ROSTER_CAP, SILENT_CLASSES, startMission } from '../src/game/campaign.ts';
 import type { Ledger } from '../src/game/campaign.ts';
 import { mulberry32 } from '../src/game/rng.ts';
 import { formatSaveCode, generateSaveCode, normalizeSaveCode } from '../src/game/saveCode.ts';
@@ -37,6 +37,22 @@ test('recruiting costs credits, respects the cap, and dismissal keeps one operat
   const solo = applyDismiss(c, 'vex')!;
   assert.deepEqual(solo.roster.map(o => o.id), ['rook']);
   assert.equal(applyDismiss(solo, 'rook'), null);
+});
+
+test('a new campaign always offers a Recon or Tech recruit until its first contract pays', () => {
+  const silent = (c: { recruits: { cls: string }[] }) => c.recruits.some(r => SILENT_CLASSES.includes(r.cls as never));
+  let later = 0;
+  for (let seed = 1; seed <= 200; seed++) {
+    const r = mulberry32(seed), fresh = freshCampaign(r);
+    assert.ok(silent(fresh), `seed ${seed}: first board`);
+    // Deploying deals the next board before the payout, so the guarantee holds there too: that is the board the first payout can buy from.
+    const ledger = startMission({ campaign: fresh, activeMission: null }, 'm', 0, fresh.offers[0].id, ['vex'], r)!;
+    assert.ok(silent(ledger.campaign), `seed ${seed}: board dealt by the first deploy`);
+    const paid = completeMission(ledger, 'm', MIN_MISSION_MS, true)!.campaign;
+    assert.ok(paid.cash >= RECRUIT_COST && silent(paid));
+    if (!silent(dealBoard(paid, r))) later++;
+  }
+  assert.ok(later > 0, 'after the first payout recruits are random again');
 });
 
 test('a mission pays its stored contract once, only for the active id, and never too early', () => {

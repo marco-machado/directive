@@ -18,6 +18,10 @@ export type Unit = Point & {
   path: Point[]; targetId: string | null; heading: number; moving: boolean; repath: number;
   ability: AbilityId | null; abilityCd: number; reviveTarget: string | null; revive: number; hurt: number;
   patrol: Point[]; patrolIndex: number; exit: Point | null; wait: number; detect: number; stunned: number; marked: number; visible: boolean; hunting: boolean; sweep: number;
+  // Takedowns: the hostile an operative is closing on, and how long a hostile has been held.
+  takedownId: string | null; held: number;
+  // A posted guard's look-around: seconds into the current cycle, that cycle's length, and its count.
+  look: number; lookEvery: number; lookCycle: number;
 };
 export type Shot = { id: number; from: Point; to: Point; faction: Faction; shooter: UnitKind; kind: 'bullet' | 'snipe'; ttl: number };
 export type Blast = { id: number; kind: 'grenade' | 'heal' | 'emp'; x: number; z: number; radius: number; ttl: number };
@@ -66,8 +70,28 @@ export const PLANT_SECONDS = 3;
 export const COVER_FACTOR = .5;
 export const WEAPON_BONUS = 12, ARMOR_BONUS = 40;
 export const QUEUE_SPACING = .9;    // gap between operatives, side by side or in single file
+export const TAKEDOWN_REACH = 1.2;  // an operative this close to an unaware hostile starts the takedown
+export const TAKEDOWN_SECONDS = 1.5;
+const TAKEDOWN_STANDOFF = .9;       // where the approach route ends, behind the hostile
+export const LOOK_ANGLE = Math.PI / 3; // posted guards look this far to either side of their post
+export const LOOK_PAUSE = 2;        // and hold that look this long
+export const LOOK_EVERY = [6, 8] as const; // seconds between the starts of two look-arounds
+export const LOOK_TURN = 1.5;       // rad/s while looking around
 
 const angleDiff = (a: number, b: number) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
+// Turns `u` toward `heading` by at most `step` radians, the short way round.
+const turnTo = (u: Unit, heading: number, step: number) => {
+  const d = Math.atan2(Math.sin(heading - u.heading), Math.cos(heading - u.heading));
+  u.heading = Math.abs(d) <= step ? heading : u.heading + Math.sign(d) * step;
+};
+// A number in [0, 1) fixed by the contract seed, a unit id and a counter, so look-arounds replay exactly.
+const hashed = (seed: number, id: string, n: number) => {
+  let h = seed ^ 0x2545f491;
+  for (let i = 0; i < id.length; i++) h = Math.imul(h ^ id.charCodeAt(i), 0x01000193);
+  return mulberry32((h ^ Math.imul(n + 1, 0x9e3779b1)) >>> 0)();
+};
+const takedownable = (u: Unit) => u.kind === 'guard' || u.kind === 'heavy' || u.kind === 'target';
+const posted = (u: Unit) => (u.kind === 'guard' || u.kind === 'heavy') && u.patrol.length < 2;
 const headingTo = (a: Point, b: Point) => Math.atan2(b.x - a.x, b.z - a.z);
 const routeLength = (from: Point, path: Point[]) => path.reduce((sum, p, i) => sum + distance(i ? path[i - 1] : from, p), 0);
 // The point `d` back from the end of a route, walking toward its start.
@@ -112,6 +136,7 @@ export class Simulation {
   private holdup = '';
   private casts: { unitId: string; ability: AbilityId; point: Point; targetId: string | null }[] = [];
   private hitThisFrame = new Set<Unit>();
+  private volleyReady = new Set<Unit>();
   private rng: Rng = Math.random;
   private nextId = 0;
   private listeners = new Set<() => void>();
@@ -182,11 +207,12 @@ export class Simulation {
     return {
       id, name, kind, faction, x: p.x, z: p.z, hp: maxHp, maxHp, cooldown: faction === 'hostile' ? 1 : 0, path: [], targetId: null, heading, moving: false, repath: 0,
       ability: null, abilityCd: 0, reviveTarget: null, revive: 0, hurt: 0, patrol: [], patrolIndex: 0, exit: null, wait: 0, detect: 0, stunned: 0, marked: 0, visible: false, hunting: false, sweep: heading,
+      takedownId: null, held: 0, look: 0, lookEvery: 0, lookCycle: 0,
     };
   }
   private resetUnits() {
     const plan = this.plan;
-    this.units = []; this.objectives = []; this.shots = []; this.blasts = []; this.casts = []; this.hitThisFrame.clear();
+    this.units = []; this.objectives = []; this.shots = []; this.blasts = []; this.casts = []; this.hitThisFrame.clear(); this.volleyReady.clear();
     this.alarm = false; this.detected = false; this.calmIn = 0; this.lastKnown = null;
     this.reinforceIn = 0; this.reinforced = 0; this.vipJoined = false; this.holdup = ''; this.pending = null; this.commandPoint = null;
     if (!plan) { this.squad = []; this.selected = []; return; }
@@ -241,6 +267,7 @@ export class Simulation {
   togglePause = () => { if (this.phase === 'mission') { this.paused = !this.paused; this.emit(); } };
   pause = () => { if (this.phase === 'mission' && !this.paused) { this.paused = true; this.emit(); } };
   private orderable() { return this.selected.map(id => this.unit(id)).filter((u): u is Unit => !!u && u.hp > 0); }
+  private clearOrders(u: Unit) { u.targetId = null; u.reviveTarget = null; u.revive = 0; u.takedownId = null; }
   // Operatives line up side by side; where the street is too narrow for that, they queue in single file.
   move(click: Point) {
     if (this.phase !== 'mission' || !this.plan) return;
@@ -251,7 +278,7 @@ export class Simulation {
       return path.length || world.inBounds(slot) ? path : world.findPath(u, point);
     });
     const orders = line.every(path => path.length) ? new Map(units.map((u, i) => [u, line[i]])) : this.queue(units, point);
-    orders.forEach((path, u) => { u.path = path; u.targetId = null; u.reviveTarget = null; u.revive = 0; });
+    orders.forEach((path, u) => { u.path = path; this.clearOrders(u); });
     const moved = orders.size > 0;
     this.commandPoint = moved ? point : null;
     this.message = moved ? (this.alarm ? 'Move order confirmed. Weapons free.' : 'Move order confirmed. Holding fire until ordered.') : 'Route blocked. Choose an open street.'; this.emit();
@@ -279,12 +306,71 @@ export class Simulation {
     free.forEach(f => orders.set(f.u, f.path));
     return orders;
   }
+  // An unaware guard, heavy or target that the selection's volley would not kill gets a takedown instead:
+  // the nearest operative (two for a heavy) circles out of its sight and finishes it up close.
+  // Otherwise every selected operative closes in and, before the alarm, they fire together.
+  private firepower(u: Unit) { return CLASS_STATS[u.kind as ClassId].damage + this.campaign.weapon * WEAPON_BONUS; }
+  private attackPlan(target: Unit, units: Unit[]) {
+    const world = this.plan!.world;
+    const damage = units.reduce((sum, u) => sum + this.firepower(u) * (world.coverBetween(u, target) ? COVER_FACTOR : 1), 0), kills = damage >= target.hp;
+    const quiet = !this.alarm && target.detect < SUSPICIOUS && takedownable(target) && !kills, need = target.kind === 'heavy' ? 2 : 1;
+    const takedown = quiet && units.length >= need ? [...units].sort((a, b) => distance(a, target) - distance(b, target)).slice(0, need) : [];
+    return { takedown, short: quiet && units.length < need ? need : 0, damage: Math.round(damage), hp: Math.ceil(target.hp), alerts: !this.alarm && !kills };
+  }
+  private attackable(id: string) {
+    const target = this.unit(id), units = this.orderable();
+    return this.phase === 'mission' && this.plan && target && target.faction === 'hostile' && target.hp > 0 && target.visible && units.length ? { target, units } : null;
+  }
+  // What an attack order on `id` would do with the current selection, for the hover hint: "48 / 75 · will alert".
+  attackHint(id: string): string | null {
+    const order = this.attackable(id); if (!order) return null;
+    const p = this.attackPlan(order.target, order.units);
+    if (p.takedown.length) return `Takedown · ${p.takedown.map(u => u.name).join(' + ')}`;
+    const volley = `${p.damage} / ${p.hp}`;
+    return this.alarm ? volley : `${volley} · ${p.alerts ? 'will alert' : 'silent kill'}${p.short ? ` · takedown needs ${p.short}` : ''}`;
+  }
   attack(id: string) {
-    if (this.phase !== 'mission' || !this.plan) return;
-    const target = this.unit(id);
-    if (!target || target.faction !== 'hostile' || target.hp <= 0 || !target.visible) return;
-    this.orderable().forEach(u => { u.targetId = id; u.reviveTarget = null; u.revive = 0; u.path = this.plan!.world.findPath(u, target); });
-    this.message = target.kind === 'target' ? 'Target marked. Eliminate the target.' : `${target.name} marked. Concentrate fire.`; this.emit();
+    const order = this.attackable(id); if (!order) return;
+    const { target, units } = order, p = this.attackPlan(target, units), world = this.plan!.world;
+    const who = target.kind === 'target' ? 'Target' : target.name;
+    if (p.takedown.length) {
+      for (const u of this.units) if (u.takedownId === id) { u.takedownId = null; u.path = []; }
+      p.takedown.forEach(u => { this.clearOrders(u); u.takedownId = id; u.repath = .3; });
+      p.takedown.forEach(u => { u.path = this.approach(u, target); });
+      const names = p.takedown.map(u => u.name).join(' and ');
+      this.commandPoint = null;
+      this.message = p.takedown.every(u => u.path.length || distance(u, target) <= TAKEDOWN_REACH)
+        ? `${names} circling out of sight for a takedown on ${who}.` : `${names} waiting for a way past ${who}'s line of sight.`;
+      this.emit(); return;
+    }
+    units.forEach(u => { this.clearOrders(u); u.targetId = id; u.path = world.findPath(u, target); });
+    const fire = units.length > 1 ? 'Firing together once all can hit' : 'Firing once in range';
+    this.message = this.alarm ? (target.kind === 'target' ? 'Target marked. Eliminate the target.' : `${target.name} marked. Concentrate fire.`)
+      : `${who} marked. Volley ${p.damage} / ${p.hp}, ${p.alerts ? 'will alert' : 'silent kill'}. ${fire}.${p.short ? ` A takedown needs ${p.short} operatives.` : ''}`;
+    this.emit();
+  }
+  // Ground the hostile can see, widened by `margin` for planning; a posted guard's whole look-around counts.
+  private watched(v: Unit, margin = 1) {
+    const world = this.plan!.world, stats = HOSTILE_STATS[v.kind as EnemyKind], range = stats.vision + .8 * margin, fov = stats.fov + .25 * margin, wide = posted(v);
+    return (p: Point) => {
+      if (distance(v, p) > range) return false;
+      const a = headingTo(v, p);
+      if (angleDiff(a, v.heading) > fov && !(wide && angleDiff(a, v.sweep) <= LOOK_ANGLE + fov)) return false;
+      return world.sightClear(v, p);
+    };
+  }
+  // A route to a spot just behind the hostile that never crosses its sight. Two operatives on a heavy take either shoulder.
+  private approach(u: Unit, v: Unit): Point[] {
+    const slot = this.units.filter(o => o.takedownId === v.id).indexOf(u);
+    const world = this.plan!.world, avoid = this.watched(v), back = (posted(v) ? v.sweep : v.heading) + Math.PI + (v.kind === 'heavy' ? (slot ? .45 : -.45) : 0);
+    let tries = 0;
+    for (const turn of [0, .3, -.3, .6, -.6, .9, -.9, 1.2, -1.2]) {
+      const a = back + turn, goal = { x: v.x + Math.sin(a) * TAKEDOWN_STANDOFF, z: v.z + Math.cos(a) * TAKEDOWN_STANDOFF };
+      if (!world.walkable(goal) || avoid(goal)) continue;
+      const path = world.findPath(u, goal, avoid);
+      if (path.length || ++tries >= 3) return path;
+    }
+    return [];
   }
   revive(id: string) {
     if (this.phase !== 'mission' || !this.plan) return;
@@ -292,11 +378,11 @@ export class Simulation {
     if (!down || down.faction !== 'squad' || down.hp > 0) return;
     const medic = this.orderable().sort((a, b) => distance(a, down) - distance(b, down))[0];
     if (!medic) { this.message = 'Select a living operative to revive.'; this.emit(); return; }
-    medic.reviveTarget = id; medic.revive = 0; medic.targetId = null; medic.path = this.plan.world.findPath(medic, down);
+    this.clearOrders(medic); medic.reviveTarget = id; medic.path = this.plan.world.findPath(medic, down);
     this.message = `${medic.name} moving to revive ${down.name}.`; this.emit();
   }
   hold = () => {
-    this.orderable().forEach(u => { u.path = []; u.targetId = null; u.reviveTarget = null; u.revive = 0; });
+    this.orderable().forEach(u => { u.path = []; this.clearOrders(u); });
     this.message = this.alarm ? 'Holding position. Weapons free.' : 'Holding position. Holding fire.'; this.emit();
   };
   ability(slot: number) {
@@ -369,7 +455,8 @@ export class Simulation {
   private standDown() {
     this.alarm = false; this.calmIn = 0; this.lastKnown = null;
     // A fleeing target keeps running for its exit.
-    for (const u of this.units) if (u.faction === 'hostile' && u.hp > 0) { u.detect = 0; u.hunting = false; if (!u.exit) u.path = []; }
+    // A posted guard that left its post to hunt keeps watch where it ends up.
+    for (const u of this.units) if (u.faction === 'hostile' && u.hp > 0) { if (u.hunting && posted(u)) u.sweep = u.heading; u.detect = 0; u.hunting = false; if (!u.exit) u.path = []; }
     this.message = 'Contact lost. Alarm standing down. Holding fire.';
   }
   private damage(target: Unit, amount: number, from: Point | null) {
@@ -380,7 +467,7 @@ export class Simulation {
     else {
       target.hurt = 1.5; target.revive = 0;
       // A downed operative drops its orders; once revived it stays where it fell.
-      if (target.hp <= 0) { target.path = []; target.targetId = null; target.reviveTarget = null; }
+      if (target.hp <= 0) { target.path = []; this.clearOrders(target); }
     }
   }
   private shoot(from: Unit, to: Unit, amount: number, kind: Shot['kind'] = 'bullet') {
@@ -444,6 +531,7 @@ export class Simulation {
     const world = this.plan!.world, stats = HOSTILE_STATS[u.kind as EnemyKind];
     u.marked = Math.max(0, u.marked - dt);
     u.moving = false;
+    if (u.held > 0) return; // pinned by a takedown
     if (u.stunned > 0) { u.stunned -= dt; return; }
     u.cooldown -= dt;
     const mobile = u.kind === 'guard' || u.kind === 'heavy';
@@ -490,13 +578,25 @@ export class Simulation {
     } else this.patrol(u, stats.speed, dt);
   }
   private patrol(u: Unit, speed: number, dt: number) {
-    if (u.patrol.length < 2) return;
+    if (u.patrol.length < 2) return this.lookAround(u, dt);
     if (!u.path.length) {
       if (u.wait > 0) { u.wait -= dt; return; }
       u.patrolIndex = (u.patrolIndex + 1) % u.patrol.length;
       u.path = this.plan!.world.findPath(u, u.patrol[u.patrolIndex]); u.wait = 1.2;
     }
     this.walk(u, speed, dt);
+  }
+
+  // A posted guard faces its post, and every 6 to 8 s turns 60° to one side (alternating), holds that look
+  // for 2 s and turns back. The schedule follows the contract seed; a guard pulled off it turns back to it.
+  private lookAround(u: Unit, dt: number) {
+    const seed = this.plan!.contract.seed, every = (n: number) => LOOK_EVERY[0] + (LOOK_EVERY[1] - LOOK_EVERY[0]) * hashed(seed, u.id, n);
+    if (!u.lookEvery) { u.lookEvery = every(0); u.look = hashed(seed, u.id, -1) * u.lookEvery; }
+    u.look += dt;
+    if (u.look >= u.lookEvery) { u.look -= u.lookEvery; u.lookEvery = every(++u.lookCycle); }
+    const turn = LOOK_ANGLE / LOOK_TURN, t = u.look - (u.lookEvery - 2 * turn - LOOK_PAUSE);
+    const offset = t <= 0 ? 0 : t < turn ? t * LOOK_TURN : t < turn + LOOK_PAUSE ? LOOK_ANGLE : Math.max(0, LOOK_ANGLE - (t - turn - LOOK_PAUSE) * LOOK_TURN);
+    turnTo(u, u.sweep + (u.lookCycle % 2 ? -1 : 1) * offset, 2 * LOOK_TURN * dt);
   }
 
   private updateOperative(u: Unit, dt: number, hostiles: Unit[]) {
@@ -516,6 +616,7 @@ export class Simulation {
         return;
       } else if (!u.path.length) u.path = world.findPath(u, down);
     }
+    if (u.takedownId && this.closeIn(u, dt)) return;
     const canHit = (v: Unit) => v.visible && distance(u, v) <= stats.range && world.sightClear(u, v);
     const ordered = hostiles.find(v => v.id === u.targetId);
     if (!ordered) u.targetId = null;
@@ -523,10 +624,79 @@ export class Simulation {
     // Before the alarm the squad holds fire except at ordered targets.
     const target = ordered && canHit(ordered) ? ordered : this.alarm ? hostiles.filter(canHit).sort((a, b) => distance(u, a) - distance(u, b))[0] : undefined;
     if (u.path.length && !(ordered && canHit(ordered))) this.walk(u, SQUAD_SPEED, dt);
-    if (target && u.cooldown <= 0) {
-      u.heading = headingTo(u, target);
-      this.shoot(u, target, stats.damage + this.campaign.weapon * WEAPON_BONUS);
-      u.cooldown = stats.fireCooldown;
+    if (!target || u.cooldown > 0) return;
+    // Before the alarm an ordered operative waits for the rest of its volley (see fireVolleys).
+    if (!this.alarm) { u.heading = headingTo(u, target); this.volleyReady.add(u); return; }
+    this.fire(u, target);
+  }
+  private fire(u: Unit, target: Unit) {
+    u.heading = headingTo(u, target);
+    this.shoot(u, target, this.firepower(u));
+    u.cooldown = CLASS_STATS[u.kind as ClassId].fireCooldown;
+  }
+  // Operatives ordered onto the same hostile fire on the same frame, once every one of them can hit it.
+  private fireVolleys() {
+    const groups = new Map<string, Unit[]>();
+    for (const u of this.livingSquad()) if (u.targetId) groups.set(u.targetId, [...groups.get(u.targetId) ?? [], u]);
+    for (const [id, group] of groups) {
+      const target = this.unit(id);
+      if (target && group.every(u => this.volleyReady.has(u))) group.forEach(u => this.fire(u, target));
+    }
+    this.volleyReady.clear();
+  }
+  // Closing on a takedown; false hands the operative back to the normal attack rules.
+  private closeIn(u: Unit, dt: number): boolean {
+    const v = this.unit(u.takedownId!);
+    if (!v || v.hp <= 0) { u.takedownId = null; return false; }
+    if (v.held > 0) { u.path = []; u.heading = headingTo(u, v); return true; }
+    // Spotted before the hold starts, even within reach: the alarm turns it into a firefight; a suspicious guard calls it off.
+    if (this.alarm) { u.takedownId = null; u.targetId = v.id; u.path = []; return false; }
+    if (v.detect > SUSPICIOUS) { u.takedownId = null; u.path = []; this.message = `${v.name} turned suspicious. ${u.name} holding.`; return true; }
+    if (distance(u, v) <= TAKEDOWN_REACH) { u.path = []; u.heading = headingTo(u, v); return true; }
+    // The hostile walks and turns while the operative closes in: re-route once the route no longer ends
+    // in reach or crosses its sight.
+    u.repath -= dt;
+    if (u.repath <= 0 || !u.path.length) {
+      u.repath = .3;
+      const end = u.path.at(-1), avoid = this.watched(v, 0), world = this.plan!.world;
+      const stale = !end || distance(end, v) > TAKEDOWN_REACH - .1 || avoid(end) || u.path.some((p, i) => !world.passable(i ? u.path[i - 1] : u, p, 0) || !this.unseen(i ? u.path[i - 1] : u, p, avoid));
+      if (stale) u.path = this.approach(u, v);
+    }
+    if (u.path.length) this.walk(u, SQUAD_SPEED, dt);
+    return true;
+  }
+  private unseen(a: Point, b: Point, avoid: (p: Point) => boolean) {
+    const steps = Math.ceil(distance(a, b) * 3);
+    for (let n = 1; n <= steps; n++) if (avoid({ x: a.x + (b.x - a.x) * n / steps, z: a.z + (b.z - a.z) * n / steps })) return false;
+    return true;
+  }
+  private sees(h: Unit, p: Point) {
+    const stats = HOSTILE_STATS[h.kind as EnemyKind];
+    return distance(h, p) <= stats.vision && angleDiff(headingTo(h, p), h.heading) <= stats.fov && this.plan!.world.sightClear(h, p);
+  }
+  // A takedown starts once its operatives (two for a heavy) all stand in reach and finishes after TAKEDOWN_SECONDS.
+  // It pins the hostile; any other hostile that sees the struggle raises the alarm.
+  private resolveTakedowns(dt: number) {
+    const crews = new Map<Unit, Unit[]>();
+    for (const u of this.livingSquad()) if (u.takedownId) { const v = this.unit(u.takedownId); if (v) crews.set(v, [...crews.get(v) ?? [], u]); }
+    for (const v of this.units) {
+      if (v.faction !== 'hostile') continue;
+      const crew = crews.get(v) ?? [], need = v.kind === 'heavy' ? 2 : 1;
+      if (v.hp <= 0 || crew.length < need) {
+        if (v.hp > 0 && crew.length) { crew.forEach(u => { u.takedownId = null; u.path = []; }); this.message = `Takedown on ${v.name} called off.`; }
+        v.held = 0; continue;
+      }
+      // Pinned operatives stand still, so only a re-ordered crew can be out of reach mid-hold; that starts over.
+      if (crew.some(u => distance(u, v) > TAKEDOWN_REACH)) { v.held = 0; continue; }
+      // A hold only starts on an unaware hostile (an earlier takedown's witness may have raised the alarm this frame).
+      if (!v.held && (this.alarm || v.detect > SUSPICIOUS)) continue;
+      v.held += dt; v.moving = false; v.path = [];
+      const witness = this.units.find(h => h !== v && h.faction === 'hostile' && h.hp > 0 && h.stunned <= 0 && !h.held && [v, ...crew].some(p => this.sees(h, p)));
+      if (witness && !this.alarm) this.raiseAlarm(witness, `${witness.name} saw the takedown`, crew[0]);
+      if (v.held >= TAKEDOWN_SECONDS) {
+        v.hp = 0; v.held = 0; crew.forEach(u => { u.takedownId = null; });
+        this.message = `${crew.map(u => u.name).join(' and ')} took down ${v.kind === 'target' ? 'the target' : v.name}.`;
+      }
     }
   }
   private updateVip(u: Unit, dt: number, squad: Unit[]) {
@@ -598,6 +768,8 @@ export class Simulation {
     if (this.phase !== 'mission') return;
     const hostiles = this.units.filter(u => u.faction === 'hostile' && u.hp > 0);
     for (const u of this.units) if (u.faction === 'squad') { if (u.hp > 0) this.updateOperative(u, dt, hostiles); else u.moving = false; }
+    this.fireVolleys();
+    this.resolveTakedowns(dt);
     // A volley that kills its target stays quiet; any hostile left standing after being hit raises the alarm.
     for (const u of this.hitThisFrame) if (u.hp > 0) { this.raiseAlarm(u, `${u.name} returned fire`); break; }
     for (const u of this.units) if (u.faction === 'hostile' && u.hp <= 0) { u.path = []; u.moving = false; }

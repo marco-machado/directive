@@ -103,7 +103,7 @@ export function Hud({ state, overview, onFocusSelection, onToggleOverview }: { s
         <button className="cmd" onClick={onFocusSelection} aria-keyshortcuts="F" aria-label="Focus view on the selection"><Icon name="recenter" /><span>View</span><kbd>F</kbd></button>
         <button className="cmd" onClick={onToggleOverview} aria-keyshortcuts="R" aria-pressed={overview} aria-label="District overview"><Icon name="overview" /><span>Overview</span><kbd>R</kbd></button>
       </div>
-      {state.campaign.completed ? null : <p className="controls-hint" aria-hidden="true">Click street: move · click hostile: attack · <kbd>1</kbd>–<kbd>4</kbd> select · <kbd>Shift</kbd>+<kbd>1</kbd>–<kbd>4</kbd> ability · <kbd>Space</kbd> pause</p>}
+      {state.campaign.completed ? null : <p className="controls-hint" aria-hidden="true">Click street: move · click hostile: takedown or volley · <kbd>1</kbd>–<kbd>4</kbd> select · <kbd>Shift</kbd>+<kbd>1</kbd>–<kbd>4</kbd> ability · <kbd>Space</kbd> pause</p>}
     </footer>
   </>;
 }

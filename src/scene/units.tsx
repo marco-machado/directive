@@ -5,7 +5,7 @@ import type { ThreeEvent } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
 import { AlwaysStencilFunc, CircleGeometry, GreaterDepth, MeshBasicMaterial, NotEqualStencilFunc, PlaneGeometry, ReplaceStencilOp, RingGeometry, Vector3 } from 'three';
 import type { Camera, Group, Material, Mesh } from 'three';
-import { REVIVE_SECONDS } from '../game/simulation.ts';
+import { REVIVE_SECONDS, TAKEDOWN_SECONDS } from '../game/simulation.ts';
 import type { Faction, Simulation, Unit, UnitKind } from '../game/simulation.ts';
 import { dragged } from './drag.ts';
 import { rectDistance } from './framing.ts';
@@ -14,7 +14,7 @@ import type { Paint } from './parts.tsx';
 import { mayBeHidden, viewAlong } from './view.ts';
 
 type Vec3 = [number, number, number];
-const TOP: Record<UnitKind, number> = { assault: 1.3, support: 1.3, recon: 1.3, tech: 1.3, guard: 1.3, heavy: 1.55, camera: 2.15, turret: .75, target: 1.3, vip: 1.3 };
+export const TOP: Record<UnitKind, number> = { assault: 1.3, support: 1.3, recon: 1.3, tech: 1.3, guard: 1.3, heavy: 1.55, camera: 2.15, turret: .75, target: 1.3, vip: 1.3 };
 const HITBOX: Record<UnitKind, Vec3> = { assault: [.95, 1.5, .95], support: [.95, 1.5, .95], recon: [.95, 1.5, .95], tech: [.95, 1.5, .95], guard: [.95, 1.5, .95], heavy: [1.15, 1.8, 1.15], camera: [.7, 2.3, .7], turret: [1.1, 1, 1.1], target: [.95, 1.5, .95], vip: [.95, 1.5, .95] };
 const ACCENT: Record<UnitKind, string> = { assault: '#9ff7d1', support: '#9ff7d1', recon: '#9ff7d1', tech: '#8ff0e6', guard: '#ed7e70', heavy: '#ff6d5c', camera: '#ff5a4a', turret: '#ff6d5c', target: '#ffbd83', vip: '#ffe7a8' };
 const GROUND: Record<Faction, string> = { squad: '#9ff7d1', hostile: '#ed7e70', vip: '#ffe7a8' };
@@ -185,11 +185,12 @@ function Agent({ sim, unit, selected, slot, tagged, labels, hitboxes }: { sim: S
   const root = useRef<Group>(null), model = useRef<Group>(null), pose = useRef<Group>(null), legs = useRef<Group>(null), ring = useRef<Group>(null), spin = useRef<Group>(null);
   const ghost = useRef<Group>(null), ghostLegs = useRef<Group>(null), look = useRef(new Vector3()).current;
   const bar = useRef<Group>(null), fill = useRef<Mesh>(null);
-  const stun = useRef<Group>(null), mark = useRef<Mesh>(null), revive = useRef<Group>(null);
+  const stun = useRef<Group>(null), mark = useRef<Mesh>(null), revive = useRef<Group>(null), hold = useRef<Group>(null);
   const downed = faction === 'squad' && unit.hp <= 0, top = TOP[kind], hitbox = HITBOX[kind];
   const register = useCallback((mesh: Mesh) => { hitboxes.set(mesh, id); return () => { hitboxes.delete(mesh); }; }, [hitboxes, id]);
   const c = (color: string) => downed ? dim(color) : color;
   const reviveProgress = () => { let p = 0; for (const v of sim.units) if (v.reviveTarget === id) p = Math.max(p, v.revive / REVIVE_SECONDS); return p; };
+  const takedownProgress = () => (sim.units.find(v => v.id === id)?.held ?? 0) / TAKEDOWN_SECONDS;
   useFrame(({ clock, camera }) => {
     const u = sim.units.find(v => v.id === id);
     if (!root.current || !model.current || !pose.current) return;
@@ -227,6 +228,7 @@ function Agent({ sim, unit, selected, slot, tagged, labels, hitboxes }: { sim: S
     }
     if (mark.current) { mark.current.visible = u.marked > 0; mark.current.rotation.y = t * 2.4; mark.current.position.y = top + .5 + Math.sin(t * 4) * .05; }
     if (revive.current) revive.current.visible = down && sim.units.some(v => v.reviveTarget === id);
+    if (hold.current) hold.current.visible = u.held > 0;
   });
   const click = (e: ThreeEvent<MouseEvent>) => {
     const u = sim.units.find(v => v.id === id);
@@ -261,6 +263,7 @@ function Agent({ sim, unit, selected, slot, tagged, labels, hitboxes }: { sim: S
         {[0, 1, 2, 3].map(k => <mesh key={k} position={[Math.sin(k * 1.57) * .34, (k % 2) * .18, Math.cos(k * 1.57) * .34]} rotation={[k * .7, 0, k * .4]} scale={[.05, .16, .05]} geometry={BOX} material={glow('#8fd8ff')} />)}
       </group>
       <mesh ref={mark} geometry={DIAMOND} material={glow('#ffb17d')} scale={[1, 1.5, 1]} visible={false} />
+      <group ref={hold} visible={false}><ProgressRing radius={.7} color="#9ff7d1" value={takedownProgress} segments={24} /></group>
     </> : null}
     {downed ? <group ref={revive} visible={false}><ProgressRing radius={.7} color="#9ff7d1" value={reviveProgress} segments={24} /></group> : null}
     {label ? <Html portal={labels} center position={[0, top + .62, 0]} style={{ pointerEvents: 'none' }}><span className={`unit-label${kind === 'target' ? ' hostile' : kind === 'vip' ? ' vip' : ` squad cls-${kind}`}`}>{label}</span></Html> : null}
