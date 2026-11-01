@@ -412,7 +412,11 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .hp::after { content: ''; position: absolute; inset: 0; background: repeating-linear-gradient(90deg, transparent 0 calc(10% - 1px), rgb(4 9 11 / .9) calc(10% - 1px) 10%) }
 .agent.wounded .hp i { background: var(--amber); box-shadow: 0 0 8px rgb(255 180 84 / .5) }
 .agent.critical .hp i { background: var(--red); box-shadow: 0 0 8px rgb(255 81 72 / .6) }
-.hp-text { font: 500 11px var(--f-ui); font-variant-numeric: tabular-nums; color: var(--dim) }
+.hp-text { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-height: 14px; font: 500 11px var(--f-ui); font-variant-numeric: tabular-nums; color: var(--dim) }
+.cover-badge { display: inline-grid; place-items: center; color: var(--mint) }
+.cover-badge .icon { width: 14px; height: 14px; fill: rgb(94 242 192 / .25) }
+.cover-badge.flanked { color: var(--red) }
+.cover-badge.flanked .icon { fill: rgb(255 81 72 / .25) }
 .hp-text b { font-weight: 600; color: var(--text) }
 .ability { position: relative; display: grid; place-items: center; align-content: center; gap: 3px; padding: 0; overflow: hidden; border: 0; border-left: 1px solid var(--line); background: rgb(3 8 10 / .5); color: var(--dim); transition: background .15s, color .15s }
 .ability::before { content: ''; position: absolute; inset: 0; pointer-events: none; background: conic-gradient(rgb(0 0 0 / .6) calc(var(--cd) * 360deg), transparent 0) }
