@@ -78,7 +78,7 @@ function App() {
   const openAudio = () => { sim.pause(); setAudio('open'); };
   const toBoard = (next: Tab) => { sim.openBoard(); setTab(next); };
   const loaded = (code: string) => { setSaveCode(code); setOnTitle(false); };
-  const deployBlocked = connecting || loadingCode;
+  const deployBlocked = connecting || loadingCode || state.syncing;
   return <main className={`app screen-${screen}${active && state.alarm ? ' alarm' : ''}${active && state.paused ? ' paused' : ''}`}
     onClickCapture={e => { const button = e.target instanceof Element ? e.target.closest('button') : null; if (button && !button.dataset.cue) play('click'); }}>
     <div className="scene" aria-label="3D tactical city. Click operatives to select, streets to move, hostiles to attack, and downed operatives to revive." onContextMenu={e => e.preventDefault()}>
