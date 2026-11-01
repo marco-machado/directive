@@ -5,7 +5,7 @@ import { missionPayout } from '../game/campaign.ts';
 import type { Campaign } from '../game/campaign.ts';
 import { abilityCooldown, ABILITY_STATS, CLASS_STATS } from '../game/classes.ts';
 import type { ClassId } from '../game/classes.ts';
-import { SUSPICIOUS } from '../game/simulation.ts';
+import { SUSPICIOUS, WAIT_STEP } from '../game/simulation.ts';
 import type { Pending, Shield, Snapshot, Unit } from '../game/simulation.ts';
 import { clock, CONTRACTS, Credits, threat } from './common.tsx';
 import { Icon, Portrait } from './icons.tsx';
@@ -111,7 +111,7 @@ export function Hud({ state, overview, onFocusSelection, onToggleOverview }: { s
     <aside id="mission-drawer" className={`hud-left${drawer ? ' open' : ''}`}><Tracker state={state} open={drawer} onToggle={() => setDrawer(v => !v)} /><Comms state={state} /></aside>
     <Spotted state={state} />
     {state.pending ? <Targeting pending={state.pending} /> : null}
-    {state.paused ? <div className="pause-banner"><Icon name="pause" /><span><strong>Tactical pause</strong><small>Orders queue while paused</small></span>
+    {state.paused ? <div className="pause-banner"><Icon name="pause" /><span><strong>Tactical pause</strong><small><kbd>Shift</kbd>+click or long-press: add a waypoint · <kbd>W</kbd>: wait there</small></span>
       <button className="btn small" onClick={sim.togglePause}><Icon name="play" />Resume <kbd>Space</kbd></button></div> : null}
     <p className="sr-only" role="status">{state.message}</p>
     <footer className="hud-bottom">
@@ -121,11 +121,12 @@ export function Hud({ state, overview, onFocusSelection, onToggleOverview }: { s
       })}</section>
       <div className="commands" role="group" aria-label="Orders">
         <button className="cmd" onClick={sim.hold} aria-keyshortcuts="S"><Icon name="hold" /><span>Hold</span><kbd>S</kbd></button>
+        <button className="cmd" onClick={sim.addWait} aria-keyshortcuts="W" aria-label={`Wait ${WAIT_STEP} s longer at the last waypoint`}><Icon name="clock" /><span>Wait</span><kbd>W</kbd></button>
         <button className="cmd" onClick={sim.selectAll} aria-keyshortcuts="A"><Icon name="squad" /><span>All</span><kbd>A</kbd></button>
         <button className="cmd" onClick={onFocusSelection} aria-keyshortcuts="F" aria-label="Focus view on the selection"><Icon name="recenter" /><span>View</span><kbd>F</kbd></button>
         <button className="cmd" onClick={onToggleOverview} aria-keyshortcuts="R" aria-pressed={overview} aria-label="District overview"><Icon name="overview" /><span>Overview</span><kbd>R</kbd></button>
       </div>
-      {state.campaign.completed ? null : <p className="controls-hint" aria-hidden="true">Click street: move · click hostile: takedown or volley · <kbd>1</kbd>–<kbd>4</kbd> select · <kbd>Shift</kbd>+<kbd>1</kbd>–<kbd>4</kbd> ability · <kbd>Space</kbd> pause</p>}
+      {state.campaign.completed ? null : <p className="controls-hint" aria-hidden="true">Click street: move · <kbd>Shift</kbd>+click: waypoint · click hostile: takedown or volley · <kbd>1</kbd>–<kbd>4</kbd> select · <kbd>Shift</kbd>+<kbd>1</kbd>–<kbd>4</kbd> ability · <kbd>Space</kbd> pause</p>}
     </footer>
   </>;
 }

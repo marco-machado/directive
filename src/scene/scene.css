@@ -27,3 +27,6 @@
 .ghost-label[hidden] { display: none }
 .attack-hint[data-tone=quiet] { --c: #5ef2c0; color: #c9fbe8 }
 .attack-hint[data-tone=loud] { --c: #ff5148; color: #ffd0c8 }
+.waypoint-label { position: absolute; left: 0; top: 0; min-width: 16px; padding: 1px 4px; border: 1px solid var(--cls); border-radius: 9px; background: rgb(3 10 10 / .82); white-space: nowrap; text-align: center; font: 700 10px/1.2 var(--f-ui); letter-spacing: .04em; color: var(--cls) }
+.waypoint-label.dim { opacity: .6 }
+.waypoint-label[hidden] { display: none }

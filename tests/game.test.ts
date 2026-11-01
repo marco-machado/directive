@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Simulation, parseCampaign, CALM_SECONDS, FIRST_WAVE_SECONDS, VIP_DAMAGE_TAKEN, VIP_SECURE_SECONDS, CAMERA_DETECT, COVER_FACTOR, DETECT_DRAIN, detectSeconds, GHOST_SECONDS, HACK_SECONDS, LOOK_ANGLE, LOOK_EVERY, LOOK_PAUSE, QUEUE_SPACING, REINFORCE_CAP, SUSPICIOUS, REINFORCE_SECONDS, REVIVE_SECONDS, SIGHT_RANGE, TAKEDOWN_REACH, TAKEDOWN_SECONDS, tierDamage, tierHp } from '../src/game/simulation.ts';
+import { Simulation, parseCampaign, CALM_SECONDS, FIRST_WAVE_SECONDS, VIP_DAMAGE_TAKEN, VIP_SECURE_SECONDS, CAMERA_DETECT, COVER_FACTOR, DETECT_DRAIN, detectSeconds, GHOST_SECONDS, HACK_SECONDS, LOOK_ANGLE, LOOK_EVERY, LOOK_PAUSE, QUEUE_SPACING, REINFORCE_CAP, ROUTE_MAX, SUSPICIOUS, REINFORCE_SECONDS, REVIVE_SECONDS, SIGHT_RANGE, TAKEDOWN_REACH, TAKEDOWN_SECONDS, tierDamage, tierHp, WAIT_MAX, WAIT_STEP } from '../src/game/simulation.ts';
 import type { CampaignSync, Unit, Upgrade } from '../src/game/simulation.ts';
 import { contractPayout, freshCampaign, MAX_TIER } from '../src/game/campaign.ts';
 import type { Campaign, ContractType } from '../src/game/campaign.ts';
@@ -36,7 +36,7 @@ function arena(type: ContractType = 'heist', extra: Partial<Campaign> = {}, sync
   squad.forEach((u, i) => { u.x = i; u.z = 0; u.path = []; });
   sim.units = [...squad, ...sim.units.filter(u => u.faction === 'vip')];
   const hostile = (kind: EnemyKind, x: number, z: number, heading = 0, hp = 75): Unit => {
-    const u: Unit = { ...squad[0], id: `t-${sim.units.length}`, name: kind.toUpperCase(), kind, faction: 'hostile', x, z, heading, sweep: heading, hp, maxHp: hp, ability: null, cooldown: 0, path: [], patrol: [], targetId: null, visible: true };
+    const u: Unit = { ...squad[0], id: `t-${sim.units.length}`, name: kind.toUpperCase(), kind, faction: 'hostile', x, z, heading, sweep: heading, hp, maxHp: hp, ability: null, cooldown: 0, path: [], route: [], patrol: [], targetId: null, visible: true };
     sim.units.push(u); return u;
   };
   return { sim, squad, hostile, world };
@@ -771,8 +771,9 @@ function streets(buildings = ALLEY, type: ContractType = 'heist') {
   return a;
 }
 const settle = (sim: Simulation, units: Unit[]) => {
-  step(sim, 30, () => units.every(u => !u.path.length));
-  assert.equal(sim.phase, 'mission'); assert.ok(units.every(u => !u.path.length), 'still walking');
+  const done = () => units.every(u => !u.path.length && !u.route.length && !u.wait);
+  step(sim, 30, done);
+  assert.equal(sim.phase, 'mission'); assert.ok(done(), 'still walking');
 };
 const spaced = (units: Point[]) => units.every((u, i) => units.every((v, j) => i === j || distance(u, v) >= QUEUE_SPACING - 1e-3));
 
@@ -870,6 +871,160 @@ test('a move order cancels attack and revive orders, abreast or in a queue', () 
 test('the same order in the same alley gives the same queue', () => {
   const runs = [streets(), streets()].map(({ sim, squad }) => { sim.move({ x: 0, z: 8 }); return squad.map(u => u.path); });
   assert.deepEqual(runs[0], runs[1]);
+});
+
+// ---- Waypoint routes ----
+const stops = (sim: Simulation, u: Unit) => sim.waypoints(u).map(w => [w.x, w.z, w.wait]);
+// Steps frame by frame until `u` stands exactly on `p` (walk() lands on each path point), returning the mission time.
+const reach = (sim: Simulation, u: Unit, p: Point, seconds = 30) => {
+  step(sim, seconds, () => u.x === p.x && u.z === p.z);
+  assert.ok(u.x === p.x && u.z === p.z, `${u.name} never reached ${JSON.stringify(p)}`);
+  return sim.time;
+};
+
+test('an appended waypoint starts where the route ends, and the legs are walked in order', () => {
+  const { sim, squad } = streets(), vex = squad[0];
+  sim.select(vex.id);
+  sim.move({ x: 10, z: -10 }); sim.move({ x: 10, z: 5 }, true);
+  assert.match(sim.message, /Waypoint added/);
+  assert.deepEqual(stops(sim, vex), [[10, -10, 0], [10, 5, 0]]);
+  // From where VEX stands the alley's east block is in the way; from the first waypoint it is a straight run.
+  assert.ok(sim.plan!.world.findPath(vex, { x: 10, z: 5 }).length > 1);
+  assert.deepEqual(vex.route.map(leg => leg.path), [[{ x: 10, z: 5 }]], 'the second leg runs from the first waypoint');
+  reach(sim, vex, { x: 10, z: -10 });
+  assert.equal(vex.route.length, 1);
+  settle(sim, [vex]);
+  assert.deepEqual([vex.x, vex.z], [10, 5]); assert.deepEqual(stops(sim, vex), []);
+});
+
+test('routes planned leg by leg while paused wait for the resume', () => {
+  const { sim, squad } = streets([]), vex = squad[0];
+  sim.select(vex.id); sim.togglePause();
+  sim.move({ x: 5, z: -5 }); sim.move({ x: 5, z: 5 }, true); sim.move({ x: -5, z: 5 }, true);
+  const before = structuredClone(sim.units);
+  step(sim, 1);
+  assert.deepEqual(sim.units, before);
+  sim.togglePause();
+  reach(sim, vex, { x: 5, z: -5 }); reach(sim, vex, { x: 5, z: 5 }); reach(sim, vex, { x: -5, z: 5 });
+});
+
+test('a plain click replaces the whole route', () => {
+  const { sim, squad } = streets([]), vex = squad[0];
+  sim.select(vex.id);
+  sim.move({ x: 5, z: -5 }); sim.move({ x: 5, z: 5 }, true); sim.addWait();
+  sim.move({ x: -5, z: -10 });
+  assert.match(sim.message, /Move order confirmed/);
+  assert.deepEqual(stops(sim, vex), [[-5, -10, 0]]); assert.deepEqual(vex.route, []);
+});
+
+test('appended into an alley, the squad lines up from where its routes end and queues single file', () => {
+  const { sim, squad } = streets();
+  const slots = squad.map((_, i) => ({ x: 10 + (i - 1.5) * QUEUE_SPACING, z: -10 }));
+  sim.move({ x: 10, z: -10 }); sim.move({ x: 0, z: 8 }, true);
+  squad.forEach((u, i) => { assert.deepEqual(sim.waypoints(u)[0], { ...slots[i], wait: 0 }); assert.equal(u.route.length, 1); });
+  // The queue is the one a plain order would give a squad already standing on those slots.
+  const there = streets();
+  there.squad.forEach((u, i) => { u.x = slots[i].x; u.z = slots[i].z; });
+  there.sim.move({ x: 0, z: 8 });
+  assert.deepEqual(squad.map(u => u.route[0].path), there.squad.map(u => u.path));
+  const passed = new Set<Unit>();
+  step(sim, 30, () => {
+    squad.forEach((u, i) => { if (u.x === slots[i].x && u.z === slots[i].z) passed.add(u); });
+    return squad.every(u => !u.path.length && !u.route.length);
+  });
+  assert.equal(passed.size, squad.length, 'someone cut the corner past its first waypoint');
+  const byZ = [...squad].sort((a, b) => b.z - a.z);
+  assert.ok(distance(byZ[0], { x: 0, z: 8 }) < 1e-6);
+  for (const u of squad) assert.ok(Math.abs(u.x) < .32 && u.z > -2, JSON.stringify(u));
+  for (let i = 1; i < byZ.length; i++) assert.ok(byZ[i - 1].z - byZ[i].z >= QUEUE_SPACING - 1e-3, `gap ${i}`);
+});
+
+test('a plain order into an alley drops a planned route and queues from where the squad stands', () => {
+  const fresh = streets(), planned = streets();
+  fresh.sim.move({ x: 0, z: 8 });
+  planned.sim.move({ x: 10, z: -10 }); planned.sim.move({ x: -10, z: -10 }, true);
+  planned.sim.move({ x: 0, z: 8 });
+  assert.deepEqual(planned.squad.map(u => u.path), fresh.squad.map(u => u.path));
+  for (const u of planned.squad) assert.deepEqual(u.route, []);
+});
+
+test('the same appended orders give the same routes', () => {
+  const runs = [streets(), streets()].map(({ sim, squad }) => {
+    sim.move({ x: 10, z: -10 }); sim.move({ x: 0, z: 8 }, true); sim.move({ x: 4, z: 12 }, true);
+    return squad.map(u => [u.path, u.route]);
+  });
+  assert.deepEqual(runs[0], runs[1]);
+});
+
+test('a wait at a waypoint lets two operatives time a crossing', () => {
+  const { sim, squad } = streets([]), [vex, rook] = squad;
+  sim.select(vex.id); sim.move({ x: vex.x, z: 0 }); sim.addWait(); sim.move({ x: vex.x, z: 5 }, true);
+  assert.deepEqual(stops(sim, vex), [[vex.x, 0, WAIT_STEP], [vex.x, 5, 0]]);
+  assert.match(sim.message, /Waypoint added/);
+  sim.select(rook.id); sim.move({ x: rook.x, z: 0 }); sim.move({ x: rook.x, z: 5 }, true);
+  const on = (u: Unit, x: number, z: number) => u.x === x && u.z === z, t = { stop: 0, off: 0, rook: 0, vex: 0, left: -1 };
+  step(sim, 30, () => {
+    if (!t.stop && on(vex, vex.x, 0)) t.stop = sim.time;
+    if (t.stop && !t.off && !on(vex, vex.x, 0)) t.off = sim.time;
+    if (t.stop && !t.off && t.left < 0 && sim.time - t.stop >= 1) t.left = stops(sim, vex)[0][2] - (WAIT_STEP - (sim.time - t.stop));
+    if (!t.rook && on(rook, rook.x, 5)) t.rook = sim.time;
+    if (on(vex, vex.x, 5)) t.vex = sim.time;
+    return !!t.vex;
+  });
+  const frame = 2 / 60;
+  assert.ok(Math.abs(t.off - t.stop - WAIT_STEP) < frame, `held ${t.off - t.stop} s`);
+  assert.ok(Math.abs(t.left) < frame, 'the marker counts the wait down');
+  assert.ok(t.rook && Math.abs(t.vex - t.rook - WAIT_STEP) < frame, `VEX ${t.vex} s, ROOK ${t.rook} s`);
+});
+
+test('each wait order adds WAIT_STEP at the last waypoint and one past WAIT_MAX clears it', () => {
+  const { sim, squad } = streets([]), vex = squad[0];
+  sim.select(vex.id); sim.move({ x: 5, z: -5 }); sim.move({ x: 5, z: 5 }, true);
+  for (let w = WAIT_STEP; w <= WAIT_MAX; w += WAIT_STEP) { sim.addWait(); assert.equal(vex.route[0].wait, w); }
+  assert.equal(vex.wait, 0, 'only the last waypoint waits');
+  sim.addWait();
+  assert.equal(vex.route[0].wait, 0); assert.equal(sim.message, 'Wait cleared.');
+});
+
+test('without a route a wait holds the operative where it stands, then it takes the appended leg', () => {
+  const { sim, squad } = streets([]), vex = squad[0], start = { x: vex.x, z: vex.z };
+  sim.select(vex.id); sim.addWait();
+  assert.deepEqual(stops(sim, vex), [[start.x, start.z, WAIT_STEP]]);
+  sim.move({ x: start.x, z: 0 }, true);
+  assert.deepEqual(stops(sim, vex), [[start.x, start.z, WAIT_STEP], [start.x, 0, 0]], 'the leg queues behind the wait');
+  step(sim, WAIT_STEP - .1);
+  assert.deepEqual([vex.x, vex.z], [start.x, start.z]);
+  step(sim, .5);
+  assert.ok(vex.z > start.z);
+  sim.hold();
+  assert.deepEqual(stops(sim, vex), []); assert.equal(vex.wait, 0);
+});
+
+test('an appended waypoint replaces an attack order instead of queuing behind it', () => {
+  const { sim, squad, hostile } = arena(), vex = squad[0];
+  const guard = hostile('guard', 8, 8, Math.PI);
+  sim.select(vex.id); sim.attack(guard.id);
+  assert.ok(vex.targetId || vex.takedownId);
+  sim.move({ x: -5, z: 5 }, true);
+  assert.equal(vex.targetId, null); assert.equal(vex.takedownId, null);
+  assert.deepEqual(stops(sim, vex), [[-5, 5, 0]]);
+});
+
+test(`a route holds ${ROUTE_MAX} waypoints`, () => {
+  const { sim, squad } = streets([]), vex = squad[0];
+  sim.select(vex.id); sim.move({ x: 0, z: 0 });
+  for (let i = 1; i < ROUTE_MAX; i++) sim.move({ x: i, z: i % 2 ? 4 : 0 }, true);
+  assert.equal(sim.waypoints(vex).length, ROUTE_MAX);
+  const route = structuredClone(vex.route), point = sim.commandPoint;
+  sim.move({ x: -5, z: -5 }, true);
+  assert.match(sim.message, /Route full/); assert.deepEqual(vex.route, route); assert.equal(sim.commandPoint, point);
+});
+
+test('a downed operative drops its route', () => {
+  const { sim, squad } = streets([]), vex = squad[0];
+  sim.select(vex.id); sim.move({ x: 5, z: -5 }); sim.move({ x: 5, z: 5 }, true); sim.addWait();
+  (sim as unknown as { damage(u: Unit, n: number, from: Point | null): void }).damage(vex, vex.hp, null);
+  assert.deepEqual(vex.route, []); assert.deepEqual(stops(sim, vex), []);
 });
 
 // ---- Takedowns, synchronized volleys and posted guards looking around ----

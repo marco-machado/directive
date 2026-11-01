@@ -63,6 +63,7 @@ function App() {
       else if (e.code === 'Space') { e.preventDefault(); sim.togglePause(); }
       else if (e.code === 'KeyA') { e.preventDefault(); sim.selectAll(); play('select'); }
       else if (e.code === 'KeyS') sim.hold();
+      else if (e.code === 'KeyW') sim.addWait();
       else if (e.code === 'KeyF') focusSelection();
       else if (e.code === 'KeyR') toggleOverview();
       else if (e.key === 'Escape') { if (!sim.cancelAbility()) sim.pause(); }

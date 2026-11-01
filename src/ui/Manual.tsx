@@ -1,21 +1,23 @@
 import type { ReactNode } from 'react';
 import { STEALTH_BONUS } from '../game/campaign.ts';
-import { CALM_SECONDS, FIRST_WAVE_SECONDS, REINFORCE_SECONDS } from '../game/simulation.ts';
+import { CALM_SECONDS, FIRST_WAVE_SECONDS, REINFORCE_SECONDS, ROUTE_MAX, WAIT_MAX, WAIT_STEP } from '../game/simulation.ts';
 import { Dialog, SaveCode } from './common.tsx';
 import { Icon } from './icons.tsx';
 import type { IconName } from './icons.tsx';
 
 const CONTROLS: [ReactNode, string][] = [
   [<><kbd>1</kbd>–<kbd>4</kbd> or click a card</>, 'Select that operative'],
-  [<><kbd>Shift</kbd> + click</>, 'Add or remove from the selection'],
+  [<><kbd>Shift</kbd> + click an operative</>, 'Add or remove from the selection; on touch, long-press'],
   [<><kbd>A</kbd></>, 'Select the surviving squad'],
   [<><kbd>Shift</kbd> + <kbd>1</kbd>–<kbd>4</kbd></>, "Use that operative's ability; aimed abilities then need a target on the map"],
   [<><kbd>Esc</kbd></>, 'Cancel an ability; otherwise pause'],
-  ['Click street', 'Move around buildings'],
+  ['Click street', 'Move around buildings, replacing any planned route'],
+  [<><kbd>Shift</kbd> + click street</>, `Add a waypoint to each selected operative's route (up to ${ROUTE_MAX}); on touch, long-press`],
+  [<><kbd>W</kbd></>, `Hold ${WAIT_STEP} s longer at the last waypoint, up to ${WAIT_MAX} s; once more clears it. Use it to time a crossing`],
   ['Click hostile', 'Take an unaware hostile down up close, or fire a volley; hover to preview'],
   ['Click a downed operative', 'The nearest selected teammate revives them'],
   [<><kbd>S</kbd></>, 'Hold position'],
-  [<><kbd>Space</kbd></>, 'Pause and queue orders'],
+  [<><kbd>Space</kbd></>, 'Pause. Orders still work, and every planned route shows'],
   ['Right-drag / one-finger drag', 'Rotate and tilt the view'],
   ['Scroll / pinch', 'Zoom the view'],
   ['Middle-drag / two-finger drag', 'Pan the view. The view follows the selection again once it starts moving, or after F or R'],
