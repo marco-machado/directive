@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Simulation, parseCampaign, CALM_SECONDS, COVER_FACTOR, HACK_SECONDS, LOOK_ANGLE, LOOK_EVERY, LOOK_PAUSE, QUEUE_SPACING, REINFORCE_CAP, REINFORCE_SECONDS, REVIVE_SECONDS, TAKEDOWN_REACH, TAKEDOWN_SECONDS } from '../src/game/simulation.ts';
+import { Simulation, parseCampaign, CALM_SECONDS, COVER_FACTOR, HACK_SECONDS, LOOK_ANGLE, LOOK_EVERY, LOOK_PAUSE, QUEUE_SPACING, REINFORCE_CAP, SUSPICIOUS, REINFORCE_SECONDS, REVIVE_SECONDS, TAKEDOWN_REACH, TAKEDOWN_SECONDS } from '../src/game/simulation.ts';
 import type { CampaignSync, Unit, Upgrade } from '../src/game/simulation.ts';
 import { contractPayout, freshCampaign, MAX_TIER } from '../src/game/campaign.ts';
 import type { Campaign, ContractType } from '../src/game/campaign.ts';
@@ -646,6 +646,22 @@ test('a takedown stays quiet unless another hostile sees it happen', () => {
     step(sim, TAKEDOWN_SECONDS - .1); assert.ok(guard.hp > 0, 'not before 1.5 s');
     step(sim, .2); assert.equal(guard.hp, 0); assert.equal(sim.alarm, false);
   }
+});
+
+test('a guard that turns suspicious as the operative reaches it is not pinned', () => {
+  const { sim, squad, hostile } = arena();
+  const rook = squad[1];
+  // ROOK stands 1 m in front of a guard that is just short of suspicious, so the order is still a takedown.
+  const guard = hostile('guard', 2, 0, -Math.PI / 2);
+  guard.detect = SUSPICIOUS - .01;
+  sim.selected = [rook.id]; sim.attack(guard.id);
+  assert.equal(rook.takedownId, guard.id);
+  sim.update(1 / 60);
+  assert.ok(guard.detect > SUSPICIOUS);
+  assert.equal(guard.held, 0); assert.equal(rook.takedownId, null);
+  assert.match(sim.message, /GUARD turned suspicious\. ROOK holding/);
+  step(sim, 2, () => sim.alarm);
+  assert.equal(sim.alarm, true); assert.ok(guard.hp > 0);
 });
 
 test('a heavy takedown needs two operatives, and only starts with both in reach', () => {

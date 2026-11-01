@@ -648,10 +648,11 @@ export class Simulation {
   private closeIn(u: Unit, dt: number): boolean {
     const v = this.unit(u.takedownId!);
     if (!v || v.hp <= 0) { u.takedownId = null; return false; }
-    if (v.held > 0 || distance(u, v) <= TAKEDOWN_REACH) { u.path = []; u.heading = headingTo(u, v); return true; }
-    // Spotted on the way in: the alarm turns it into a firefight; a suspicious guard calls it off.
+    if (v.held > 0) { u.path = []; u.heading = headingTo(u, v); return true; }
+    // Spotted before the hold starts, even within reach: the alarm turns it into a firefight; a suspicious guard calls it off.
     if (this.alarm) { u.takedownId = null; u.targetId = v.id; u.path = []; return false; }
     if (v.detect > SUSPICIOUS) { u.takedownId = null; u.path = []; this.message = `${v.name} turned suspicious. ${u.name} holding.`; return true; }
+    if (distance(u, v) <= TAKEDOWN_REACH) { u.path = []; u.heading = headingTo(u, v); return true; }
     // The hostile walks and turns while the operative closes in: re-route once the route no longer ends
     // in reach or crosses its sight.
     u.repath -= dt;
@@ -687,6 +688,8 @@ export class Simulation {
       }
       // Pinned operatives stand still, so only a re-ordered crew can be out of reach mid-hold; that starts over.
       if (crew.some(u => distance(u, v) > TAKEDOWN_REACH)) { v.held = 0; continue; }
+      // A hold only starts on an unaware hostile (an earlier takedown's witness may have raised the alarm this frame).
+      if (!v.held && (this.alarm || v.detect > SUSPICIOUS)) continue;
       v.held += dt; v.moving = false; v.path = [];
       const witness = this.units.find(h => h !== v && h.faction === 'hostile' && h.hp > 0 && h.stunned <= 0 && !h.held && [v, ...crew].some(p => this.sees(h, p)));
       if (witness && !this.alarm) this.raiseAlarm(witness, `${witness.name} saw the takedown`, crew[0]);
