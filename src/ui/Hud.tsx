@@ -6,7 +6,7 @@ import type { Campaign } from '../game/campaign.ts';
 import { abilityCooldown, ABILITY_STATS, CLASS_STATS } from '../game/classes.ts';
 import type { ClassId } from '../game/classes.ts';
 import { SUSPICIOUS } from '../game/simulation.ts';
-import type { Pending, Snapshot, Unit } from '../game/simulation.ts';
+import type { Pending, Shield, Snapshot, Unit } from '../game/simulation.ts';
 import { clock, CONTRACTS, Credits, threat } from './common.tsx';
 import { Icon, Portrait } from './icons.tsx';
 import { play } from './audio.ts';
@@ -38,7 +38,7 @@ function Tracker({ state }: { state: Snapshot }) {
 
 // Two clicks or taps on a card within this many ms focus the view on that operative.
 const DOUBLE_TAP_MS = 450;
-function SquadCard({ unit, slot, selected, campaign, pending, onFocusSelection }: { unit: Unit; slot: number; selected: boolean; campaign: Campaign; pending: Pending; onFocusSelection: () => void }) {
+function SquadCard({ unit, slot, selected, campaign, pending, cover, onFocusSelection }: { unit: Unit; slot: number; selected: boolean; campaign: Campaign; pending: Pending; cover: Shield; onFocusSelection: () => void }) {
   const cls = unit.kind as ClassId, ability = unit.ability ?? CLASS_STATS[cls].ability, name = ABILITY_STATS[ability].name;
   const max = abilityCooldown(ability, campaign.abilities[cls]), down = unit.hp <= 0, ready = unit.abilityCd <= 0, aiming = pending?.unitId === unit.id;
   const health = unit.hp / unit.maxHp, hit = !down && unit.hurt > 1.1, lastTap = useRef(-Infinity);
@@ -53,7 +53,8 @@ function SquadCard({ unit, slot, selected, campaign, pending, onFocusSelection }
       <span className="agent-copy">
         <span className="agent-name"><b>{unit.name}</b><small>{CLASS_STATS[cls].title}</small></span>
         <span className="hp" style={{ '--hp': health } as CSSProperties}><i /></span>
-        <span className="hp-text">{down ? <b className="down-text">Down</b> : <><b>{Math.ceil(unit.hp)}</b> / {unit.maxHp}</>}</span>
+        <span className="hp-text">{down ? <b className="down-text">Down</b> : <><span><b>{Math.ceil(unit.hp)}</b> / {unit.maxHp}</span>
+          {cover ? <span className={`cover-badge ${cover}`} role="img" aria-label={cover === 'covered' ? 'In cover' : 'Flanked'} title={cover === 'covered' ? 'In cover: incoming fire halved' : 'Flanked: a hostile has a clear shot'}><Icon name="cover" /></span> : null}</>}</span>
       </span>
     </button>
     {down ? <p className="agent-down">Select a teammate, click the body to revive</p>
@@ -113,7 +114,7 @@ export function Hud({ state, overview, onFocusSelection, onToggleOverview }: { s
     <footer className="hud-bottom">
       <section className="squad" aria-label="Squad selection">{state.squad.map((id, i) => {
         const u = state.units.find(v => v.id === id);
-        return u ? <SquadCard key={id} unit={u} slot={i} selected={state.selected.includes(id)} campaign={state.campaign} pending={state.pending} onFocusSelection={onFocusSelection} /> : null;
+        return u ? <SquadCard key={id} unit={u} slot={i} selected={state.selected.includes(id)} campaign={state.campaign} pending={state.pending} cover={state.cover[id] ?? null} onFocusSelection={onFocusSelection} /> : null;
       })}</section>
       <div className="commands" role="group" aria-label="Orders">
         <button className="cmd" onClick={sim.hold} aria-keyshortcuts="S"><Icon name="hold" /><span>Hold</span><kbd>S</kbd></button>

@@ -30,11 +30,15 @@ export type Blast = { id: number; kind: 'grenade' | 'heal' | 'emp'; x: number; z
 export type Objective = Point & { kind: 'target' | 'terminal' | 'charge' | 'vip' | 'extract'; label: string; progress: number; done: boolean };
 export type Phase = 'briefing' | 'mission' | 'headquarters';
 export type Pending = { unitId: string; ability: AbilityId } | null;
+// 'covered' when every threat fires into the barrier the unit crouches behind, 'flanked' when one of them has a clear shot.
+export type Shield = 'covered' | 'flanked' | null;
+export type CoverStatus = { threats: { id: string; covered: boolean }[]; shield: Shield };
+export type CoverSnap = Point & { along: Point };
 export type Snapshot = {
   phase: Phase; paused: boolean; selected: string[]; squad: string[]; squadPick: string[]; units: Unit[]; campaign: Campaign;
   contract: Contract | null; plan: MissionPlan | null; objectives: Objective[]; alarm: boolean; calmIn: number; reinforceIn: number; reinforced: number;
   result: 'success' | 'failure' | null; failReason: string; payout: number; stealth: boolean; time: number; message: string;
-  saveUnavailable: boolean; syncing: boolean; pending: Pending;
+  saveUnavailable: boolean; syncing: boolean; pending: Pending; cover: Record<string, Shield>;
 };
 // Reports campaign events to the server; the server answers through applyCampaign.
 export type CampaignSync = {
@@ -179,6 +183,7 @@ export class Simulation {
       objectives: this.objectives.map(o => ({ ...o })), alarm: this.alarm, calmIn: this.calmIn, reinforceIn: this.reinforceIn, reinforced: this.reinforced, result: this.result,
       failReason: this.failReason, payout: this.payout, stealth: !this.detected, time: this.time, message: this.message,
       saveUnavailable: this.saveUnavailable, syncing: this.syncing, pending: this.pending,
+      cover: Object.fromEntries(this.phase === 'mission' && this.plan ? this.livingSquad().map(u => [u.id, this.coverStatus(u).shield]) : []),
     };
     this.listeners.forEach(fn => fn());
   }
@@ -294,12 +299,14 @@ export class Simulation {
   private orderable() { return this.selected.map(id => this.unit(id)).filter((u): u is Unit => !!u && u.hp > 0); }
   private clearOrders(u: Unit) { u.targetId = null; u.reviveTarget = null; u.revive = 0; u.takedownId = null; }
   // Operatives line up side by side; where the street is too narrow for that, they queue in single file.
+  // An order next to a barrier ends on its sheltered side (see coverSnap), the line running along the barrier.
   move(click: Point) {
     if (this.phase !== 'mission' || !this.plan) return;
-    const world = this.plan.world, point = { x: click.x, z: click.z }, units = this.orderable();
+    const snap = this.coverSnap(click), along = snap?.along ?? { x: 1, z: 0 };
+    const world = this.plan.world, point = { x: snap?.x ?? click.x, z: snap?.z ?? click.z }, units = this.orderable();
     const line = units.map((u, i) => {
       // A formation slot off the map (extraction sits by the edge) falls back to the clicked point itself.
-      const slot = { x: point.x + (i - (units.length - 1) / 2) * QUEUE_SPACING, z: point.z }, path = world.findPath(u, slot);
+      const k = (i - (units.length - 1) / 2) * QUEUE_SPACING, slot = { x: point.x + along.x * k, z: point.z + along.z * k }, path = world.findPath(u, slot);
       return path.length || world.inBounds(slot) ? path : world.findPath(u, point);
     });
     const orders = line.every(path => path.length) ? new Map(units.map((u, i) => [u, line[i]])) : this.queue(units, point);
@@ -768,6 +775,36 @@ export class Simulation {
     const end = u.path.at(-1);
     if (u.repath <= 0 || !end || distance(end, goal) > 1) { u.repath = .5; u.path = this.plan!.world.findPath(u, { x: goal.x, z: goal.z }); }
     this.walk(u, VIP_SPEED, dt);
+  }
+  // ---- Cover ----
+  // Who can shoot at `u`: during the alarm, armed hostiles with `u` in range and in sight; before it, every armed
+  // hostile the squad can see. Cameras and the target carry no weapon, so cover means nothing against them.
+  private threats(u: Unit) {
+    const world = this.plan!.world;
+    return this.units.filter(h => {
+      if (h.faction !== 'hostile' || h.hp <= 0) return false;
+      const stats = HOSTILE_STATS[h.kind as EnemyKind];
+      if (!stats.damage) return false;
+      return this.alarm ? distance(h, u) <= stats.range && world.sightClear(h, u) : h.visible;
+    });
+  }
+  // Whether `u` is behind cover against each current threat. The shield shows only beside a barrier, with a threat about.
+  coverStatus(u: Unit): CoverStatus {
+    const world = this.plan?.world;
+    if (!world || u.hp <= 0) return { threats: [], shield: null };
+    const threats = this.threats(u).map(h => ({ id: h.id, covered: world.coverBetween(h, u) }));
+    const shield = !threats.length || !world.besideCover(u) ? null : threats.every(t => t.covered) ? 'covered' : 'flanked';
+    return { threats, shield };
+  }
+  // Where a move order at `p` ends when `p` lies within 1 m of a barrier: on the barrier's side away from the
+  // nearest known threat (an armed hostile in sight, else a last-seen marker). Null with no barrier near or no threat known.
+  coverSnap(p: Point): CoverSnap | null {
+    if (!this.plan) return null;
+    const known: Point[] = this.units.filter(h => h.faction === 'hostile' && h.hp > 0 && h.visible && HOSTILE_STATS[h.kind as EnemyKind].damage > 0);
+    if (!known.length) for (const [id, s] of this.lastSeen) if (HOSTILE_STATS[this.unit(id)?.kind as EnemyKind]?.damage) known.push(s);
+    const threat = known.sort((a, b) => distance(a, p) - distance(b, p))[0];
+    const spot = threat && this.plan.world.coverSpot(p, threat);
+    return spot ? { ...spot.point, along: spot.along } : null;
   }
   // The nearest spot behind a barrier, as seen from `threat`, within VIP_COVER_REACH of the operative.
   private shelter(u: Unit, leader: Unit, threat: Point): Point | null {

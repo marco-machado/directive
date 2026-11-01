@@ -8,6 +8,7 @@ import type { Blast, Faction, Pending, Shot, Simulation, Unit } from '../game/si
 import type { EnemyKind } from '../game/mapgen.ts';
 import type { Point, World } from '../game/world.ts';
 import { play } from '../ui/audio.ts';
+import { shield, SHIELD_COLOR } from './parts.tsx';
 import type { Cue } from '../ui/audio.ts';
 
 const UP = new Vector3(0, 1, 0);
@@ -179,6 +180,26 @@ function CommandMarker({ sim }: { sim: Simulation }) {
   return <group ref={marker} visible={false}>
     <mesh rotation={FLAT}><ringGeometry args={[.22, .29, 4]} /><meshBasicMaterial color="#5ef2c0" toneMapped={false} /></mesh>
     <mesh ref={ping} rotation={FLAT} geometry={RING}><meshBasicMaterial color="#5ef2c0" transparent toneMapped={false} depthWrite={false} /></mesh>
+  </group>;
+}
+
+// Where a move order under the pointer would end when it lies within 1 m of a barrier: the barrier's sheltered
+// side (Simulation.coverSnap), marked with a shield. Hidden while aiming, over a unit, or with nobody selected.
+export function CoverPreview({ sim, pointer, hovered }: { sim: Simulation; pointer: RefObject<Pointer>; hovered: RefObject<string | null> }) {
+  const marker = useRef<Group>(null), icon = useRef<Mesh>(null);
+  useFrame(({ camera }) => {
+    const g = marker.current, m = icon.current, p = pointer.current;
+    if (!g || !m) return;
+    const ready = sim.phase === 'mission' && p.on && !sim.pending && !hovered.current && sim.selected.some(id => sim.units.some(u => u.id === id && u.hp > 0));
+    const snap = ready ? sim.coverSnap(p) : null;
+    g.visible = !!snap;
+    if (!snap) return;
+    g.position.set(snap.x, .06, snap.z);
+    m.quaternion.copy(camera.quaternion); m.scale.setScalar(20 / camera.zoom);
+  });
+  return <group ref={marker} visible={false}>
+    <mesh rotation={FLAT}><ringGeometry args={[.22, .29, 4]} /><meshBasicMaterial color={SHIELD_COLOR.covered} transparent opacity={.75} toneMapped={false} depthWrite={false} /></mesh>
+    <mesh ref={icon} position={[0, .75, 0]} material={shield(SHIELD_COLOR.covered)} renderOrder={22}><planeGeometry args={[1, 1]} /></mesh>
   </group>;
 }
 
