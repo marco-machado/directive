@@ -17,7 +17,7 @@ import { mayBeHidden, viewAlong } from './view.ts';
 
 type Vec3 = [number, number, number];
 export const TOP: Record<UnitKind, number> = { assault: 1.3, support: 1.3, recon: 1.3, tech: 1.3, guard: 1.3, heavy: 1.55, camera: 2.15, turret: .75, target: 1.3, vip: 1.3 };
-const HITBOX: Record<UnitKind, Vec3> = { assault: [.95, 1.5, .95], support: [.95, 1.5, .95], recon: [.95, 1.5, .95], tech: [.95, 1.5, .95], guard: [.95, 1.5, .95], heavy: [1.15, 1.8, 1.15], camera: [.7, 2.3, .7], turret: [1.1, 1, 1.1], target: [.95, 1.5, .95], vip: [.95, 1.5, .95] };
+const HITBOX: Record<UnitKind, Vec3> = { assault: [.7, 1.35, .7], support: [.7, 1.35, .7], recon: [.7, 1.35, .7], tech: [.7, 1.35, .7], guard: [.7, 1.35, .7], heavy: [.85, 1.6, .85], camera: [.7, 2.3, .7], turret: [1.1, 1, 1.1], target: [.7, 1.35, .7], vip: [.7, 1.35, .7] };
 const ACCENT: Record<UnitKind, string> = { assault: '#9ff7d1', support: '#9ff7d1', recon: '#9ff7d1', tech: '#8ff0e6', guard: '#ed7e70', heavy: '#ff6d5c', camera: '#ff5a4a', turret: '#ff6d5c', target: '#ffbd83', vip: '#ffe7a8' };
 const GROUND: Record<Faction, string> = { squad: '#9ff7d1', hostile: '#ed7e70', vip: '#ffe7a8' };
 // Silhouette colors: operatives in their class color, hostiles red, the VIP gold.
@@ -108,7 +108,7 @@ export type Hitboxes = Map<Mesh, string>;
 export const clickable = (sim: Simulation, u: Unit | undefined) => !!u && (u.faction === 'squad' && u.hp > 0 || sim.phase === 'mission' && (u.faction !== 'hostile' || u.hp > 0 && u.visible));
 
 // A click or tap that misses every hitbox still picks a clickable unit drawn this close to it (CSS pixels).
-export const PICK_SLOP = 28;
+export const PICK_SLOP = 12;
 const corner = new Vector3();
 // The clickable unit whose on-screen hitbox lies nearest a canvas point, within PICK_SLOP. While an ability
 // is aimed only hostiles count: a click on a teammate cancels the aim, so a near miss must not.
