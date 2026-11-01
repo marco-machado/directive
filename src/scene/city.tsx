@@ -5,7 +5,7 @@ import type { MissionPlan } from '../game/mapgen.ts';
 import type { Simulation } from '../game/simulation.ts';
 import { distance } from '../game/world.ts';
 import type { Bounds, Point } from '../game/world.ts';
-import { dressDistrict } from './district.ts';
+import { dressDistrict, GRID_Y } from './district.ts';
 import type { Part } from './district.ts';
 import { disposeMaterials, districtMaterials } from './materials.ts';
 import { BOX, InstancedParts, PLANE, ROUND } from './parts.tsx';
@@ -93,7 +93,7 @@ export const City = memo(function City({ plan, sim }: { plan: MissionPlan; sim: 
   const m = kit.materials;
   return <group>
     <mesh position={[cx, -.03, cz]} receiveShadow material={m.ground}><boxGeometry args={[w + 2 * GROUND, .06, d + 2 * GROUND]} /></mesh>
-    <lineSegments geometry={grid} position={[0, .007, 0]}><lineBasicMaterial color="#2f5866" transparent opacity={.35} depthWrite={false} /></lineSegments>
+    <lineSegments geometry={grid} position={[0, GRID_Y, 0]}><lineBasicMaterial color="#2f5866" transparent opacity={.35} depthWrite={false} /></lineSegments>
     <InstancedParts parts={district.solid} geometry={BOX} material={m.solid} fades={fades} castShadow receiveShadow />
     <InstancedParts parts={parts.cylinders} geometry={ROUND} material={m.solid} fades={fades} castShadow receiveShadow />
     <InstancedParts parts={district.facade} geometry={BOX} material={m.facade} fades={fades} castShadow receiveShadow />

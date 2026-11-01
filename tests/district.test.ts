@@ -5,7 +5,7 @@ import type { ContractType } from '../src/game/campaign.ts';
 import { planMission } from '../src/game/mapgen.ts';
 import type { MissionPlan } from '../src/game/mapgen.ts';
 import type { Rect } from '../src/game/world.ts';
-import { dressDistrict, MAX_PRACTICALS, partBounds } from '../src/scene/district.ts';
+import { dressDistrict, GRID_Y, MAX_PRACTICALS, OVERLAY_FLOOR, partBounds } from '../src/scene/district.ts';
 import type { District, Part } from '../src/scene/district.ts';
 import { buildingTop, hides, PLINTH } from '../src/scene/view.ts';
 
@@ -74,6 +74,17 @@ test('nothing past the bounds hides a unit at the edge, even from the lowest cam
         for (const u of units) assert.ok(!hides(u, .9, view, r, e.maxY), `seed ${c.seed}: a ring part ${e.maxY.toFixed(2)} m tall hides a unit at ${u.x.toFixed(1)}, ${u.z.toFixed(1)}`);
       }
     }
+  }
+});
+
+test('flat street dressing stays under the tactical grid and every gameplay ground overlay', () => {
+  assert.ok(GRID_Y < OVERLAY_FLOOR);
+  for (const c of cases) {
+    const district = dressDistrict(planMission(c));
+    const flat = district.solid.map(partBounds).filter(e => e.maxY < .1);
+    assert.ok(flat.length > 0);
+    for (const e of flat) assert.ok(e.maxY < GRID_Y, `seed ${c.seed}: street dressing reaches ${e.maxY.toFixed(3)} m`);
+    for (const p of district.puddles) assert.ok(p.y < GRID_Y);
   }
 });
 

@@ -32,6 +32,11 @@ export type District = {
 // into bays of about BAY. The atlas is ATLAS_CELLS bays square (see textures.ts).
 export const FLOOR0 = 1.25, ROW = .56, BAY = .52, ATLAS_CELLS = 32;
 export const PLINTH_TOP = .24;
+// Flat street dressing stays under every gameplay ground overlay (vision cones, patrol routes, unit and objective
+// markers, combat decals: the lowest sits at OVERLAY_FLOOR), so it never hides one. Paint, puddles, sidewalks and
+// curbs also lie under the tactical grid, which city.tsx draws at GRID_Y.
+export const OVERLAY_FLOOR = .012, GRID_Y = .011;
+const PAINT_TOP = .004, WALK_TOP = .008, CURB_TOP = .01;
 const SIDEWALK = .55;        // walkway past the plinth
 export const RING = { road: 3.4, park: 4.3, walk: 5.3, blocks: 5.5, depth: 3.2 }; // outer ring, meters past the bounds
 export const MAX_PRACTICALS = 8;
@@ -310,7 +315,7 @@ function parkedCar(k: Kit, rng: Rng, x: number, z: number, alongX: boolean) {
 function crosswalk(k: Kit, clear: (r: Rect) => boolean, x: number, z: number, alongX: boolean) {
   for (let s = -1.4; s <= 1.41; s += .3) {
     const r: Rect = alongX ? { x, z: z + s, w: .62, d: .15 } : { x: x + s, z, w: .15, d: .62 };
-    if (clear(r)) k.flat(r, 0, .012, '#aeb7bc', PAINT);
+    if (clear(r)) k.flat(r, 0, PAINT_TOP, '#aeb7bc', PAINT);
   }
 }
 
@@ -340,20 +345,20 @@ export function dressDistrict(plan: MissionPlan): District {
       { x: bd.x + W + (inner + outer) / 2, z: bd.z, w: SIDEWALK, d: bd.d + 2 * inner }, { x: bd.x - W - (inner + outer) / 2, z: bd.z, w: SIDEWALK, d: bd.d + 2 * inner },
     ];
     walks.push({ x: bd.x, z: bd.z, w: bd.w + 2 * outer, d: bd.d + 2 * outer });
-    for (const s of strips) for (const piece of cutStrip(s, world.cover, .1)) k.flat(piece, 0, .04, '#4b525c', CONCRETE);
+    for (const s of strips) for (const piece of cutStrip(s, world.cover, .1)) k.flat(piece, 0, WALK_TOP, '#4b525c', CONCRETE);
     const curbs: Rect[] = [
       { x: bd.x, z: bd.z + D + outer, w: bd.w + 2 * outer, d: .06 }, { x: bd.x, z: bd.z - D - outer, w: bd.w + 2 * outer, d: .06 },
       { x: bd.x + W + outer, z: bd.z, w: .06, d: bd.d + 2 * outer }, { x: bd.x - W - outer, z: bd.z, w: .06, d: bd.d + 2 * outer },
     ];
-    for (const c of curbs) for (const piece of cutStrip(c, world.cover, .1)) k.flat(piece, 0, .065, '#77808b', CONCRETE);
+    for (const c of curbs) for (const piece of cutStrip(c, world.cover, .1)) k.flat(piece, 0, CURB_TOP, '#77808b', CONCRETE);
   }
 
   // Street lines of the block grid: dashed center lines, crosswalks and corner lamps at the intersections.
   const { cols, rows, cw, cd } = blockGrid(b);
   const xs = Array.from({ length: cols - 1 }, (_, n) => b.minX + (n + 1) * cw), zs = Array.from({ length: rows - 1 }, (_, n) => b.minZ + (n + 1) * cd);
   const open = (p: Point) => world.walkable(p, .6) && keep.every(q => distance(q, p) > 2);
-  for (const x of xs) for (let z = b.minZ + 1; z < b.maxZ - 1; z += 2) if (zs.every(s => Math.abs(s - z) > 1.9) && open({ x, z })) k.box(x, .008, z, .075, .016, .8, '#7d847c', PAINT);
-  for (const z of zs) for (let x = b.minX + 1; x < b.maxX - 1; x += 2) if (xs.every(s => Math.abs(s - x) > 1.9) && open({ x, z })) k.box(x, .008, z, .8, .016, .075, '#7d847c', PAINT);
+  for (const x of xs) for (let z = b.minZ + 1; z < b.maxZ - 1; z += 2) if (zs.every(s => Math.abs(s - z) > 1.9) && open({ x, z })) k.box(x, PAINT_TOP / 2, z, .075, PAINT_TOP, .8, '#7d847c', PAINT);
+  for (const z of zs) for (let x = b.minX + 1; x < b.maxX - 1; x += 2) if (xs.every(s => Math.abs(s - x) > 1.9) && open({ x, z })) k.box(x, PAINT_TOP / 2, z, .8, PAINT_TOP, .075, '#7d847c', PAINT);
   const blocked = [...walks, ...world.cover.map(c => ({ ...c, w: c.w + .2, d: c.d + .2 }))];
   const street = (r: Rect) => world.walkable(r, .05) && blocked.every(o => !overlaps(o, r));
   const { cx, cz } = keyOf(b);
@@ -373,7 +378,7 @@ export function dressDistrict(plan: MissionPlan): District {
   // Puddles on open asphalt; `r` is the half-width of the plane that carries the puddle's outline.
   const puddle = (x: number, z: number, r: number) => {
     const w = 2 * r * between(rng, 1.2, 1.8), d = 2 * r, ry = rng() * Math.PI;
-    k.puddles.push({ x, y: .006, z, w, h: d, d: 1, rx: -Math.PI / 2, ry, color: '#8d97a6' });
+    k.puddles.push({ x, y: PAINT_TOP + .001, z, w, h: d, d: 1, rx: -Math.PI / 2, ry, color: '#8d97a6' });
     k.flats.push({ x, z, w: Math.max(w, d), d: Math.max(w, d) });
   };
   for (let n = 0, made = 0; n < 200 && made < 4 + 2 * contract.tier; n++) {
@@ -399,11 +404,11 @@ export function dressDistrict(plan: MissionPlan): District {
     for (let a = s.lo - RING.walk + 1; a < s.hi + RING.walk - 1; a += 2) {
       if (mouths.some(m => Math.abs(m - a) < 1.5)) continue;
       const p = point(a, 1.35);
-      k.box(p.x, .008, p.z, alongX ? .8 : .075, .016, alongX ? .075 : .8, '#7d847c', PAINT);
+      k.box(p.x, PAINT_TOP / 2, p.z, alongX ? .8 : .075, PAINT_TOP, alongX ? .075 : .8, '#7d847c', PAINT);
     }
     const cuts = mouths.map(m => strip(RING.road, RING.walk, m - 1.5, m + 1.5));
-    for (const piece of cutStrip(strip(RING.park + .03, RING.walk, mid - span / 2, mid + span / 2), cuts, 0)) k.flat(piece, 0, .04, '#4b525c', CONCRETE);
-    for (const piece of cutStrip(strip(RING.park, RING.park + .06, mid - span / 2, mid + span / 2), cuts, 0)) k.flat(piece, 0, .065, '#77808b', CONCRETE);
+    for (const piece of cutStrip(strip(RING.park + .03, RING.walk, mid - span / 2, mid + span / 2), cuts, 0)) k.flat(piece, 0, WALK_TOP, '#4b525c', CONCRETE);
+    for (const piece of cutStrip(strip(RING.park, RING.park + .06, mid - span / 2, mid + span / 2), cuts, 0)) k.flat(piece, 0, CURB_TOP, '#77808b', CONCRETE);
     for (const m of mouths) { const p = point(m, (RING.road + RING.walk) / 2); crosswalk(k, () => true, p.x, p.z, !alongX); }
     // Parked cars along the curb.
     for (let a = s.lo + .6; a < s.hi - .6;) {
@@ -437,7 +442,7 @@ export function dressDistrict(plan: MissionPlan): District {
   // Ring corners: sidewalk squares joining the sides.
   for (const [sx, sz] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
     const x = (sx > 0 ? b.maxX : b.minX) + sx * (RING.park + RING.walk) / 2, z = (sz > 0 ? b.maxZ : b.minZ) + sz * (RING.park + RING.walk) / 2;
-    k.flat({ x, z, w: RING.walk - RING.park, d: RING.walk - RING.park }, 0, .04, '#4b525c', CONCRETE);
+    k.flat({ x, z, w: RING.walk - RING.park, d: RING.walk - RING.park }, 0, WALK_TOP, '#4b525c', CONCRETE);
   }
   for (let n = 0; n < 6; n++) {
     const s = pick(rng, sides), a = between(rng, s.lo, s.hi), out = between(rng, .9, RING.road - .9), r = between(rng, .45, .8);
