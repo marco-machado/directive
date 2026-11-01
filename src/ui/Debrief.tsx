@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import type { RefObject } from 'react';
 import type { ClassId } from '../game/classes.ts';
-import type { Snapshot, Unit } from '../game/simulation.ts';
-import { clock, CONTRACTS, Credits, SaveCode, SaveWarning, threat } from './common.tsx';
+import { HOSTILE_STATS } from '../game/simulation.ts';
+import type { AlarmCause, Snapshot, Unit } from '../game/simulation.ts';
+import { Clearance, clock, CONTRACTS, Credits, SaveCode, SaveWarning, threat } from './common.tsx';
 import { Icon, Portrait } from './icons.tsx';
 import type { IconName } from './icons.tsx';
 
@@ -21,6 +22,41 @@ function useCountUp(target: number) {
 
 const Stat = ({ icon, label, value, tone = '' }: { icon: IconName; label: string; value: string; tone?: string }) =>
   <div className={`stat ${tone}`}><Icon name={icon} /><small>{label}</small><strong>{value}</strong></div>;
+
+// "SECURITY spotted VEX near Charge A · 00:50"
+function alarmLine(cause: AlarmCause) {
+  const who = cause.hostile ? HOSTILE_STATS[cause.hostile].name : 'A hostile', op = cause.operative;
+  const what = cause.trigger === 'grenade' ? `${op ? `${op}'s` : 'A'} grenade went off`
+    : cause.trigger === 'takedown' ? `${who} saw ${op ? `${op}'s` : 'a'} takedown`
+    : cause.trigger === 'gunfire' ? `${who} survived ${op ? `a hit from ${op}` : 'a hit'}`
+    : op ? `${who} spotted ${op}` : 'The alarm sounded';
+  return `${what} near ${cause.near}`;
+}
+
+// A plan of the district (x to the right, z down) with the objectives and a pin where the first alarm was raised.
+function AlarmMap({ state, cause }: { state: Snapshot; cause: AlarmCause }) {
+  const world = state.plan!.world, { minX, maxX, minZ, maxZ } = world.bounds;
+  return <svg className="alarm-map" viewBox={`${minX} ${minZ} ${maxX - minX} ${maxZ - minZ}`} role="img" aria-label={`District map, alarm pinned ${alarmLine(cause)}`}>
+    <rect className="alarm-map-ground" x={minX} y={minZ} width={maxX - minX} height={maxZ - minZ} />
+    {world.buildings.map((b, i) => <rect key={i} className="alarm-map-block" x={b.x - b.w / 2} y={b.z - b.d / 2} width={b.w} height={b.d} />)}
+    {state.objectives.map((o, i) => o.kind === 'extract'
+      ? <circle key={i} className="alarm-map-extract" cx={o.x} cy={o.z} r={1.4} />
+      : <rect key={i} className="alarm-map-objective" x={o.x - .9} y={o.z - .9} width={1.8} height={1.8} transform={`rotate(45 ${o.x} ${o.z})`} />)}
+    <circle className="alarm-map-ring" cx={cause.x} cy={cause.z} r={3} />
+    <circle className="alarm-map-pin" cx={cause.x} cy={cause.z} r={1.1} />
+  </svg>;
+}
+
+function AlarmReport({ state, cause }: { state: Snapshot; cause: AlarmCause }) {
+  return <section className="alarm-report" aria-label="Alarm report">
+    {state.plan ? <AlarmMap state={state} cause={cause} /> : null}
+    <div className="alarm-copy">
+      <small>Alarm raised</small>
+      <strong>{alarmLine(cause)}</strong>
+      <span className="alarm-time"><Icon name="clock" />{clock(cause.at)}</span>
+    </div>
+  </section>;
+}
 
 export function Debrief({ state, saveCode, titleRef, onBoard, onHeadquarters }: { state: Snapshot; saveCode: string | null; titleRef: RefObject<HTMLHeadingElement | null>; onBoard: () => void; onHeadquarters: () => void }) {
   const success = state.result === 'success', c = state.contract;
@@ -48,6 +84,10 @@ export function Debrief({ state, saveCode, titleRef, onBoard, onHeadquarters }: 
         <ul className="debrief-squad" aria-label="Squad">{squad.map(u => <li key={u.id} className={`cls-${u.kind as ClassId}${u.hp <= 0 ? ' down' : ''}`}>
           <Portrait cls={u.kind as ClassId} /><span><strong>{u.name}</strong><small>{u.hp <= 0 ? 'Down' : `${Math.ceil(u.hp)} / ${u.maxHp} HP`}</small></span>
         </li>)}</ul>
+      </div>
+      <div className={`debrief-intel${state.alarmCause ? '' : ' single'}`}>
+        {state.alarmCause ? <AlarmReport state={state} cause={state.alarmCause} /> : null}
+        <Clearance campaign={state.campaign} justCompleted={success} />
       </div>
       <div className="debrief-actions">
         <button className="btn primary" onClick={onBoard}><span>Next contract</span><Icon name="arrow" /></button>

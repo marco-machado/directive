@@ -130,6 +130,24 @@ test('detection fills faster up close and raises the alarm', () => {
   near.sim.update(.1); assert.equal(near.sim.getSnapshot().stealth, false);
 });
 
+test('the first alarm records who raised it, whom it saw, where and when', () => {
+  const { sim, squad, hostile } = arena('sabotage');
+  const guard = hostile('guard', 3, 0, -Math.PI / 2); // facing ROOK (x = 1)
+  const charge = sim.objectives[0]; charge.x = 2; charge.z = 1;
+  step(sim, 10, () => sim.alarm);
+  assert.equal(sim.alarm, true);
+  const cause = sim.getSnapshot().alarmCause!;
+  assert.equal(cause.trigger, 'sighting'); assert.equal(cause.hostile, 'guard'); assert.equal(cause.operative, squad[1].name);
+  assert.deepEqual({ x: cause.x, z: cause.z }, { x: squad[1].x, z: squad[1].z });
+  assert.equal(cause.near, 'Charge A');
+  assert.ok(cause.at > 0 && Math.abs(cause.at - sim.time) < 1e-9, `${cause.at} vs ${sim.time}`);
+  // A later trigger keeps the first cause: that alarm is the one that cost the stealth bonus.
+  guard.hp = 0; (sim as unknown as { raiseAlarm(p: object, r: string): void }).raiseAlarm({ x: 0, z: 0 }, 'test');
+  sim.update(1 / 60);
+  assert.equal(sim.getSnapshot().alarmCause!.operative, squad[1].name);
+  sim.restart(); assert.equal(sim.getSnapshot().alarmCause, null);
+});
+
 // Seconds until the alarm with one hostile watching ROOK (at x = 1) from `d` m down the x axis.
 const timeToAlarm = (kind: EnemyKind, d: number) => {
   const { sim, hostile } = arena();

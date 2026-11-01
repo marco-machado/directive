@@ -41,10 +41,14 @@ export type CoverStatus = { threats: { id: string; covered: boolean }[]; shield:
 export type CoverSnap = Point & { along: Point; span: { lo: number; hi: number } | null };
 // Situations a first-time player meets, each recorded the first time it happens in a mission, in order.
 export type Milestone = 'hostileSeen' | 'suspicious' | 'alarm' | 'abilityReady' | 'downed' | 'extractOpen';
+// What raised the mission's first alarm, the one that cost the stealth bonus: how, the hostile that raised it (null for a
+// grenade), the operative that gave the squad away (null when there was none), where, the nearest objective, and mission time.
+export type AlarmTrigger = 'sighting' | 'takedown' | 'gunfire' | 'grenade';
+export type AlarmCause = Point & { trigger: AlarmTrigger | null; hostile: EnemyKind | null; operative: string | null; near: string; at: number };
 export type Snapshot = {
   phase: Phase; paused: boolean; selected: string[]; squad: string[]; squadPick: string[]; units: Unit[]; campaign: Campaign;
   contract: Contract | null; plan: MissionPlan | null; objectives: Objective[]; alarm: boolean; calmIn: number; reinforceIn: number; reinforced: number;
-  result: 'success' | 'failure' | null; failReason: string; payout: number; stealth: boolean; time: number; message: string;
+  result: 'success' | 'failure' | null; failReason: string; payout: number; stealth: boolean; alarmCause: AlarmCause | null; time: number; message: string;
   saveUnavailable: boolean; syncing: boolean; pending: Pending; cover: Record<string, Shield>; milestones: Milestone[];
 };
 // Reports campaign events to the server; the server answers through applyCampaign.
@@ -118,6 +122,8 @@ const hashed = (seed: number, id: string, n: number) => {
   for (let i = 0; i < id.length; i++) h = Math.imul(h ^ id.charCodeAt(i), 0x01000193);
   return mulberry32((h ^ Math.imul(n + 1, 0x9e3779b1)) >>> 0)();
 };
+// How the debrief names each objective as a landmark (charges carry their letter from the label).
+const LANDMARK: Record<Objective['kind'], string> = { target: 'the target', terminal: 'the vault terminal', charge: 'a charge site', vip: 'the VIP', extract: 'extraction' };
 const takedownable = (u: Unit) => u.kind === 'guard' || u.kind === 'heavy' || u.kind === 'target';
 const posted = (u: Unit) => (u.kind === 'guard' || u.kind === 'heavy') && u.patrol.length < 2;
 const headingTo = (a: Point, b: Point) => Math.atan2(b.x - a.x, b.z - a.z);
@@ -149,6 +155,7 @@ export class Simulation {
   contract: Contract | null = null;
   alarm = false;
   detected = false; // stays set once the alarm has sounded, even after it stands down
+  alarmCause: AlarmCause | null = null;
   calmIn = 0;
   reinforceIn = 0;
   result: Snapshot['result'] = null;
@@ -172,7 +179,7 @@ export class Simulation {
   private lastKnown: Point | null = null;
   private holdup = '';
   private casts: { unitId: string; ability: AbilityId; point: Point; targetId: string | null }[] = [];
-  private hitThisFrame = new Set<Unit>();
+  private hitThisFrame = new Map<Unit, Unit | null>(); // hostiles hit this frame, and by whom
   private volleyReady = new Set<Unit>();
   private autoPaused = new Set<string>();
   private rng: Rng = Math.random;
@@ -192,7 +199,7 @@ export class Simulation {
       phase: this.phase, paused: this.paused, selected: [...this.selected], squad: [...this.squad], squadPick: [...this.squadPick],
       units: this.units.map(u => ({ ...u })), campaign: this.campaign, contract: this.contract, plan: this.plan,
       objectives: this.objectives.map(o => ({ ...o })), alarm: this.alarm, calmIn: this.calmIn, reinforceIn: this.reinforceIn, reinforced: this.reinforced, result: this.result,
-      failReason: this.failReason, payout: this.payout, stealth: !this.detected, time: this.time, message: this.message,
+      failReason: this.failReason, payout: this.payout, stealth: !this.detected, alarmCause: this.alarmCause, time: this.time, message: this.message,
       saveUnavailable: this.saveUnavailable, syncing: this.syncing, pending: this.pending,
       milestones: this.milestones,
       cover: Object.fromEntries(this.phase === 'mission' && this.plan ? this.livingSquad().map(u => [u.id, this.coverStatus(u).shield]) : []),
@@ -254,7 +261,7 @@ export class Simulation {
   private resetUnits() {
     const plan = this.plan;
     this.units = []; this.objectives = []; this.shots = []; this.blasts = []; this.casts = []; this.hitThisFrame.clear(); this.volleyReady.clear(); this.autoPaused.clear();
-    this.alarm = false; this.detected = false; this.calmIn = 0; this.lastKnown = null; this.lastSeen = new Map(); this.intel = new Map(); this.milestones = [];
+    this.alarm = false; this.detected = false; this.alarmCause = null; this.calmIn = 0; this.lastKnown = null; this.lastSeen = new Map(); this.intel = new Map(); this.milestones = [];
     this.reinforceIn = 0; this.reinforced = 0; this.vipJoined = false; this.vipThreat = null; this.holdup = ''; this.pending = null; this.commandPoint = null;
     this.targetArea = plan?.targetArea ? { ...plan.targetArea } : null;
     if (!plan) { this.squad = []; this.selected = []; return; }
@@ -516,13 +523,15 @@ export class Simulation {
   }
 
   // ---- Combat rules ----
-  private raiseAlarm(at: Point, reason: string, seen?: Point) {
+  // `by` is the hostile that raised it and `culprit` the operative that gave the squad away, when there is one.
+  private raiseAlarm(at: Point, reason: string, seen?: Point, cause: { trigger?: AlarmTrigger; by?: Unit; culprit?: Unit } = {}) {
     if (!this.plan) return;
     // A fresh trigger during the alarm only restarts the stand-down countdown.
     this.contact(null);
     if (this.alarm) return;
     this.alarm = true; this.detected = true; this.reach('alarm'); this.reinforceIn = this.reinforced ? REINFORCE_SECONDS : FIRST_WAVE_SECONDS; this.calmIn = CALM_SECONDS;
     const known = seen ?? at; this.lastKnown = { x: known.x, z: known.z };
+    this.alarmCause ??= { x: known.x, z: known.z, trigger: cause.trigger ?? null, hostile: (cause.by?.kind as EnemyKind | undefined) ?? null, operative: cause.culprit?.name ?? null, near: this.landmarkNear(known), at: this.time };
     for (const u of this.units) {
       if (u.faction !== 'hostile' || u.hp <= 0) continue;
       u.detect = 1;
@@ -535,6 +544,12 @@ export class Simulation {
       }
     }
     this.message = `ALARM: ${reason}. Weapons free.`;
+  }
+  // The objective closest to a point, named for the debrief.
+  private landmarkNear(p: Point) {
+    const o = [...this.objectives].sort((a, b) => distance(a, p) - distance(b, p))[0];
+    if (!o) return 'the district';
+    return o.kind === 'charge' ? o.label.replace('Plant charge', 'Charge') : LANDMARK[o.kind];
   }
   // While alarmed, anything that gives the squad away restarts the countdown; a sighting or gunfire also updates where hunters search.
   private contact(seen: Point | null) {
@@ -555,16 +570,16 @@ export class Simulation {
     this.autoPaused.add(u.id); this.paused = true;
     this.message = `${u.name} is suspicious. Auto-paused.`;
   }
-  private damage(target: Unit, amount: number, from: Point | null) {
+  private damage(target: Unit, amount: number, from: Unit | null) {
     if (target.hp <= 0) return;
     const covered = from && this.plan?.world.coverBetween(from, target);
     if (target.faction === 'vip') { amount *= VIP_DAMAGE_TAKEN; if (from) this.vipThreat = { x: from.x, z: from.z }; }
     target.hp = Math.max(0, target.hp - amount * (covered ? COVER_FACTOR : 1));
-    if (target.faction === 'hostile') this.hitThisFrame.add(target);
+    if (target.faction === 'hostile') this.hitThisFrame.set(target, from);
     else {
       target.hurt = 1.5; target.revive = 0;
       // A downed operative drops its orders; once revived it stays where it fell.
-      if (target.hp <= 0) { target.path = []; this.clearOrders(target); if (target.faction === 'squad') this.reach('downed'); }
+      if (target.hp <= 0) { target.path = []; this.clearOrders(target); if (target.faction === 'squad') { this.reach('downed'); this.message = `${target.name} is down.`; } }
     }
   }
   private shoot(from: Unit, to: Unit, amount: number, kind: Shot['kind'] = 'bullet') {
@@ -581,7 +596,7 @@ export class Simulation {
     if (c.ability === 'grenade') {
       hostiles.filter(u => distance(u, c.point) <= stats.radius).forEach(u => this.damage(u, power, null));
       this.blasts.push({ id: this.nextId++, kind: 'grenade', ...c.point, radius: stats.radius, ttl: .7 });
-      this.raiseAlarm(c.point, 'Grenade detonation');
+      this.raiseAlarm(c.point, 'Grenade detonation', undefined, { trigger: 'grenade', culprit: caster });
     } else if (c.ability === 'heal') {
       this.units.filter(u => u.faction !== 'hostile' && u.hp > 0 && distance(u, caster) <= stats.radius).forEach(u => { u.hp = Math.min(u.maxHp, u.hp + power); });
       this.blasts.push({ id: this.nextId++, kind: 'heal', x: caster.x, z: caster.z, radius: stats.radius, ttl: .8 });
@@ -645,7 +660,7 @@ export class Simulation {
     else if (seen) {
       const was = u.detect;
       u.detect = Math.min(1, u.detect + dt / detectSeconds(u.kind as EnemyKind, distance(u, seen)));
-      if (u.detect >= 1) { this.raiseAlarm(u, `${stats.name} spotted the squad`, seen); return; }
+      if (u.detect >= 1) { this.raiseAlarm(u, `${stats.name} spotted the squad`, seen, { trigger: 'sighting', by: u, culprit: seen }); return; }
       if (was <= SUSPICIOUS && u.detect > SUSPICIOUS) { this.reach('suspicious'); this.suspicious(u); }
     } else u.detect = Math.max(0, u.detect - DETECT_DRAIN * dt);
     if (!this.alarm && !(u.kind === 'target' && u.exit)) {
@@ -814,7 +829,7 @@ export class Simulation {
       if (!v.held && (this.alarm || v.detect > SUSPICIOUS)) continue;
       v.held += dt; v.moving = false; v.path = [];
       const witness = this.units.find(h => h !== v && h.faction === 'hostile' && h.hp > 0 && h.stunned <= 0 && !h.held && [v, ...crew].some(p => this.sees(h, p)));
-      if (witness && !this.alarm) this.raiseAlarm(witness, `${witness.name} saw the takedown`, crew[0]);
+      if (witness && !this.alarm) this.raiseAlarm(witness, `${witness.name} saw the takedown`, crew[0], { trigger: 'takedown', by: witness, culprit: crew[0] });
       if (v.held >= TAKEDOWN_SECONDS) {
         v.hp = 0; v.held = 0; crew.forEach(u => { u.takedownId = null; });
         this.message = `${crew.map(u => u.name).join(' and ')} took down ${v.kind === 'target' ? 'the target' : v.name}.`;
@@ -948,7 +963,7 @@ export class Simulation {
     this.fireVolleys();
     this.resolveTakedowns(dt);
     // A volley that kills its target stays quiet; any hostile left standing after being hit raises the alarm.
-    for (const u of this.hitThisFrame) if (u.hp > 0) { this.raiseAlarm(u, `${u.name} returned fire`); break; }
+    for (const [u, by] of this.hitThisFrame) if (u.hp > 0) { this.raiseAlarm(u, `${u.name} returned fire`, undefined, { trigger: 'gunfire', by: u, culprit: by ?? undefined }); break; }
     for (const u of this.units) if (u.faction === 'hostile' && u.hp <= 0) { u.path = []; u.moving = false; }
     const squad = this.livingSquad();
     const vip = this.unit('vip');

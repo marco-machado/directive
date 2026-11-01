@@ -69,16 +69,30 @@ function SquadCard({ unit, slot, selected, campaign, pending, cover, onFocusSele
   </div>;
 }
 
-// The last few orders and reports, newest at the bottom. A restart (the clock running back) starts a fresh log.
+// Routine order confirmations stay out of the visible log; the sr-only status still announces them.
+const ROUTINE = ['Move order confirmed.', 'Waypoint added.', 'Holding position.', 'Wait cleared.'];
+const routineWait = /^Holding \d+ s at the last waypoint\.$/;
+const COMMS_LINES = 6;
+const danger = (text: string) => text.startsWith('ALARM') || text.endsWith(' is down.');
+// The last few reports, newest at the bottom; a report repeated back to back collapses into one line with a count.
+// A restart (the clock running back) starts a fresh log.
 function Comms({ state }: { state: Snapshot }) {
-  const [log, setLog] = useState<{ id: number; text: string; at: number }[]>([]), next = useRef(0), last = useRef({ text: '', at: 0 });
+  const [log, setLog] = useState<{ id: number; text: string; at: number; count: number }[]>([]), next = useRef(0), last = useRef({ text: '', at: 0 });
   useEffect(() => {
-    const restarted = state.time < last.current.at;
-    if (!restarted && last.current.text === state.message) { last.current.at = state.time; return; }
-    last.current = { text: state.message, at: state.time };
-    setLog(list => [...(restarted ? [] : list.slice(-3)), { id: next.current++, text: state.message, at: state.time }]);
+    const restarted = state.time < last.current.at, text = state.message;
+    if (!restarted && last.current.text === text) { last.current.at = state.time; return; }
+    last.current = { text, at: state.time };
+    const routine = ROUTINE.some(p => text.startsWith(p)) || routineWait.test(text);
+    setLog(list => {
+      const kept = restarted ? [] : list, prev = kept.at(-1);
+      if (routine) return kept;
+      if (prev?.text === text) return [...kept.slice(0, -1), { ...prev, at: state.time, count: prev.count + 1 }];
+      return [...kept.slice(1 - COMMS_LINES), { id: next.current++, text, at: state.time, count: 1 }];
+    });
   }, [state.message, state.time]);
-  return <ol className="comms" aria-label="Comms">{log.map(m => <li key={m.id} className={m.text.startsWith('ALARM') ? 'danger' : ''}><time>{clock(m.at)}</time><span>{m.text}</span></li>)}</ol>;
+  return <ol className="comms" aria-label="Comms">{log.map(m => <li key={m.id} className={danger(m.text) ? 'danger' : ''}>
+    <time>{clock(m.at)}</time><span>{m.text}{m.count > 1 ? <b className="comms-count"> ×{m.count}</b> : null}</span>
+  </li>)}</ol>;
 }
 
 function Targeting({ pending }: { pending: NonNullable<Pending> }) {

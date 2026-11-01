@@ -6,7 +6,7 @@ import { ABILITY_STATS, CLASS_STATS } from '../game/classes.ts';
 import type { Threat } from '../game/campaign.ts';
 import type { EnemyKind } from '../game/mapgen.ts';
 import type { Snapshot } from '../game/simulation.ts';
-import { CONTRACTS, Credits, pad, Pips, SaveWarning, threat, useScrollEdges } from './common.tsx';
+import { Clearance, CONTRACTS, Credits, pad, Pips, SaveWarning, threat, useScrollEdges } from './common.tsx';
 import { Icon, Portrait } from './icons.tsx';
 import type { IconName } from './icons.tsx';
 
@@ -38,6 +38,7 @@ export function MissionSelect({ state, titleRef, onChoose, onDeploy, onRecenter,
           </button>;
         })}</div>
         {campaign.offers.length ? null : <p className="empty-note">No contracts on the board.</p>}
+        <Clearance campaign={campaign} short className="board-clearance" />
       </div>
     </section>
 

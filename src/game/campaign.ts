@@ -69,6 +69,18 @@ export function offerTiers(completed: number): number[] {
 // Contract 01 is the same hand-checked district for every campaign: one patrol to read and a quiet way round it.
 // It stays first on the board until a contract is completed, so a failed first run can try it again.
 export const FIRST_CONTRACT = { type: 'heist', tier: 1, seed: 10492675, district: 'GLASS DISTRICT', sector: 1, patrols: 1 } as const satisfies Omit<Contract, 'id' | 'payout'>;
+// The highest tier on a board dealt after `completed` contracts. Boards are dealt at each deployment.
+export const topTier = (completed: number) => Math.max(...offerTiers(completed));
+// The next tier a board will add, how many more completed contracts that takes, and how far the campaign is from the
+// last unlock to it (0 to 1); null once boards reach MAX_TIER.
+export function nextUnlock(completed: number): { tier: number; after: number; progress: number } | null {
+  const top = topTier(completed);
+  if (top >= MAX_TIER) return null;
+  let after = 1, since = completed;
+  while (topTier(completed + after) <= top) after++;
+  while (since > 0 && topTier(since - 1) === top) since--;
+  return { tier: topTier(completed + after), after, progress: (completed - since) / (completed + after - since) };
+}
 function dealOffers(completed: number, rng: Rng): Contract[] {
   const tiers = offerTiers(completed), first = completed ? null : FIRST_CONTRACT;
   const types = shuffle(rng, CONTRACT_TYPES.filter(t => t !== first?.type));
