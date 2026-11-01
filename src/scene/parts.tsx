@@ -1,6 +1,7 @@
-import { useLayoutEffect, useRef } from 'react';
+import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { BoxGeometry, Color, CylinderGeometry, InstancedMesh, MeshBasicMaterial, MeshStandardMaterial, Object3D, OctahedronGeometry } from 'three';
+import { BoxGeometry, Color, CylinderGeometry, InstancedBufferAttribute, InstancedMesh, MeshBasicMaterial, MeshStandardMaterial, Object3D, OctahedronGeometry } from 'three';
+import type { Material, WebGLProgramParametersWithUniforms } from 'three';
 
 // Decorative motion (spins, pulses, the title orbit) stops for players who ask for reduced motion.
 export const STILL = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -27,14 +28,50 @@ export function dim(color: string) {
   return d;
 }
 
+// How a Box and the unit models get their material and render order. Units draw twice, lit and
+// then as a flat silhouette where something hides them, by rendering the same model under two paints.
+export type Paint = { material: (color: string, emissive?: string) => Material; shadows: boolean; order: number };
+export const PaintContext = createContext<Paint>({ material: solid, shadows: true, order: 0 });
+export const usePaint = () => useContext(PaintContext);
+
 type Vec3 = [number, number, number];
 export function Box({ position, size, color, emissive, castShadow }: { position: Vec3; size: Vec3; color: string; emissive?: string; castShadow?: boolean }) {
-  return <mesh position={position} scale={size} geometry={BOX} material={solid(color, emissive)} castShadow={castShadow} />;
+  const paint = usePaint();
+  return <mesh position={position} scale={size} geometry={BOX} material={paint.material(color, emissive)} castShadow={castShadow && paint.shadows} renderOrder={paint.order} />;
 }
 
-export type Part = { x: number; y: number; z: number; w: number; h: number; d: number; ry?: number; color: string };
-export function InstancedBoxes({ parts, lit }: { parts: Part[]; lit?: boolean }) {
-  const ref = useRef<InstancedMesh>(null);
+// Screen-door fade: each instance carries the share of its pixels to drop (0 keeps it solid), and
+// the fragment shader discards that share in a 4x4 ordered-dither pattern. Discarded pixels write no
+// depth, so whatever stands behind shows through, and the instanced mesh stays one draw call.
+const DITHER = /* glsl */ `
+float ditherBayer2(vec2 a) { a = floor(a); return fract(dot(a, vec2(.5, a.y * .75))); }
+float ditherBayer4(vec2 a) { return ditherBayer2(.5 * a) * .25 + ditherBayer2(a); }
+`;
+function dither(shader: WebGLProgramParametersWithUniforms) {
+  shader.vertexShader = shader.vertexShader
+    .replace('#include <common>', '#include <common>\nattribute float instanceFade;\nvarying float vFade;')
+    .replace('#include <begin_vertex>', '#include <begin_vertex>\nvFade = instanceFade;');
+  shader.fragmentShader = shader.fragmentShader
+    .replace('#include <common>', `#include <common>\nvarying float vFade;\n${DITHER}`)
+    .replace('#include <clipping_planes_fragment>', '#include <clipping_planes_fragment>\nif (vFade > ditherBayer4(gl_FragCoord.xy) + .03125) discard;');
+}
+
+// Per-building fade levels (the share of pixels dropped); `version` changes whenever any level does.
+export type Fades = { level: Float32Array; version: number };
+
+// `building` tags a part with the index of the building it belongs to, so it fades with it.
+export type Part = { x: number; y: number; z: number; w: number; h: number; d: number; ry?: number; color: string; building?: number };
+export function InstancedBoxes({ parts, lit, fades }: { parts: Part[]; lit?: boolean; fades: Fades }) {
+  const ref = useRef<InstancedMesh>(null), seen = useRef(-1);
+  // Its own geometry, to carry the per-instance fade attribute.
+  const { geometry, material } = useMemo(() => {
+    const geometry = new BoxGeometry();
+    geometry.setAttribute('instanceFade', new InstancedBufferAttribute(new Float32Array(parts.length), 1));
+    const material = lit ? new MeshStandardMaterial({ roughness: .75, metalness: .18 }) : new MeshBasicMaterial({ toneMapped: false });
+    material.onBeforeCompile = dither;
+    return { geometry, material };
+  }, [parts, lit]);
+  useEffect(() => () => { geometry.dispose(); material.dispose(); }, [geometry, material]);
   useLayoutEffect(() => {
     const mesh = ref.current!, dummy = new Object3D(), color = new Color();
     parts.forEach((p, i) => {
@@ -44,10 +81,16 @@ export function InstancedBoxes({ parts, lit }: { parts: Part[]; lit?: boolean })
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     mesh.computeBoundingSphere();
-  }, [parts]);
-  return <instancedMesh ref={ref} args={[BOX, undefined, parts.length]} castShadow={lit} receiveShadow={lit}>
-    {lit ? <meshStandardMaterial roughness={.75} metalness={.18} /> : <meshBasicMaterial toneMapped={false} />}
-  </instancedMesh>;
+    seen.current = -1;
+  }, [parts, geometry]);
+  useFrame(() => {
+    if (fades.version === seen.current) return;
+    seen.current = fades.version;
+    const attribute = geometry.getAttribute('instanceFade') as InstancedBufferAttribute, values = attribute.array as Float32Array;
+    parts.forEach((p, i) => { values[i] = p.building === undefined ? 0 : fades.level[p.building]; });
+    attribute.needsUpdate = true;
+  });
+  return <instancedMesh ref={ref} args={[geometry, material, parts.length]} castShadow={lit} receiveShadow={lit} />;
 }
 
 // A ground ring of segments that fills clockwise as `value()` goes from 0 to 1.

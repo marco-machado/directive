@@ -5,7 +5,7 @@ import { OrbitControls } from '@react-three/drei';
 import { DirectionalLight, MOUSE, TOUCH, Vector3 } from 'three';
 import type { Mesh } from 'three';
 import type { MissionPlan } from '../game/mapgen.ts';
-import type { Bounds } from '../game/world.ts';
+import type { Bounds, Point } from '../game/world.ts';
 import type { Simulation } from '../game/simulation.ts';
 import { setAudioCamera } from '../ui/audio.ts';
 import { City } from './city.tsx';
@@ -17,6 +17,7 @@ import { Pointers } from './pointers.tsx';
 import type { Insets } from './pointers.tsx';
 import { clickable, Units } from './units.tsx';
 import type { Hitboxes } from './units.tsx';
+import { cameraOffset } from './view.ts';
 import './scene.css';
 
 const FALLBACK: Bounds = { minX: -16, maxX: 16, minZ: -12, maxZ: 12 };
@@ -26,9 +27,10 @@ const planKey = (plan: MissionPlan) => { let key = planKeys.get(plan); if (key =
 const extent = (b: Bounds) => ({ cx: (b.minX + b.maxX) / 2, cz: (b.minZ + b.maxZ) / 2, w: b.maxX - b.minX, d: b.maxZ - b.minZ });
 
 // Fits the district into the HUD's free frame (the .view-frame element) and offsets the projection
-// so the district centers there. The player orbits it with left-drag; the attract mode orbits it
-// slowly on the title screen.
-function CameraRig({ reset, bounds, layout, attract, frame, insets }: { reset: number; bounds: Bounds; layout: string; attract: boolean; frame: RefObject<HTMLDivElement | null>; insets: RefObject<Insets> }) {
+// so the district centers there. It looks in from the squad's spawn corner (`start`), which puts
+// the squad on the near side of the view. The player orbits it with left-drag; the attract mode
+// orbits it slowly on the title screen.
+function CameraRig({ reset, bounds, start, layout, attract, frame, insets }: { reset: number; bounds: Bounds; start: Point | null; layout: string; attract: boolean; frame: RefObject<HTMLDivElement | null>; insets: RefObject<Insets> }) {
   const ref = useRef<ComponentRef<typeof OrbitControls>>(null), camera = useThree(s => s.camera), size = useThree(s => s.size), gl = useThree(s => s.gl), look = useMemo(() => new Vector3(), []);
   useEffect(() => trackDrags(gl.domElement), [gl]);
   useEffect(() => {
@@ -38,12 +40,13 @@ function CameraRig({ reset, bounds, layout, attract, frame, insets }: { reset: n
     const { cx, cz, w, d } = extent(bounds), box = gl.domElement.getBoundingClientRect(), f = frame.current?.getBoundingClientRect() ?? box;
     const l = Math.max(0, f.left - box.left), t = Math.max(0, f.top - box.top), r = Math.max(0, box.right - f.right), b = Math.max(0, box.bottom - f.bottom);
     insets.current = { l, t, r, b };
-    camera.position.set(cx + 29, 34, cz + 32); camera.lookAt(cx, 0, cz);
+    const offset = cameraOffset(bounds, start);
+    camera.position.set(cx + offset.x, offset.y, cz + offset.z); camera.lookAt(cx, 0, cz);
     camera.zoom = Math.max(1, Math.min((size.width - l - r) / (w * 1.4), (size.height - t - b) / (d * 1.5)));
     camera.setViewOffset(size.width, size.height, (r - l) / 2, (b - t) / 2, size.width, size.height);
     camera.updateProjectionMatrix();
     ref.current?.target.set(cx, 0, cz); ref.current?.update();
-  }, [camera, gl, reset, size.width, size.height, bounds, layout, frame, insets]);
+  }, [camera, gl, reset, size.width, size.height, bounds, start, layout, frame, insets]);
   // Positional sound is panned and faded by where its source sits in this view.
   useEffect(() => { setAudioCamera(camera); return () => setAudioCamera(null); }, [camera]);
   // Screen-space panning lifts the pivot off the street; slide it back along the view ray before each
@@ -98,9 +101,9 @@ function World({ sim, reset, layout, attract, frame, labels }: Props & { labels:
     <ambientLight intensity={1.25} color="#d6e6dc" />
     <hemisphereLight args={['#abcacc', '#233c42', 1.5]} />
     <Sun bounds={bounds} />
-    <CameraRig reset={reset} bounds={bounds} layout={layout} attract={attract} frame={frame} insets={insets} />
+    <CameraRig reset={reset} bounds={bounds} start={plan?.spawn[0] ?? null} layout={layout} attract={attract} frame={frame} insets={insets} />
     {plan ? <>
-      <City key={planKey(plan)} plan={plan} />
+      <City key={planKey(plan)} plan={plan} sim={sim} />
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[cx, .04, cz]} visible={false}
         onClick={e => { if (!dragged()) { e.stopPropagation(); sim.groundClick({ x: e.point.x, z: e.point.z }); } }}
         onPointerMove={e => { pointer.current.x = e.point.x; pointer.current.z = e.point.z; pointer.current.on = true; }}
@@ -120,7 +123,8 @@ export const GameCanvas = memo(function GameCanvas(props: Props) {
   // Labels need a fixed parent: drei's Html rebuilds its React root whenever its parent changes,
   // and R3F swaps the default parent once events connect, which blanked the first label.
   const labels = useRef<HTMLDivElement>(null!);
-  return <><Canvas shadows="percentage" orthographic camera={{ position: [29, 34, 32], zoom: 24, near: .1, far: 150 }} dpr={[1, 1.5]} gl={{ antialias: true, alpha: false }} fallback={<div className="render-error">WebGL is unavailable. Enable hardware acceleration or try a WebGL-capable browser.</div>}>
+  // The stencil buffer keeps unit silhouettes off the units' own visible pixels (units.tsx).
+  return <><Canvas shadows="percentage" orthographic camera={{ position: [29, 34, 32], zoom: 24, near: .1, far: 150 }} dpr={[1, 1.5]} gl={{ antialias: true, alpha: false, stencil: true }} fallback={<div className="render-error">WebGL is unavailable. Enable hardware acceleration or try a WebGL-capable browser.</div>}>
     <World {...props} labels={labels} />
   </Canvas><div ref={labels} className="scene-labels" /></>;
 });
