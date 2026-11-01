@@ -43,6 +43,8 @@ A React Three Fiber squad-stealth game served by one Cloudflare Worker. The READ
 
 **Determinism.** `src/game/mapgen.ts` builds a district (blocks, cover, patrols, objectives, posted-guard look schedules) from a contract's seed using `mulberry32` from `src/game/rng.ts`. `src/game/world.ts` provides navigation and line of sight.
 
+**Rendering.** The district's look is dressing derived from the plan, never gameplay: `src/scene/district.ts` is pure and seeded from the contract (its own `mulberry32` streams), and `tests/district.test.ts` keeps ground props off walkable ground and cover and keeps building parts inside the box `view.ts` uses for fades and silhouettes (footprint + `PLINTH`, up to `buildingTop`). Instanced parts carry per-instance data for the shader injections in `materials.ts`. Emissive surfaces are authored above 1 (`Part.glow`, the facade window gain) so the bloom pass's threshold picks them out; lit surfaces stay below it. Tone mapping is Neutral so HUD-colored overlays look the same with bloom on or off.
+
 **Camera.** `src/scene/framing.ts` (framing math) and `src/scene/drag.ts` (telling a drag from a click) are pure and unit-tested. The camera frames the `.view-frame` element, the area the HUD leaves free, not the full canvas.
 
 **Worker routing.** `wrangler.jsonc` runs the Worker first only for `/api/*`; everything else is static assets with SPA fallback. `worker/index.ts` maps routes onto DO methods and turns `{ ok: false, status }` results into 404/409 responses.

@@ -19,7 +19,7 @@ const CONTROLS: [ReactNode, string][] = [
   ['Drag / one-finger drag', 'Rotate and tilt the view'],
   ['Scroll / pinch', 'Zoom the view'],
   ['Right-drag / two-finger drag', 'Pan the view'],
-  ['Mission menu', 'Auto-pause when spotted: pause the first time each hostile turns suspicious'],
+  ['Mission menu', 'Auto-pause when spotted: pause the first time each hostile turns suspicious. Graphics quality: turn bloom off on slower devices'],
   [<><kbd>F</kbd> or double-click a card</>, 'Focus the view on the selection'],
   [<><kbd>R</kbd></>, 'Switch between the tactical view and the district overview'],
 ];

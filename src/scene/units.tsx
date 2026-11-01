@@ -30,11 +30,18 @@ const dim = (color: string) => `#${new Color(color).multiplyScalar(DIM).getHexSt
 // only on pixels with no stencil mark. The silhouette sets the mark too, so it blends once per
 // pixel and never tints a unit over its own visible body or over another unit. The lit pass
 // draws after the rest of the opaque scene (render order 1), so a unit only marks the pixels
-// where it ends up visible.
+// where it ends up visible. At night the body also glows faintly in its own colors, so units
+// read on dark streets whichever way the moon catches them.
+const NIGHT_GLOW = .4;
+const nightGlow = (m: MeshStandardMaterial) => {
+  m.onBeforeCompile = shader => { shader.fragmentShader = shader.fragmentShader.replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>\ntotalEmissiveRadiance += diffuseColor.rgb * ${NIGHT_GLOW.toFixed(2)};`); };
+  m.customProgramCacheKey = () => 'night-glow';
+  return m;
+};
 const MARKS = { stencilWrite: true, stencilRef: 1, stencilFunc: AlwaysStencilFunc, stencilZPass: ReplaceStencilOp };
-const BODY = Object.assign(new MeshStandardMaterial({ vertexColors: true, roughness: .72, metalness: .2 }), MARKS);
+const BODY = nightGlow(Object.assign(new MeshStandardMaterial({ vertexColors: true, roughness: .72, metalness: .2 }), MARKS));
 const GLOW = Object.assign(new MeshBasicMaterial({ vertexColors: true, toneMapped: false }), MARKS);
-const BODY_DIM = BODY.clone(), GLOW_DIM = GLOW.clone();
+const BODY_DIM = nightGlow(BODY.clone()), GLOW_DIM = GLOW.clone();
 BODY_DIM.color.setScalar(DIM); GLOW_DIM.color.setScalar(DIM);
 const silhouettes = new Map<string, Material>();
 function silhouette(color: string) {

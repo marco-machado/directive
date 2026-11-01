@@ -1,19 +1,24 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useSyncExternalStore } from 'react';
+import { memo, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 import type { ComponentRef, RefObject } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
-import { DirectionalLight, MOUSE, Spherical, TOUCH, Vector3 } from 'three';
+import { MOUSE, NeutralToneMapping, Spherical, TOUCH, Vector3 } from 'three';
 import type { MissionPlan } from '../game/mapgen.ts';
 import type { Bounds, Point } from '../game/world.ts';
 import type { Simulation } from '../game/simulation.ts';
 import { setAudioCamera } from '../ui/audio.ts';
+import { gameOptions } from '../ui/options.ts';
+import { Bloom, bloomSupported } from './bloom.tsx';
 import { City } from './city.tsx';
+import { Diagnostics } from './diagnostics.tsx';
+import { dressDistrict } from './district.ts';
 import { dragged, trackDrags } from './drag.ts';
 import { CoverPreview, Effects, Targeting } from './effects.tsx';
 import { cameraKick } from './kick.ts';
 import { focusPoint, missionMinZoom, overviewZoom, smoothstep, tacticalZoom } from './framing.ts';
 import { AttackHint } from './hint.tsx';
 import { LastSeenGhosts, PatrolIntel } from './intel.tsx';
+import { NightLighting } from './lighting.tsx';
 import type { Pointer } from './effects.tsx';
 import { Objectives } from './objectives.tsx';
 import { Pointers } from './pointers.tsx';
@@ -115,16 +120,6 @@ function CameraRig({ sim, reset, focus, overview, bounds, start, layout, attract
     mouseButtons={{ LEFT: MOUSE.ROTATE, MIDDLE: MOUSE.DOLLY, RIGHT: MOUSE.PAN }} touches={{ ONE: TOUCH.ROTATE, TWO: TOUCH.DOLLY_PAN }} />;
 }
 
-function Sun({ bounds }: { bounds: Bounds }) {
-  const ref = useRef<DirectionalLight>(null);
-  useLayoutEffect(() => {
-    const { cx, cz, w, d } = extent(bounds), light = ref.current!, shadow = light.shadow.camera, half = Math.max(w, d) * .75;
-    light.position.set(cx - 10, 22, cz + 10); light.target.position.set(cx, 0, cz); light.target.updateMatrixWorld();
-    shadow.left = -half; shadow.right = half; shadow.top = half; shadow.bottom = -half; shadow.updateProjectionMatrix();
-  }, [bounds]);
-  return <directionalLight ref={ref} intensity={2.7} color="#ffd9b6" castShadow shadow-mapSize={[2048, 2048]} shadow-bias={-.001} />;
-}
-
 type Props = { sim: Simulation; reset: number; focus: number; overview: boolean; layout: string; attract: boolean; frame: RefObject<HTMLDivElement | null> };
 function World({ sim, reset, focus, overview, layout, attract, frame, labels, missed }: Props & { labels: RefObject<HTMLDivElement>; missed: RefObject<(e: MouseEvent) => void> }) {
   useFrame((_, dt) => sim.update(dt), -1);
@@ -154,10 +149,7 @@ function World({ sim, reset, focus, overview, layout, attract, frame, labels, mi
   };
   missed.current = e => { if (e.type === 'click' && !dragged()) nearMiss(e); };
   return <>
-    <color attach="background" args={['#101c21']} />
-    <ambientLight intensity={1.25} color="#d6e6dc" />
-    <hemisphereLight args={['#abcacc', '#233c42', 1.5]} />
-    <Sun bounds={bounds} />
+    <NightLighting bounds={bounds} practicals={plan ? dressDistrict(plan).practicals : []} />
     <CameraRig sim={sim} reset={reset} focus={focus} overview={overview} bounds={bounds} start={plan?.spawn[0] ?? null} layout={layout} attract={attract} frame={frame} insets={insets} />
     {plan ? <>
       <City key={planKey(plan)} plan={plan} sim={sim} />
@@ -180,12 +172,22 @@ function World({ sim, reset, focus, overview, layout, attract, frame, labels, mi
   </>;
 }
 
+function PostEffects() {
+  const gl = useThree(s => s.gl);
+  return bloomSupported(gl) ? <Bloom /> : null;
+}
+
 export const GameCanvas = memo(function GameCanvas(props: Props) {
   // Labels need a fixed parent: drei's Html rebuilds its React root whenever its parent changes,
   // and R3F swaps the default parent once events connect, which blanked the first label.
   const labels = useRef<HTMLDivElement>(null!), missed = useRef<(e: MouseEvent) => void>(() => {});
-  // The stencil buffer keeps unit silhouettes off the units' own visible pixels (units.tsx).
-  return <><Canvas shadows="percentage" orthographic camera={{ position: [29, 34, 32], zoom: 24, near: .1, far: 150 }} dpr={[1, 1.5]} gl={{ antialias: true, alpha: false, stencil: true }} onPointerMissed={e => missed.current(e)} fallback={<div className="render-error">WebGL is unavailable. Enable hardware acceleration or try a WebGL-capable browser.</div>}>
+  const { quality } = useSyncExternalStore(gameOptions.subscribe, gameOptions.get);
+  // The stencil buffer keeps unit silhouettes off the units' own visible pixels (units.tsx). Neutral tone mapping
+  // keeps hues true, so the HUD-colored overlays look the same with or without the bloom pass, which tone maps
+  // everything at the end, including the materials that opt out of it.
+  return <><Canvas shadows="percentage" orthographic camera={{ position: [29, 34, 32], zoom: 24, near: .1, far: 150 }} dpr={[1, 1.5]} gl={{ antialias: true, alpha: false, stencil: true, toneMapping: NeutralToneMapping }} onPointerMissed={e => missed.current(e)} fallback={<div className="render-error">WebGL is unavailable. Enable hardware acceleration or try a WebGL-capable browser.</div>}>
     <World {...props} labels={labels} missed={missed} />
+    {quality === 'high' ? <PostEffects /> : null}
+    {import.meta.env.DEV ? <Diagnostics /> : null}
   </Canvas><div ref={labels} className="scene-labels" /></>;
 });

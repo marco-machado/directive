@@ -1,65 +1,17 @@
 import { memo, useEffect, useMemo } from 'react';
-import { useFrame } from '@react-three/fiber';
+import { useFrame, useThree } from '@react-three/fiber';
 import { BufferGeometry, Float32BufferAttribute, Vector3 } from 'three';
-import { blockGrid } from '../game/mapgen.ts';
 import type { MissionPlan } from '../game/mapgen.ts';
 import type { Simulation } from '../game/simulation.ts';
 import { distance } from '../game/world.ts';
-import type { Bounds, Building, Point } from '../game/world.ts';
-import { Box, InstancedBoxes } from './parts.tsx';
-import type { Fades, Part } from './parts.tsx';
+import type { Bounds, Point } from '../game/world.ts';
+import { dressDistrict, GRID_Y } from './district.ts';
+import type { Part } from './district.ts';
+import { disposeMaterials, districtMaterials } from './materials.ts';
+import { BOX, InstancedParts, PLANE, ROUND } from './parts.tsx';
+import type { Fades } from './parts.tsx';
+import { facadeAtlas, nightEnvironment, poolTexture, puddleTexture, signAtlas } from './textures.ts';
 import { markHiding, viewAlong } from './view.ts';
-
-// Offsets and sizes here set ROOF and PLINTH in view.ts.
-function buildingParts(b: Building, bi: number, lit: Part[], light: Part[]) {
-  const add = (list: Part[], x: number, y: number, z: number, w: number, h: number, d: number, color: string) => list.push({ x: b.x + x, y, z: b.z + z, w, h, d, color, building: bi });
-  add(lit, 0, .12, 0, b.w + .5, .24, b.d + .5, '#455350');
-  add(lit, 0, b.h / 2 + .24, 0, b.w, b.h, b.d, '#314247');
-  add(lit, 0, b.h + .3, 0, b.w + .12, .2, b.d + .12, '#526060');
-  add(lit, 0, b.h + .61, 0, b.w * .45, .45, b.d * .4, '#29383c');
-  add(lit, 0, .65, b.d / 2 + .03, 1.2, .8, .08, '#162b30');
-  add(lit, -b.w * .28, b.h + .6, -b.d * .2, .5, .5, .8, '#73807c');
-  add(light, 0, 1.2, b.d / 2 + .08, b.w * .7, .09, .1, b.accent);
-  for (const side of [1, -1]) add(light, side * (b.w / 2 + .015), b.h * .45, 0, .06, .1, b.d * .7, b.accent);
-  // Windows on all four faces, since the camera orbits.
-  for (let y = 1.8; y < b.h - .3; y += .72) for (const side of [1, -1]) {
-    for (let x = -b.w / 2 + .5; x < b.w / 2 - .3; x += .75) add(light, x, y, side * (b.d / 2 + .016), .35, .28, .018, ((Math.round(y * 10 + x) + bi) % 4) ? '#89a9a2' : '#e6b981');
-    for (let z = -b.d / 2 + .5; z < b.d / 2 - .3; z += .75) add(light, side * (b.w / 2 + .016), y, z, .018, .28, .35, '#6e9b98');
-  }
-}
-
-// Interior street lines of the map generator's block grid.
-function streetLines(b: Bounds) {
-  const { cols, rows, cw, cd } = blockGrid(b);
-  return { xs: Array.from({ length: cols - 1 }, (_, i) => b.minX + (i + 1) * cw), zs: Array.from({ length: rows - 1 }, (_, j) => b.minZ + (j + 1) * cd) };
-}
-
-function cityParts(plan: MissionPlan) {
-  const { world, sites, extract } = plan, b = world.bounds, lit: Part[] = [], light: Part[] = [];
-  world.buildings.forEach((building, i) => buildingParts(building, i, lit, light));
-  // Jersey barriers: a wide footing, a narrower wall and a thin accent stripe on top.
-  for (const r of world.cover) {
-    const long = r.w >= r.d, t = long ? r.d : r.w;
-    lit.push({ x: r.x, y: .11, z: r.z, w: r.w, h: .22, d: r.d, color: '#5d6966' });
-    lit.push({ x: r.x, y: .41, z: r.z, w: long ? r.w - .06 : t * .55, h: .38, d: long ? t * .55 : r.d - .06, color: '#77837e' });
-    light.push({ x: r.x, y: .605, z: r.z, w: long ? r.w * .82 : .05, h: .015, d: long ? .05 : r.d * .82, color: '#e2a078' });
-  }
-  const { xs, zs } = streetLines(b), keep = [extract, ...sites];
-  const open = (p: Point) => world.walkable(p, .6) && keep.every(k => distance(k, p) > 2);
-  for (const x of xs) for (let z = b.minZ + 1; z < b.maxZ - 1; z += 2) if (zs.every(s => Math.abs(s - z) > 1.6) && open({ x, z })) lit.push({ x, y: .015, z, w: .075, h: .02, d: .8, color: '#647167' });
-  for (const z of zs) for (let x = b.minX + 1; x < b.maxX - 1; x += 2) if (xs.every(s => Math.abs(s - x) > 1.6) && open({ x, z })) lit.push({ x, y: .015, z, w: .8, h: .02, d: .075, color: '#647167' });
-  // Street lamps on every other intersection, set back on a corner of the curb.
-  xs.forEach((x, i) => zs.forEach((z, j) => {
-    if ((i + j) % 2) return;
-    const lamp = [[.95, .95], [-.95, .95], [.95, -.95], [-.95, -.95]].map(([dx, dz]) => ({ x: x + dx, z: z + dz }))
-      .find(p => world.walkable(p, .35) && keep.every(k => distance(k, p) > 1.8));
-    if (!lamp) return;
-    const dx = x - lamp.x, dz = z - lamp.z, len = Math.hypot(dx, dz);
-    lit.push({ x: lamp.x, y: 1.4, z: lamp.z, w: .1, h: 2.8, d: .1, color: '#5c6d6a' });
-    light.push({ x: lamp.x + dx / len * .3, y: 2.8, z: lamp.z + dz / len * .3, w: .18, h: .1, d: .7, ry: Math.atan2(dx, dz), color: '#f2d5a1' });
-  }));
-  return { lit, light };
-}
 
 function gridGeometry(b: Bounds) {
   const points: number[] = [];
@@ -117,17 +69,37 @@ function useBuildingFades(sim: Simulation, plan: MissionPlan): Fades {
   return state.fades;
 }
 
+const GROUND = 20; // meters of street drawn past the bounds; the horizon fade in materials.ts darkens it well before
+
 export const City = memo(function City({ plan, sim }: { plan: MissionPlan; sim: Simulation }) {
   const b = plan.world.bounds, w = b.maxX - b.minX, d = b.maxZ - b.minZ, cx = (b.minX + b.maxX) / 2, cz = (b.minZ + b.maxZ) / 2;
-  const { lit, light } = useMemo(() => cityParts(plan), [plan]);
+  const gl = useThree(s => s.gl), district = dressDistrict(plan);
+  // One facade atlas and one sign atlas per contract, shared by every building, the ground and the ring.
+  const kit = useMemo(() => {
+    const textures = [facadeAtlas(district.seed, Math.min(8, gl.capabilities.getMaxAnisotropy())), signAtlas(district), poolTexture(), puddleTexture()] as const;
+    const materials = districtMaterials(...textures, nightEnvironment(gl));
+    materials.bounds.value.set(b.minX, b.minZ, b.maxX, b.maxZ);
+    return { textures, materials };
+  }, [district, gl, b]);
+  useEffect(() => () => { disposeMaterials(kit.materials); kit.textures.forEach(t => t.dispose()); }, [kit]);
+  const parts = useMemo(() => ({
+    cylinders: [...district.cylinders, ...district.masts.filter(p => p.glow === undefined)],
+    neon: [...district.neon, ...district.masts.filter(p => p.glow !== undefined)],
+    pools: district.pools.map((p): Part => ({ x: p.x, y: .05, z: p.z, w: 2 * p.r, h: 2 * p.r, d: 1, rx: -Math.PI / 2, color: p.color, glow: p.strength })),
+  }), [district]);
   const fades = useBuildingFades(sim, plan);
   const grid = useMemo(() => gridGeometry(b), [b]);
   useEffect(() => () => grid.dispose(), [grid]);
+  const m = kit.materials;
   return <group>
-    <Box position={[cx, -.35, cz]} size={[w + 1, .65, d + 1]} color="#1a292e" />
-    <mesh position={[cx, -.02, cz]} receiveShadow><boxGeometry args={[w, .05, d]} /><meshStandardMaterial color="#2d3a3e" roughness={.75} metalness={.18} /></mesh>
-    <lineSegments geometry={grid} position={[0, .007, 0]}><lineBasicMaterial color="#37484a" transparent opacity={.45} depthWrite={false} /></lineSegments>
-    <InstancedBoxes parts={lit} lit fades={fades} />
-    <InstancedBoxes parts={light} fades={fades} />
+    <mesh position={[cx, -.03, cz]} receiveShadow material={m.ground}><boxGeometry args={[w + 2 * GROUND, .06, d + 2 * GROUND]} /></mesh>
+    <lineSegments geometry={grid} position={[0, GRID_Y, 0]}><lineBasicMaterial color="#2f5866" transparent opacity={.35} depthWrite={false} /></lineSegments>
+    <InstancedParts parts={district.solid} geometry={BOX} material={m.solid} fades={fades} castShadow receiveShadow />
+    <InstancedParts parts={parts.cylinders} geometry={ROUND} material={m.solid} fades={fades} castShadow receiveShadow />
+    <InstancedParts parts={district.facade} geometry={BOX} material={m.facade} fades={fades} castShadow receiveShadow />
+    <InstancedParts parts={parts.neon} geometry={BOX} material={m.neon} fades={fades} />
+    <InstancedParts parts={district.signs} geometry={PLANE} material={m.signs} fades={fades} />
+    <InstancedParts parts={district.puddles} geometry={PLANE} material={m.puddles} receiveShadow renderOrder={-2} />
+    <InstancedParts parts={parts.pools} geometry={PLANE} material={m.pools} renderOrder={-1} />
   </group>;
 });

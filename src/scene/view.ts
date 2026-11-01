@@ -8,7 +8,8 @@ export const viewAlong = (dx: number, dy: number, dz: number): View => {
   return { ux: -dx / ground, uz: -dz / ground, rise: -dy / ground };
 };
 
-// Rooftop boxes stand this far above Building.h, and the plinth reaches this far past its footprint (see city.tsx).
+// Rooftop parts (thin antennas aside) stay within this far above Building.h, and a building's dressing within this far past its footprint
+// (district.ts; tests/district.test.ts holds it to both).
 export const ROOF = .85, PLINTH = .25;
 export const COVER_TOP = .62;
 export const buildingTop = (b: Building) => b.h + ROOF;
