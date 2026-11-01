@@ -19,7 +19,8 @@ const CONTROLS: [ReactNode, string][] = [
   ['Drag / one-finger drag', 'Rotate and tilt the view'],
   ['Scroll / pinch', 'Zoom the view'],
   ['Right-drag / two-finger drag', 'Pan the view'],
-  [<><kbd>R</kbd></>, 'Recenter the view'],
+  [<><kbd>F</kbd> or double-click a card</>, 'Focus the view on the selection'],
+  [<><kbd>R</kbd></>, 'Switch between the tactical view and the district overview'],
 ];
 const RULES: [IconName, string][] = [
   ['eye', 'Before the alarm, the squad only fires at targets you order.'],

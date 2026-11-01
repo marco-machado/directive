@@ -4,10 +4,11 @@ import { useFrame } from '@react-three/fiber';
 import type { ThreeEvent } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
 import { AlwaysStencilFunc, CircleGeometry, GreaterDepth, MeshBasicMaterial, NotEqualStencilFunc, PlaneGeometry, ReplaceStencilOp, RingGeometry, Vector3 } from 'three';
-import type { Group, Material, Mesh } from 'three';
+import type { Camera, Group, Material, Mesh } from 'three';
 import { REVIVE_SECONDS } from '../game/simulation.ts';
 import type { Faction, Simulation, Unit, UnitKind } from '../game/simulation.ts';
 import { dragged } from './drag.ts';
+import { rectDistance } from './framing.ts';
 import { BOX, Box, CYLINDER, DIAMOND, dim, glow, PaintContext, ProgressRing, solid, STILL, usePaint } from './parts.tsx';
 import type { Paint } from './parts.tsx';
 import { mayBeHidden, viewAlong } from './view.ts';
@@ -59,6 +60,28 @@ function silhouette(color: string): Paint {
 // Unit hitboxes by mesh, for the canvas cursor; a unit is clickable when unitClick would act on it.
 export type Hitboxes = Map<Mesh, string>;
 export const clickable = (sim: Simulation, u: Unit | undefined) => !!u && (u.faction === 'squad' && u.hp > 0 || sim.phase === 'mission' && (u.faction !== 'hostile' || u.hp > 0 && u.visible));
+
+// A click or tap that misses every hitbox still picks a clickable unit drawn this close to it (CSS pixels).
+export const PICK_SLOP = 28;
+const corner = new Vector3();
+// The clickable unit whose on-screen hitbox lies nearest a canvas point, within PICK_SLOP. While an ability
+// is aimed only hostiles count: a click on a teammate cancels the aim, so a near miss must not.
+export function nearestClickable(sim: Simulation, hitboxes: Hitboxes, camera: Camera, width: number, height: number, x: number, y: number) {
+  let best: string | null = null, bestEdge = PICK_SLOP, bestCenter = Infinity;
+  for (const [mesh, id] of hitboxes) {
+    const u = sim.units.find(v => v.id === id);
+    if (!clickable(sim, u) || sim.pending && u!.faction !== 'hostile') continue;
+    const r = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
+    for (let k = 0; k < 8; k++) {
+      corner.set(k & 1 ? .5 : -.5, k & 2 ? .5 : -.5, k & 4 ? .5 : -.5).applyMatrix4(mesh.matrixWorld).project(camera);
+      const sx = (corner.x + 1) / 2 * width, sy = (1 - corner.y) / 2 * height;
+      r.x0 = Math.min(r.x0, sx); r.x1 = Math.max(r.x1, sx); r.y0 = Math.min(r.y0, sy); r.y1 = Math.max(r.y1, sy);
+    }
+    const edge = rectDistance(x, y, r), center = Math.hypot(x - (r.x0 + r.x1) / 2, y - (r.y0 + r.y1) / 2);
+    if (edge < bestEdge || edge === bestEdge && center < bestCenter) { best = id; bestEdge = edge; bestCenter = center; }
+  }
+  return best;
+}
 
 // Health bars billboard toward the camera and draw over buildings so a unit behind a wall still reads.
 const PLANE = new PlaneGeometry(1, 1), BAR_W = 1, BAR_H = .14;

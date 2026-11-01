@@ -374,13 +374,13 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .comms li.danger { border-left-color: var(--red); color: #ffc2bc }
 .comms time { padding-top: 1px; font: 600 11px var(--f-ui); font-variant-numeric: tabular-nums; color: var(--faint) }
 .squad { grid-area: squad; display: flex; gap: 8px; animation: rise .4s ease-out both }
-.agent { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 56px; width: 228px; border: 1px solid var(--line); background: var(--panel); backdrop-filter: blur(10px);
+.agent { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 56px; width: 228px; min-width: 0; border: 1px solid var(--line); background: var(--panel); backdrop-filter: blur(10px);
   transition: border-color .15s, background .15s, transform .15s, box-shadow .15s }
 .agent:has(.agent-select:hover:not(:disabled)) { border-color: var(--line-2) }
 .agent.selected { border-color: var(--cls); background: linear-gradient(180deg, color-mix(in srgb, var(--cls) 15%, transparent), var(--panel)); transform: translateY(-4px); box-shadow: 0 0 0 1px color-mix(in srgb, var(--cls) 30%, transparent), 0 12px 30px rgb(0 0 0 / .45) }
 .agent.selected::after { content: ''; position: absolute; left: -1px; right: -1px; bottom: -1px; height: 3px; background: var(--cls); box-shadow: 0 0 12px var(--cls) }
 .agent.hit { animation: hit .4s ease-out }
-.agent-select { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 6px 8px 6px 6px; border: 0; background: transparent; text-align: left }
+.agent-select { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 6px 8px 6px 6px; border: 0; background: transparent; text-align: left; touch-action: manipulation }
 .agent-portrait { position: relative; flex-shrink: 0; width: 42px; height: 52px; overflow: hidden }
 .agent-portrait .portrait { width: 100%; height: 100% }
 .agent-portrait kbd { position: absolute; left: 2px; top: 2px; min-width: 15px; height: 15px; font-size: 9px }
@@ -414,6 +414,7 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .cmd .icon { width: 20px; height: 20px }
 .cmd kbd { position: absolute; top: 3px; right: 3px; min-width: 14px; height: 14px; font-size: 9px }
 .cmd:hover { border-color: var(--mint); background: rgb(18 42 42 / .85); color: var(--text) }
+.cmd[aria-pressed=true] { border-color: var(--mint); color: var(--mint); box-shadow: inset 0 0 14px rgb(94 242 192 / .18) }
 .controls-hint { grid-area: hint; justify-self: center; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px; margin: 0; font: 500 11px var(--f-ui); letter-spacing: .08em; text-transform: uppercase; color: var(--faint); pointer-events: none }
 .controls-hint kbd { min-width: 16px; height: 16px; font-size: 9px }
 .callouts { position: absolute; z-index: 5; top: 24%; left: 0; right: 0; display: flex; justify-content: center; pointer-events: none }
@@ -491,7 +492,8 @@ dialog::backdrop { overflow: hidden; overscroll-behavior: contain; background: r
 /* ---- Responsive ---- */
 @media (max-width: 1680px) {
   .hud-bottom { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "squad commands" "hint hint" }
-  .squad { justify-self: start }
+  /* Stretched to its cell, so the cards shrink beside the commands instead of running under them. */
+  .squad { justify-self: stretch }
 }
 @media (max-width: 1280px) {
   :root { --col-l: 300px; --col-r: 360px }
