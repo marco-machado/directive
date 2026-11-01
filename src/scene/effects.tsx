@@ -1,12 +1,12 @@
-import { useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import type { RefObject } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { BufferGeometry, CircleGeometry, Color, CylinderGeometry, DoubleSide, Float32BufferAttribute, Group, Mesh, MeshBasicMaterial, RingGeometry, SphereGeometry, Vector3 } from 'three';
+import { BufferGeometry, CircleGeometry, Color, CylinderGeometry, DoubleSide, Float32BufferAttribute, Group, Mesh, MeshBasicMaterial, RingGeometry, Sphere, SphereGeometry, Vector3 } from 'three';
 import { ABILITY_STATS } from '../game/classes.ts';
 import { HOSTILE_STATS, SUSPICIOUS } from '../game/simulation.ts';
-import type { Blast, Faction, Pending, Shot, Simulation } from '../game/simulation.ts';
+import type { Blast, Faction, Pending, Shot, Simulation, Unit } from '../game/simulation.ts';
 import type { EnemyKind } from '../game/mapgen.ts';
-import type { Point } from '../game/world.ts';
+import type { Point, World } from '../game/world.ts';
 import { play } from '../ui/audio.ts';
 import type { Cue } from '../ui/audio.ts';
 
@@ -70,60 +70,94 @@ function Blasts({ sim }: { sim: Simulation }) {
   </group>)}</>;
 }
 
-// Vision cones: one fan per hostile kind, laid flat in x/z at unit range so rotation.y = heading aims it and
-// the scale sets the range. The fill fades from the hostile out to its range, strongest on the near ground where
-// detection is fastest; a bright outline marks the edge of what it sees.
+// Vision cones: each one is the hostile's visibility polygon on the ground. RAYS rays fan across its field of view
+// and stop at the first building footprint in the way (World.sightDistance, the same footprints that block
+// sightClear), so a cone shows the ground the hostile can actually see. Every cone owns a preallocated
+// geometry that is rewritten in place each frame, in world-aligned offsets from the hostile. The fill fades
+// from the hostile out to its range, strongest on the near ground where detection is fastest; a bright outline
+// traces the edge of what it sees.
 const FADE = [[0, 1], [.45, .65], [1, .35]] as const; // [share of the range, fill alpha]
-const SEGMENTS = 24, EDGE_WIDTH = .09; // m
-function fan(fov: number) {
-  const points: number[] = [], colors: number[] = [], index: number[] = [];
-  for (const [r, alpha] of FADE) for (let k = 0; k <= SEGMENTS; k++) {
-    const a = -fov + 2 * fov * k / SEGMENTS;
-    points.push(Math.sin(a) * r, 0, Math.cos(a) * r); colors.push(1, 1, 1, alpha);
+const RAYS = 32, EDGE_WIDTH = .09, CONES = 40; // EDGE_WIDTH in m
+const fadeAlpha = (share: number) => {
+  for (let i = 1; i < FADE.length; i++) {
+    const [r0, a0] = FADE[i - 1], [r1, a1] = FADE[i];
+    if (share <= r1) return a0 + (a1 - a0) * (share - r0) / (r1 - r0);
   }
-  for (let row = 0; row < FADE.length - 1; row++) for (let k = 0; k < SEGMENTS; k++) {
-    const a = row * (SEGMENTS + 1) + k, b = a + SEGMENTS + 1;
+  return FADE[FADE.length - 1][1];
+};
+// The fill: one row of RAYS + 1 vertices per FADE ring, each ray's vertex pulled in to where the ray stops.
+function fillGeometry() {
+  const index: number[] = [];
+  for (let row = 0; row < FADE.length - 1; row++) for (let k = 0; k < RAYS; k++) {
+    const a = row * (RAYS + 1) + k, b = a + RAYS + 1;
     index.push(a, b, b + 1, a, b + 1, a + 1);
   }
-  const g = new BufferGeometry(); g.setAttribute('position', new Float32BufferAttribute(points, 3)); g.setAttribute('color', new Float32BufferAttribute(colors, 4)); g.setIndex(index); return g;
+  const n = FADE.length * (RAYS + 1), g = new BufferGeometry();
+  g.setAttribute('position', new Float32BufferAttribute(new Float32Array(n * 3), 3)); g.setAttribute('color', new Float32BufferAttribute(new Float32Array(n * 4).fill(1), 4)); g.setIndex(index);
+  g.boundingSphere = new Sphere(); return g;
 }
-// The outline: the rim arc and both sides of the fan, EDGE_WIDTH wide whatever the range.
-function edge(fov: number, range: number) {
-  const w = EDGE_WIDTH / range, points: number[] = [], index: number[] = [];
-  const quad = (...corners: number[][]) => { const n = points.length / 3; corners.forEach(([x, z]) => points.push(x, 0, z)); index.push(n, n + 1, n + 2, n, n + 2, n + 3); };
-  for (let k = 0; k < SEGMENTS; k++) {
-    const a = -fov + 2 * fov * k / SEGMENTS, b = a + 2 * fov / SEGMENTS;
-    quad([Math.sin(a) * (1 - w), Math.cos(a) * (1 - w)], [Math.sin(a), Math.cos(a)], [Math.sin(b), Math.cos(b)], [Math.sin(b) * (1 - w), Math.cos(b) * (1 - w)]);
-  }
-  for (const side of [-1, 1]) {
-    const a = side * fov, ix = -side * Math.cos(a) * w, iz = side * Math.sin(a) * w; // a step inward, across the side
-    quad([0, 0], [Math.sin(a), Math.cos(a)], [Math.sin(a) + ix, Math.cos(a) + iz], [ix, iz]);
-  }
-  const g = new BufferGeometry(); g.setAttribute('position', new Float32BufferAttribute(points, 3)); g.setIndex(index); return g;
+// The outline: a quad EDGE_WIDTH wide along each side of the polygon, the RAYS rim segments and the two sides.
+function edgeGeometry() {
+  const quads = RAYS + 2, index: number[] = [];
+  for (let q = 0; q < quads; q++) index.push(4 * q, 4 * q + 1, 4 * q + 2, 4 * q, 4 * q + 2, 4 * q + 3);
+  const g = new BufferGeometry(); g.setAttribute('position', new Float32BufferAttribute(new Float32Array(quads * 12), 3)); g.setIndex(index);
+  g.boundingSphere = new Sphere(); return g;
 }
-const KINDS = Object.entries(HOSTILE_STATS) as [EnemyKind, (typeof HOSTILE_STATS)[EnemyKind]][];
-const FANS = Object.fromEntries(KINDS.map(([kind, s]) => [kind, fan(s.fov)])) as Record<EnemyKind, BufferGeometry>;
-const EDGES = Object.fromEntries(KINDS.map(([kind, s]) => [kind, edge(s.fov, s.vision)])) as Record<EnemyKind, BufferGeometry>;
+const reach = new Float32Array(RAYS + 1), rayX = new Float32Array(RAYS + 1), rayZ = new Float32Array(RAYS + 1);
+function writeQuad(pos: Float32Array, q: number, ax: number, az: number, bx: number, bz: number) {
+  const len = Math.hypot(bx - ax, bz - az), nx = len ? -(bz - az) / len * EDGE_WIDTH / 2 : 0, nz = len ? (bx - ax) / len * EDGE_WIDTH / 2 : 0, o = q * 12;
+  pos[o] = ax + nx; pos[o + 2] = az + nz; pos[o + 3] = ax - nx; pos[o + 5] = az - nz;
+  pos[o + 6] = bx - nx; pos[o + 8] = bz - nz; pos[o + 9] = bx + nx; pos[o + 11] = bz + nz;
+}
+// Casts the rays for `u` and rewrites both geometries of its cone.
+function shapeCone(fill: BufferGeometry, outline: BufferGeometry, world: World, u: Unit, range: number, fov: number) {
+  for (let k = 0; k <= RAYS; k++) {
+    const a = u.heading - fov + 2 * fov * k / RAYS;
+    rayX[k] = Math.sin(a); rayZ[k] = Math.cos(a); reach[k] = world.sightDistance(u, rayX[k], rayZ[k], range);
+  }
+  const fillPos = fill.attributes.position.array as Float32Array, fillColor = fill.attributes.color.array as Float32Array;
+  for (let row = 0; row < FADE.length; row++) for (let k = 0; k <= RAYS; k++) {
+    const v = row * (RAYS + 1) + k, d = Math.min(FADE[row][0] * range, reach[k]);
+    fillPos[3 * v] = rayX[k] * d; fillPos[3 * v + 2] = rayZ[k] * d; fillColor[4 * v + 3] = fadeAlpha(d / range);
+  }
+  const edgePos = outline.attributes.position.array as Float32Array;
+  for (let k = 0; k < RAYS; k++) writeQuad(edgePos, k, rayX[k] * reach[k], rayZ[k] * reach[k], rayX[k + 1] * reach[k + 1], rayZ[k + 1] * reach[k + 1]);
+  writeQuad(edgePos, RAYS, 0, 0, rayX[0] * reach[0], rayZ[0] * reach[0]);
+  writeQuad(edgePos, RAYS + 1, 0, 0, rayX[RAYS] * reach[RAYS], rayZ[RAYS] * reach[RAYS]);
+  // Both bounding spheres, refit in place to the box around the polygon, keep frustum culling tight.
+  let minX = 0, maxX = 0, minZ = 0, maxZ = 0;
+  for (let k = 0; k <= RAYS; k++) {
+    const x = rayX[k] * reach[k], z = rayZ[k] * reach[k];
+    minX = Math.min(minX, x); maxX = Math.max(maxX, x); minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z);
+  }
+  const fillSphere = fill.boundingSphere!, edgeSphere = outline.boundingSphere!;
+  fillSphere.center.set((minX + maxX) / 2, 0, (minZ + maxZ) / 2); fillSphere.radius = Math.hypot(maxX - minX, maxZ - minZ) / 2 + EDGE_WIDTH;
+  edgeSphere.copy(fillSphere);
+  fill.attributes.position.needsUpdate = true; fill.attributes.color.needsUpdate = true; outline.attributes.position.needsUpdate = true;
+}
 const CALM = new Color('#f2e6c8'), ALERT = new Color('#ff4b3a');
 function VisionCones({ sim }: { sim: Simulation }) {
   const cones = useRef<(Group | null)[]>([]);
+  const shapes = useMemo(() => Array.from({ length: CONES }, () => ({ fill: fillGeometry(), edge: edgeGeometry() })), []);
+  useEffect(() => () => shapes.forEach(s => { s.fill.dispose(); s.edge.dispose(); }), [shapes]);
   useFrame(() => {
     let n = 0;
-    for (const u of sim.units) {
+    const world = sim.plan?.world;
+    if (world) for (const u of sim.units) {
       if (u.faction !== 'hostile' || u.hp <= 0 || !u.visible || u.stunned > 0) continue;
-      const cone = cones.current[n++]; if (!cone) break;
-      const kind = u.kind as EnemyKind, range = HOSTILE_STATS[kind].vision, [fill, outline] = cone.children as Mesh[];
+      const cone = cones.current[n], shape = shapes[n++]; if (!cone) break;
+      const stats = HOSTILE_STATS[u.kind as EnemyKind], [fill, outline] = cone.children as Mesh[];
       const fillMat = fill.material as MeshBasicMaterial, edgeMat = outline.material as MeshBasicMaterial;
-      cone.visible = true; fill.geometry = FANS[kind]; outline.geometry = EDGES[kind];
-      cone.position.set(u.x, .03, u.z); cone.rotation.y = u.heading; cone.scale.set(range, 1, range);
+      shapeCone(shape.fill, shape.edge, world, u, stats.vision, stats.fov);
+      cone.visible = true; cone.position.set(u.x, .03, u.z);
       fillMat.color.lerpColors(CALM, ALERT, u.detect); fillMat.opacity = .42 + .3 * u.detect;
       edgeMat.color.copy(fillMat.color); edgeMat.opacity = .6 + .4 * u.detect;
     }
     for (; n < cones.current.length; n++) if (cones.current[n]) cones.current[n]!.visible = false;
   });
-  return <>{Array.from({ length: 40 }, (_, i) => <group ref={el => { cones.current[i] = el; }} key={i} visible={false}>
-    <mesh geometry={FANS.guard} renderOrder={1}><meshBasicMaterial vertexColors transparent depthWrite={false} /></mesh>
-    <mesh geometry={EDGES.guard} position={[0, .005, 0]} renderOrder={2}><meshBasicMaterial transparent depthWrite={false} toneMapped={false} side={DoubleSide} /></mesh>
+  return <>{shapes.map((shape, i) => <group ref={el => { cones.current[i] = el; }} key={i} visible={false}>
+    <mesh geometry={shape.fill} renderOrder={1}><meshBasicMaterial vertexColors transparent depthWrite={false} /></mesh>
+    <mesh geometry={shape.edge} position={[0, .005, 0]} renderOrder={2}><meshBasicMaterial transparent depthWrite={false} toneMapped={false} side={DoubleSide} /></mesh>
   </group>)}</>;
 }
 

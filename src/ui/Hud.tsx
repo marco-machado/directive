@@ -21,7 +21,7 @@ function Tracker({ state }: { state: Snapshot }) {
       <span className="tier-badge">T{c.tier}</span>
     </header>
     <ol className="objectives">{state.objectives.map((o, i) => {
-      const timed = (o.kind === 'terminal' || o.kind === 'charge' || (o.kind === 'extract' && extractOpen)) && !o.done;
+      const timed = (o.kind === 'terminal' || o.kind === 'charge' || o.kind === 'vip' || (o.kind === 'extract' && extractOpen)) && !o.done;
       return <li key={i} className={o.done ? 'done' : i === current ? 'current' : ''}>
         <span className="obj-mark">{o.done ? <Icon name="check" /> : null}</span>
         <span className="obj-copy">{o.label}{timed ? <span className="obj-progress" role="progressbar" aria-label={`${o.label} progress`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(o.progress * 100)}>
