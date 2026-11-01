@@ -45,6 +45,11 @@ export class World {
     const b = this.bounds;
     return p.x > b.minX + padding && p.x < b.maxX - padding && p.z > b.minZ + padding && p.z < b.maxZ - padding;
   }
+  // The nearest point at least `padding` inside the bounds, for clicks on the street drawn past them.
+  clampToBounds(p: Point, padding = .5): Point {
+    const b = this.bounds;
+    return { x: clamp(p.x, b.minX + padding, b.maxX - padding), z: clamp(p.z, b.minZ + padding, b.maxZ - padding) };
+  }
   walkable(p: Point, padding = .38): boolean {
     return this.inBounds(p, padding) && !this.buildings.some(r => inside(p, r, padding)) && !this.cover.some(r => inside(p, r, padding));
   }

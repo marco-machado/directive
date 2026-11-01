@@ -1014,3 +1014,11 @@ test('a covered move order near the end of a barrier keeps the whole line behind
   step(sim, 8, () => squad.every(u => !u.path.length));
   for (const u of squad) assert.ok(sim.plan!.world.coverBetween(guard, u), `${u.name} at ${u.x.toFixed(2)}, ${u.z.toFixed(2)} is exposed`);
 });
+
+test('a click on the street drawn past the bounds lands on the nearest walkable point inside them', () => {
+  const world = new World({ minX: -16, maxX: 16, minZ: -12, maxZ: 12 }, [], []);
+  assert.deepEqual(world.clampToBounds({ x: -19.2, z: 10.4 }), { x: -15.5, z: 10.4 });
+  assert.deepEqual(world.clampToBounds({ x: 30, z: -40 }), { x: 15.5, z: -11.5 });
+  assert.deepEqual(world.clampToBounds({ x: 3, z: 4 }), { x: 3, z: 4 });
+  assert.ok(world.walkable(world.clampToBounds({ x: -8.7, z: 12.03 })));
+});

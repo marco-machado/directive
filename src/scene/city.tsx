@@ -69,7 +69,7 @@ function useBuildingFades(sim: Simulation, plan: MissionPlan): Fades {
   return state.fades;
 }
 
-const GROUND = 20; // meters of street drawn past the bounds; the horizon fade in materials.ts darkens it well before
+export const GROUND = 20; // meters of street drawn past the bounds; the horizon fade in materials.ts darkens it well before
 
 export const City = memo(function City({ plan, sim }: { plan: MissionPlan; sim: Simulation }) {
   const b = plan.world.bounds, w = b.maxX - b.minX, d = b.maxZ - b.minZ, cx = (b.minX + b.maxX) / 2, cz = (b.minZ + b.maxZ) / 2;

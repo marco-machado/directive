@@ -9,7 +9,7 @@ import type { Simulation } from '../game/simulation.ts';
 import { setAudioCamera } from '../ui/audio.ts';
 import { gameOptions } from '../ui/options.ts';
 import { Bloom, bloomSupported } from './bloom.tsx';
-import { City } from './city.tsx';
+import { City, GROUND } from './city.tsx';
 import { Diagnostics } from './diagnostics.tsx';
 import { dressDistrict } from './district.ts';
 import { dragged, trackDrags } from './drag.ts';
@@ -153,11 +153,12 @@ function World({ sim, reset, focus, overview, layout, attract, frame, labels, mi
     <CameraRig sim={sim} reset={reset} focus={focus} overview={overview} bounds={bounds} start={plan?.spawn[0] ?? null} layout={layout} attract={attract} frame={frame} insets={insets} />
     {plan ? <>
       <City key={planKey(plan)} plan={plan} sim={sim} />
+      {/* Covers the street drawn past the bounds too; a click out there acts on the nearest point inside them. */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[cx, .04, cz]} visible={false}
-        onClick={e => { if (!dragged()) { e.stopPropagation(); if (!nearMiss(e.nativeEvent)) sim.groundClick({ x: e.point.x, z: e.point.z }); } }}
-        onPointerMove={e => { pointer.current.x = e.point.x; pointer.current.z = e.point.z; pointer.current.on = true; }}
+        onClick={e => { if (!dragged()) { e.stopPropagation(); if (!nearMiss(e.nativeEvent)) sim.groundClick(plan.world.clampToBounds({ x: e.point.x, z: e.point.z })); } }}
+        onPointerMove={e => { Object.assign(pointer.current, plan.world.clampToBounds({ x: e.point.x, z: e.point.z })); pointer.current.on = true; }}
         onPointerOut={() => { pointer.current.on = false; }}>
-        <planeGeometry args={[w, d]} />
+        <planeGeometry args={[w + 2 * GROUND, d + 2 * GROUND]} />
       </mesh>
       <Objectives sim={sim} objectives={state.objectives} labels={labels} />
       <Units sim={sim} units={state.units} selected={state.selected} squad={state.squad} live={state.phase === 'mission'} labels={labels} hitboxes={hitboxes} />
