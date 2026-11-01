@@ -134,7 +134,7 @@ function attempt(contract: Contract, rng: Rng, withCover: boolean): MissionPlan 
     const n = nodeStarts.pop()!;
     add('camera', n.p, [], headingTo(n.p, pick(rng, candidates.filter(c => distance(c, n.p) > 3)) ?? extract));
   }
-  for (let k = 0; k < contract.tier - 2; k++) {
+  for (let k = 0; k < contract.tier - 3; k++) {
     const site = (sites.length ? sites : [primary])[k % Math.max(1, sites.length)];
     const p = near(site, 5); if (p) add('turret', p, []);
   }
