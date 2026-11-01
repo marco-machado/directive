@@ -92,7 +92,7 @@ export function MissionSelect({ state, titleRef, onChoose, onDeploy, onRecenter,
         </fieldset>
         {state.saveUnavailable ? <SaveWarning /> : null}
         <button className="btn primary deploy" onClick={onDeploy} disabled={deployBlocked || !contract}>
-          <span className="deploy-copy"><strong>{connecting ? 'Connecting…' : 'Deploy squad'}</strong><small>{squadPick.length} operative{squadPick.length === 1 ? '' : 's'}{contract ? ` · ${CONTRACTS[contract.type].title} · Tier ${contract.tier}` : ''}</small></span>
+          <span className="deploy-copy"><strong>{connecting ? 'Connecting…' : state.syncing ? 'Saving…' : 'Deploy squad'}</strong><small>{squadPick.length} operative{squadPick.length === 1 ? '' : 's'}{contract ? ` · ${CONTRACTS[contract.type].title} · Tier ${contract.tier}` : ''}</small></span>
           <Icon name="arrow" />
         </button>
       </div>

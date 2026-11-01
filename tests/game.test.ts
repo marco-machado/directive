@@ -1076,3 +1076,14 @@ test('first-time milestones are recorded once each, in the order they happen, an
   sim.restart();
   assert.ok(!sim.milestones.includes('alarm'));
 });
+
+test('a deploy waits while a save is in flight, so it only ever names an offer the server dealt', () => {
+  const { events, sync } = recorder();
+  const sim = new Simulation(campaignWith('heist'), sync);
+  sim.setSyncing(true);
+  sim.deploy();
+  assert.equal(sim.phase, 'briefing'); assert.deepEqual(events, []);
+  sim.setSyncing(false);
+  sim.deploy();
+  assert.equal(sim.phase, 'mission'); assert.equal(events.length, 1);
+});

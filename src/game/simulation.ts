@@ -273,8 +273,10 @@ export class Simulation {
     this.objectives.push(o('extract', t === 'escort' ? 'Escort the VIP and the whole squad to extraction' : 'Get the whole squad to extraction', plan.extract));
     this.updateVisibility();
   }
+  // While a save is in flight the board may be one the client dealt itself (the first payout replaces contract 01),
+  // so a deploy waits for the server's offers: the server would reject an id it never dealt.
   deploy = () => {
-    if (this.phase !== 'briefing' || !this.contract || !this.campaign.offers.some(o => o.id === this.contract!.id)) return;
+    if (this.phase !== 'briefing' || this.syncing || !this.contract || !this.campaign.offers.some(o => o.id === this.contract!.id)) return;
     const contract = this.contract;
     // Mirrors the server: deploying deals the next board, so offers reroll whatever the outcome.
     this.campaign = dealBoard(this.campaign, Math.random);
