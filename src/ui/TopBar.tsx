@@ -14,6 +14,7 @@ export function Uplink({ connecting, offline }: { connecting: boolean; offline: 
 
 function Status({ state }: { state: Snapshot }) {
   return <div className={`status${state.alarm ? ' alarm' : ''}`}>
+    {state.paused ? <span className="status-pause"><Icon name="pause" /><strong>Paused</strong></span> : null}
     <span className="status-state"><Icon name={state.alarm ? 'alert' : 'eye'} /><strong>{state.alarm ? 'Alarm' : state.stealth ? 'Undetected' : 'Evaded'}</strong></span>
     <span className="status-detail">{state.alarm
       ? state.calmIn < CALM_SECONDS - 1 ? <>Contact lost · standing down <b>{Math.ceil(state.calmIn)} s</b></>
