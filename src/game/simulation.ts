@@ -23,6 +23,8 @@ export type Unit = Point & {
   // A posted guard's look-around: seconds into the current cycle, that cycle's length, and its count.
   look: number; lookEvery: number; lookCycle: number;
 };
+// Where a hostile was, and which way it faced, when the squad lost sight of it (`at` is mission time).
+export type Sighting = Point & { heading: number; at: number };
 export type Shot = { id: number; from: Point; to: Point; faction: Faction; shooter: UnitKind; kind: 'bullet' | 'snipe'; ttl: number };
 export type Blast = { id: number; kind: 'grenade' | 'heal' | 'emp'; x: number; z: number; radius: number; ttl: number };
 export type Objective = Point & { kind: 'target' | 'terminal' | 'charge' | 'vip' | 'extract'; label: string; progress: number; done: boolean };
@@ -57,6 +59,7 @@ export const VIP_HP = 160;
 export const FLEE_DELAY = 5;        // the target hesitates before running for an exit
 export const FLEE_MIN_EXIT = 16;    // and picks an exit at least this far away
 export const SIGHT_RANGE = 10;      // fog of war: hostiles beyond this or behind buildings are hidden
+export const GHOST_SECONDS = 12;    // a hostile that drops out of sight leaves a last-seen marker this long
 export const CONVERGE_RADIUS = 14;  // guards this close to the alarm hunt the squad
 export const SUSPICIOUS = .3;       // detection above this makes a guard stop and stare
 // Detection fills in DETECT_BASE + DETECT_PER_METER × distance seconds: 1.5 s at 2 m, 4 s at a guard's full 7 m.
@@ -139,6 +142,10 @@ export class Simulation {
   commandPoint: Point | null = null;
   pending: Pending = null;
   autoPause = false; // pause the first time each hostile turns suspicious
+  // Fog-of-war memory, by hostile id: the last sighting of each hostile now out of sight, and the full patrol
+  // route of each guard the squad has watched finish a leg. Both are replaced with each mission.
+  lastSeen = new Map<string, Sighting>();
+  intel = new Map<string, Point[]>();
   private reinforced = 0;
   private vipJoined = false;
   private lastKnown: Point | null = null;
@@ -223,7 +230,7 @@ export class Simulation {
   private resetUnits() {
     const plan = this.plan;
     this.units = []; this.objectives = []; this.shots = []; this.blasts = []; this.casts = []; this.hitThisFrame.clear(); this.volleyReady.clear(); this.autoPaused.clear();
-    this.alarm = false; this.detected = false; this.calmIn = 0; this.lastKnown = null;
+    this.alarm = false; this.detected = false; this.calmIn = 0; this.lastKnown = null; this.lastSeen = new Map(); this.intel = new Map();
     this.reinforceIn = 0; this.reinforced = 0; this.vipJoined = false; this.holdup = ''; this.pending = null; this.commandPoint = null;
     this.targetArea = plan?.targetArea ? { ...plan.targetArea } : null;
     if (!plan) { this.squad = []; this.selected = []; return; }
@@ -541,9 +548,13 @@ export class Simulation {
     const eyes = this.units.filter(u => u.faction === 'squad' && u.hp > 0), world = this.plan?.world;
     for (const u of this.units) {
       if (u.faction !== 'hostile') { u.visible = true; continue; }
+      const was = u.visible;
       u.visible = u.marked > 0 || (!!world && eyes.some(e => distance(e, u) <= SIGHT_RANGE && world.sightClear(e, u)));
       if (u.kind === 'target' && u.visible && u.hp > 0 && this.targetArea) { this.targetArea.x = u.x; this.targetArea.z = u.z; }
+      if (u.visible || u.hp <= 0) this.lastSeen.delete(u.id);
+      else if (was) this.lastSeen.set(u.id, { x: u.x, z: u.z, heading: u.heading, at: this.time });
     }
+    for (const [id, s] of this.lastSeen) if (this.time - s.at >= GHOST_SECONDS) this.lastSeen.delete(id);
   }
 
   private updateHostile(u: Unit, dt: number, intruders: Unit[]) {
@@ -601,11 +612,20 @@ export class Simulation {
   private patrol(u: Unit, speed: number, dt: number) {
     if (u.patrol.length < 2) return this.lookAround(u, dt);
     if (!u.path.length) {
+      // Watching a guard stand at the end of a leg it just walked (its pause there is still running) gives away its whole route.
+      const end = u.patrol[u.patrolIndex];
+      if (u.visible && u.wait > 0 && u.x === end.x && u.z === end.z && !this.intel.has(u.id)) this.intel.set(u.id, this.route(u.patrol));
       if (u.wait > 0) { u.wait -= dt; return; }
       u.patrolIndex = (u.patrolIndex + 1) % u.patrol.length;
       u.path = this.plan!.world.findPath(u, u.patrol[u.patrolIndex]); u.wait = 1.2;
     }
     this.walk(u, speed, dt);
+  }
+  // The loop a patrol walks, leg by leg, as the paths the guard takes between its points.
+  private route(patrol: Point[]): Point[] {
+    const world = this.plan!.world, route = [{ x: patrol[0].x, z: patrol[0].z }];
+    patrol.forEach((p, i) => route.push(...world.findPath(p, patrol[(i + 1) % patrol.length])));
+    return route;
   }
 
   // A posted guard faces its post, and every 6 to 8 s turns 60° to one side (alternating), holds that look
