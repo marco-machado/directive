@@ -4,7 +4,7 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import { DirectionalLight, MOUSE, Spherical, TOUCH, Vector3 } from 'three';
 import type { MissionPlan } from '../game/mapgen.ts';
-import type { Bounds } from '../game/world.ts';
+import type { Bounds, Point } from '../game/world.ts';
 import type { Simulation } from '../game/simulation.ts';
 import { setAudioCamera } from '../ui/audio.ts';
 import { City } from './city.tsx';
@@ -17,6 +17,7 @@ import { Pointers } from './pointers.tsx';
 import type { Insets } from './pointers.tsx';
 import { nearestClickable, Units } from './units.tsx';
 import type { Hitboxes } from './units.tsx';
+import { cameraOffset } from './view.ts';
 import './scene.css';
 
 const FALLBACK: Bounds = { minX: -16, maxX: 16, minZ: -12, maxZ: 12 };
@@ -26,12 +27,13 @@ const planKey = (plan: MissionPlan) => { let key = planKeys.get(plan); if (key =
 const extent = (b: Bounds) => ({ cx: (b.minX + b.maxX) / 2, cz: (b.minZ + b.maxZ) / 2, w: b.maxX - b.minX, d: b.maxZ - b.minZ });
 
 // The projection is offset so the orbit target sits at the center of the HUD's free frame (the .view-frame
-// element). Missions open on the tactical view: the selection centered, about 22 m of street across the frame.
-// The overview fits the whole district; the briefing preview and the title's attract mode always use it, and
-// the overview prop swaps it in during a mission. Focus glides the target to the selection. Left-drag orbits.
+// element), and the camera looks in from the squad's spawn corner (`start`), which puts the squad on the near
+// side of the view. Missions open on the tactical view: the selection centered, about 22 m of street across the
+// frame. The overview fits the whole district; the briefing preview and the title's attract mode always use it,
+// and the overview prop swaps it in during a mission. Focus glides the target to the selection. Left-drag orbits.
 type Pose = { target: Vector3; offset: Spherical; zoom: number };
-const ORBIT = new Spherical().setFromVector3(new Vector3(29, 34, 32)), GLIDE_SECONDS = .4;
-function CameraRig({ sim, reset, focus, overview, bounds, layout, attract, frame, insets }: { sim: Simulation; reset: number; focus: number; overview: boolean; bounds: Bounds; layout: string; attract: boolean; frame: RefObject<HTMLDivElement | null>; insets: RefObject<Insets> }) {
+const GLIDE_SECONDS = .4;
+function CameraRig({ sim, reset, focus, overview, bounds, start, layout, attract, frame, insets }: { sim: Simulation; reset: number; focus: number; overview: boolean; bounds: Bounds; start: Point | null; layout: string; attract: boolean; frame: RefObject<HTMLDivElement | null>; insets: RefObject<Insets> }) {
   const ref = useRef<ComponentRef<typeof OrbitControls>>(null), camera = useThree(s => s.camera), size = useThree(s => s.size), gl = useThree(s => s.gl), look = useMemo(() => new Vector3(), []);
   const free = useRef({ w: 1, h: 1 }), glide = useRef<{ from: Pose; to: Pose; t: number } | null>(null), mission = layout === 'mission';
   useEffect(() => trackDrags(gl.domElement), [gl]);
@@ -46,11 +48,13 @@ function CameraRig({ sim, reset, focus, overview, bounds, layout, attract, frame
     c.target.addScaledVector(look, k); camera.position.addScaledVector(look, k);
   };
   const floor = (polar: number) => mission ? missionMinZoom(polar) : 4, ceiling = () => Math.max(65, tacticalZoom(free.current.w) * 1.5);
-  const fit = (zoom: number) => Math.max(floor(ORBIT.phi), Math.min(ceiling(), zoom));
+  // Every spawn corner mirrors the same offset, so the presets share one tilt.
+  const orbit = () => { const o = cameraOffset(bounds, start); return new Spherical().setFromVector3(new Vector3(o.x, o.y, o.z)); };
+  const fit = (zoom: number) => Math.max(floor(orbit().phi), Math.min(ceiling(), zoom));
   const squad = () => focusPoint(sim.units, sim.selected, sim.squad);
   const preset = (): Pose => {
     const { cx, cz } = extent(bounds), at = mission && !overview ? squad() : null;
-    return { target: new Vector3(at?.x ?? cx, 0, at?.z ?? cz), offset: ORBIT.clone(), zoom: fit(at ? tacticalZoom(free.current.w) : overviewZoom(free.current.w, free.current.h, bounds)) };
+    return { target: new Vector3(at?.x ?? cx, 0, at?.z ?? cz), offset: orbit(), zoom: fit(at ? tacticalZoom(free.current.w) : overviewZoom(free.current.w, free.current.h, bounds)) };
   };
   const current = (): Pose => { ground(); const target = ref.current!.target.clone(); return { target, offset: new Spherical().setFromVector3(look.subVectors(camera.position, target)), zoom: camera.zoom }; };
   const place = ({ target, offset, zoom }: Pose) => {
@@ -67,7 +71,7 @@ function CameraRig({ sim, reset, focus, overview, bounds, layout, attract, frame
     insets.current = { l, t, r, b }; free.current = { w: Math.max(1, size.width - l - r), h: Math.max(1, size.height - t - b) };
     camera.setViewOffset(size.width, size.height, (r - l) / 2, (b - t) / 2, size.width, size.height);
     place(preset()); ref.current?.update();
-  }, [camera, gl, reset, size.width, size.height, bounds, layout, frame, insets]);
+  }, [camera, gl, reset, size.width, size.height, bounds, start, layout, frame, insets]);
   const toggled = useRef(overview), focused = useRef(focus);
   useEffect(() => { if (toggled.current !== overview) { toggled.current = overview; if (mission) glideTo(preset()); } }, [overview]);
   useEffect(() => {
@@ -143,9 +147,9 @@ function World({ sim, reset, focus, overview, layout, attract, frame, labels, mi
     <ambientLight intensity={1.25} color="#d6e6dc" />
     <hemisphereLight args={['#abcacc', '#233c42', 1.5]} />
     <Sun bounds={bounds} />
-    <CameraRig sim={sim} reset={reset} focus={focus} overview={overview} bounds={bounds} layout={layout} attract={attract} frame={frame} insets={insets} />
+    <CameraRig sim={sim} reset={reset} focus={focus} overview={overview} bounds={bounds} start={plan?.spawn[0] ?? null} layout={layout} attract={attract} frame={frame} insets={insets} />
     {plan ? <>
-      <City key={planKey(plan)} plan={plan} />
+      <City key={planKey(plan)} plan={plan} sim={sim} />
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[cx, .04, cz]} visible={false}
         onClick={e => { if (!dragged()) { e.stopPropagation(); if (!nearMiss(e.nativeEvent)) sim.groundClick({ x: e.point.x, z: e.point.z }); } }}
         onPointerMove={e => { pointer.current.x = e.point.x; pointer.current.z = e.point.z; pointer.current.on = true; }}
@@ -165,7 +169,8 @@ export const GameCanvas = memo(function GameCanvas(props: Props) {
   // Labels need a fixed parent: drei's Html rebuilds its React root whenever its parent changes,
   // and R3F swaps the default parent once events connect, which blanked the first label.
   const labels = useRef<HTMLDivElement>(null!), missed = useRef<(e: MouseEvent) => void>(() => {});
-  return <><Canvas shadows="percentage" orthographic camera={{ position: [29, 34, 32], zoom: 24, near: .1, far: 150 }} dpr={[1, 1.5]} gl={{ antialias: true, alpha: false }} onPointerMissed={e => missed.current(e)} fallback={<div className="render-error">WebGL is unavailable. Enable hardware acceleration or try a WebGL-capable browser.</div>}>
+  // The stencil buffer keeps unit silhouettes off the units' own visible pixels (units.tsx).
+  return <><Canvas shadows="percentage" orthographic camera={{ position: [29, 34, 32], zoom: 24, near: .1, far: 150 }} dpr={[1, 1.5]} gl={{ antialias: true, alpha: false, stencil: true }} onPointerMissed={e => missed.current(e)} fallback={<div className="render-error">WebGL is unavailable. Enable hardware acceleration or try a WebGL-capable browser.</div>}>
     <World {...props} labels={labels} missed={missed} />
   </Canvas><div ref={labels} className="scene-labels" /></>;
 });

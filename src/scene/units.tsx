@@ -3,19 +3,59 @@ import type { ReactNode, RefObject } from 'react';
 import { useFrame } from '@react-three/fiber';
 import type { ThreeEvent } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
-import { CircleGeometry, MeshBasicMaterial, PlaneGeometry, RingGeometry, Vector3 } from 'three';
-import type { Camera, Group, Mesh } from 'three';
+import { AlwaysStencilFunc, CircleGeometry, GreaterDepth, MeshBasicMaterial, NotEqualStencilFunc, PlaneGeometry, ReplaceStencilOp, RingGeometry, Vector3 } from 'three';
+import type { Camera, Group, Material, Mesh } from 'three';
 import { REVIVE_SECONDS } from '../game/simulation.ts';
 import type { Faction, Simulation, Unit, UnitKind } from '../game/simulation.ts';
 import { dragged } from './drag.ts';
 import { rectDistance } from './framing.ts';
-import { BOX, Box, CYLINDER, DIAMOND, dim, glow, ProgressRing, solid, STILL } from './parts.tsx';
+import { BOX, Box, CYLINDER, DIAMOND, dim, glow, PaintContext, ProgressRing, solid, STILL, usePaint } from './parts.tsx';
+import type { Paint } from './parts.tsx';
+import { mayBeHidden, viewAlong } from './view.ts';
 
 type Vec3 = [number, number, number];
 const TOP: Record<UnitKind, number> = { assault: 1.3, support: 1.3, recon: 1.3, tech: 1.3, guard: 1.3, heavy: 1.55, camera: 2.15, turret: .75, target: 1.3, vip: 1.3 };
 const HITBOX: Record<UnitKind, Vec3> = { assault: [.95, 1.5, .95], support: [.95, 1.5, .95], recon: [.95, 1.5, .95], tech: [.95, 1.5, .95], guard: [.95, 1.5, .95], heavy: [1.15, 1.8, 1.15], camera: [.7, 2.3, .7], turret: [1.1, 1, 1.1], target: [.95, 1.5, .95], vip: [.95, 1.5, .95] };
 const ACCENT: Record<UnitKind, string> = { assault: '#9ff7d1', support: '#9ff7d1', recon: '#9ff7d1', tech: '#8ff0e6', guard: '#ed7e70', heavy: '#ff6d5c', camera: '#ff5a4a', turret: '#ff6d5c', target: '#ffbd83', vip: '#ffe7a8' };
 const GROUND: Record<Faction, string> = { squad: '#9ff7d1', hostile: '#ed7e70', vip: '#ffe7a8' };
+// Silhouette colors: operatives in their class color (the .cls-* colors in style.css), hostiles red, the VIP gold.
+const CLASS_COLOR: Partial<Record<UnitKind, string>> = { assault: '#ff8a5b', support: '#5ef2c0', recon: '#ffd166', tech: '#62d0ff' };
+const silhouetteColor = (kind: UnitKind, faction: Faction) => faction === 'hostile' ? '#ff5148' : faction === 'vip' ? '#ffd77a' : CLASS_COLOR[kind] ?? '#9ff7d1';
+const REACH = .9; // farthest any model part (the recon's rifle) sits from the unit's center
+
+// Occluded units: the lit pass sets the stencil under every pixel a unit covers, then the same
+// model draws again flat, only where it lies behind something already drawn (GreaterDepth) and
+// only on pixels with no stencil mark. The silhouette sets the mark too, so it blends once per
+// pixel and never tints a unit over its own visible body or over another unit. The lit pass
+// draws after the rest of the opaque scene (render order 1), so a unit only marks the pixels
+// where it ends up visible.
+const stenciled = new Map<string, Material>();
+const LIT: Paint = {
+  shadows: true, order: 1,
+  material: (color, emissive) => {
+    const key = `${color}|${emissive ?? ''}`;
+    let m = stenciled.get(key);
+    if (!m) {
+      m = solid(color, emissive).clone();
+      Object.assign(m, { stencilWrite: true, stencilRef: 1, stencilFunc: AlwaysStencilFunc, stencilZPass: ReplaceStencilOp });
+      stenciled.set(key, m);
+    }
+    return m;
+  },
+};
+const silhouettes = new Map<string, Paint>();
+function silhouette(color: string): Paint {
+  let paint = silhouettes.get(color);
+  if (!paint) {
+    const m = new MeshBasicMaterial({
+      color, transparent: true, opacity: .5, depthWrite: false, depthFunc: GreaterDepth, toneMapped: false,
+      stencilWrite: true, stencilRef: 1, stencilFunc: NotEqualStencilFunc, stencilZPass: ReplaceStencilOp,
+    });
+    paint = { shadows: false, order: 1, material: () => m };
+    silhouettes.set(color, paint);
+  }
+  return paint;
+}
 
 // Unit hitboxes by mesh, for the canvas cursor; a unit is clickable when unitClick would act on it.
 export type Hitboxes = Map<Mesh, string>;
@@ -67,7 +107,7 @@ function Humanoid({ body, head, visor, legs, legColor = '#192f33', torso = [.47,
 
 // Forward is +z: rotation.y = heading turns the model toward (sin h, cos h). Round bases hide that turn for fixed hostiles.
 const Model = memo(function Model({ kind, legs, downed }: { kind: UnitKind; legs: RefObject<Group | null>; downed: boolean }) {
-  const c = (color: string) => downed ? dim(color) : color;
+  const c = (color: string) => downed ? dim(color) : color, paint = usePaint();
   const accent = c(ACCENT[kind]), gun = c('#122429'), arm = c('#526b66'), body = c('#466766'), head = c('#697e7a'), pack = c('#3e5c5a');
   switch (kind) {
     case 'assault': return <Humanoid body={body} head={head} visor={accent} legs={legs} torso={[.56, .66, .38]}>
@@ -111,7 +151,7 @@ const Model = memo(function Model({ kind, legs, downed }: { kind: UnitKind; legs
       <Box position={[.36, .72, .26]} size={[.17, .19, .66]} color="#122429" castShadow />
     </Humanoid></group>;
     case 'camera': return <>
-      <mesh position={[0, .04, 0]} scale={[.22, .08, .22]} geometry={CYLINDER} material={solid('#3c4a4a')} />
+      <mesh position={[0, .04, 0]} scale={[.22, .08, .22]} geometry={CYLINDER} material={paint.material('#3c4a4a')} renderOrder={paint.order} />
       <Box position={[0, 1, 0]} size={[.09, 1.9, .09]} color="#5c6d6a" castShadow />
       <Box position={[0, 1.94, 0]} size={[.16, .12, .16]} color="#465452" />
       <Box position={[0, 2.02, .1]} size={[.24, .2, .42]} color="#2a3436" castShadow />
@@ -119,8 +159,8 @@ const Model = memo(function Model({ kind, legs, downed }: { kind: UnitKind; legs
       <Box position={[0, 2.14, -.05]} size={[.05, .04, .05]} color={accent} emissive={accent} />
     </>;
     case 'turret': return <>
-      <mesh position={[0, .14, 0]} scale={[.46, .28, .46]} geometry={CYLINDER} material={solid('#3d4447')} castShadow />
-      <mesh position={[0, .33, 0]} scale={[.32, .1, .32]} geometry={CYLINDER} material={solid('#4b3b3a')} />
+      <mesh position={[0, .14, 0]} scale={[.46, .28, .46]} geometry={CYLINDER} material={paint.material('#3d4447')} castShadow={paint.shadows} renderOrder={paint.order} />
+      <mesh position={[0, .33, 0]} scale={[.32, .1, .32]} geometry={CYLINDER} material={paint.material('#4b3b3a')} renderOrder={paint.order} />
       <Box position={[0, .52, 0]} size={[.5, .3, .55]} color="#5a3936" castShadow />
       <Box position={[0, .55, .55]} size={[.1, .1, .62]} color="#1c2427" castShadow />
       <Box position={[0, .62, .28]} size={[.3, .05, .02]} color={accent} emissive={accent} />
@@ -143,6 +183,7 @@ const Model = memo(function Model({ kind, legs, downed }: { kind: UnitKind; legs
 function Agent({ sim, unit, selected, slot, tagged, labels, hitboxes }: { sim: Simulation; unit: Unit; selected: boolean; slot: number; tagged: boolean; labels: RefObject<HTMLDivElement>; hitboxes: Hitboxes }) {
   const { id, kind, faction } = unit;
   const root = useRef<Group>(null), model = useRef<Group>(null), pose = useRef<Group>(null), legs = useRef<Group>(null), ring = useRef<Group>(null), spin = useRef<Group>(null);
+  const ghost = useRef<Group>(null), ghostLegs = useRef<Group>(null), look = useRef(new Vector3()).current;
   const bar = useRef<Group>(null), fill = useRef<Mesh>(null);
   const stun = useRef<Group>(null), mark = useRef<Mesh>(null), revive = useRef<Group>(null);
   const downed = faction === 'squad' && unit.hp <= 0, top = TOP[kind], hitbox = HITBOX[kind];
@@ -160,7 +201,15 @@ function Agent({ sim, unit, selected, slot, tagged, labels, hitboxes }: { sim: S
     model.current.rotation.y = u.heading;
     model.current.position.y = walking ? Math.sin(t * 17) * .035 : 0;
     pose.current.rotation.x = down ? -Math.PI / 2 : 0; pose.current.position.y = down ? .2 : 0;
-    if (legs.current) legs.current.rotation.x = walking ? Math.sin(t * 17) * .4 : 0;
+    const stride = walking ? Math.sin(t * 17) * .4 : 0;
+    if (legs.current) legs.current.rotation.x = stride;
+    if (ghostLegs.current) ghostLegs.current.rotation.x = stride;
+    // The silhouette only draws when a building or barrier could be in front of the unit.
+    const world = sim.plan?.world;
+    if (ghost.current) {
+      const d = camera.getWorldDirection(look);
+      ghost.current.visible = !!world && mayBeHidden(world.buildings, world.cover, viewAlong(d.x, d.y, d.z), u, REACH);
+    }
     if (ring.current) ring.current.visible = sim.selected.includes(id);
     if (spin.current && !STILL) spin.current.rotation.z = t * .9;
     if (bar.current && fill.current) {
@@ -192,7 +241,10 @@ function Agent({ sim, unit, selected, slot, tagged, labels, hitboxes }: { sim: S
     <group ref={model}>
       <group ref={pose} onClick={click}>
         <mesh ref={register} position={[0, hitbox[1] / 2, 0]} scale={hitbox} geometry={BOX} visible={false} />
-        <Model kind={kind} legs={legs} downed={downed} />
+        <PaintContext.Provider value={LIT}><Model kind={kind} legs={legs} downed={downed} /></PaintContext.Provider>
+        <group ref={ghost} visible={false}>
+          <PaintContext.Provider value={silhouette(c(silhouetteColor(kind, faction)))}><Model kind={kind} legs={ghostLegs} downed={downed} /></PaintContext.Provider>
+        </group>
       </group>
     </group>
     {faction === 'squad' ? <group ref={ring} rotation={[-Math.PI / 2, 0, 0]} position={[0, .045, 0]} visible={false}>
