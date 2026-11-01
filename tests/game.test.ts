@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Simulation, parseCampaign, CALM_SECONDS, CAMERA_DETECT, COVER_FACTOR, DETECT_DRAIN, detectSeconds, GHOST_SECONDS, HACK_SECONDS, LOOK_ANGLE, LOOK_EVERY, LOOK_PAUSE, QUEUE_SPACING, REINFORCE_CAP, SUSPICIOUS, REINFORCE_SECONDS, REVIVE_SECONDS, SIGHT_RANGE, TAKEDOWN_REACH, TAKEDOWN_SECONDS } from '../src/game/simulation.ts';
+import { Simulation, parseCampaign, CALM_SECONDS, FIRST_WAVE_SECONDS, VIP_DAMAGE_TAKEN, VIP_SECURE_SECONDS, CAMERA_DETECT, COVER_FACTOR, DETECT_DRAIN, detectSeconds, GHOST_SECONDS, HACK_SECONDS, LOOK_ANGLE, LOOK_EVERY, LOOK_PAUSE, QUEUE_SPACING, REINFORCE_CAP, SUSPICIOUS, REINFORCE_SECONDS, REVIVE_SECONDS, SIGHT_RANGE, TAKEDOWN_REACH, TAKEDOWN_SECONDS, tierDamage, tierHp } from '../src/game/simulation.ts';
 import type { CampaignSync, Unit, Upgrade } from '../src/game/simulation.ts';
 import { contractPayout, freshCampaign, MAX_TIER } from '../src/game/campaign.ts';
 import type { Campaign, ContractType } from '../src/game/campaign.ts';
@@ -66,6 +66,16 @@ test('districts are deterministic, reachable, and grow with tier', () => {
     if (type === 'assassination') assert.equal(plan.enemies.filter(e => e.kind === 'target').length, 1);
     if (type === 'escort') assert.ok(plan.vip);
   }
+});
+
+test('hostiles scale gently up to tier 3 and turrets guard objectives only from tier 4', () => {
+  assert.equal(tierHp(1), 1); assert.equal(tierDamage(1), 1);
+  assert.ok(tierHp(3) <= 1.1 && tierDamage(3) <= 1.1, 'tier 3 hostiles should stay close to tier 1');
+  assert.ok(tierDamage(5) - tierDamage(4) > tierDamage(3) - tierDamage(2), 'the curve steepens past tier 3');
+  const turrets = (tier: number) => [1, 2, 3, 4, 5, 6].flatMap(seed => (['heist', 'sabotage'] as const).map(type => planMission(contract(type, tier, seed)).enemies.filter(e => e.kind === 'turret').length));
+  assert.ok(turrets(3).every(n => n === 0));
+  // A turret is skipped when no free spot lies near its objective, so only most tier-4 districts get one.
+  assert.ok(turrets(4).filter(n => n === 1).length >= 10);
 });
 
 test('buildings block movement and sight; cover blocks movement but not sight', () => {
@@ -305,7 +315,7 @@ test('escort completes once the squad and the VIP are in the zone', () => {
   const vip = sim.units.find(u => u.faction === 'vip')!, extract = sim.objectives.at(-1)!;
   assert.equal(squad.length, 4);
   vip.x = 1; vip.z = 2;
-  step(sim, .5); assert.equal(sim.objectives[0].done, true);
+  step(sim, VIP_SECURE_SECONDS + .1); assert.equal(sim.objectives[0].done, true);
   sim.selectAll(); sim.move({ x: extract.x, z: extract.z });
   step(sim, 30);
   assert.equal(sim.result, 'success', `VIP ${distance(vip, extract).toFixed(2)} from extraction`);
@@ -316,11 +326,29 @@ test('the escort VIP joins, follows, and its death fails the contract', () => {
   const vip = sim.units.find(u => u.faction === 'vip')!;
   vip.x = 8; vip.z = 0;
   step(sim, .5); assert.equal(sim.objectives[0].done, false);
-  squad[0].x = 6; step(sim, .5); assert.equal(sim.objectives[0].done, true);
+  squad[0].x = 6; step(sim, VIP_SECURE_SECONDS - .5);
+  assert.equal(sim.objectives[0].done, false); assert.ok(sim.objectives[0].progress > .8);
+  step(sim, .6); assert.equal(sim.objectives[0].done, true);
   squad[0].x = 0; squad[0].z = 6; squad[1].x = -15; squad[1].z = 15;
   step(sim, 3); assert.ok(distance(vip, squad[0]) < 2.5, String(distance(vip, squad[0])));
   vip.hp = 0; sim.update(1 / 60);
   assert.equal(sim.result, 'failure'); assert.equal(sim.failReason, 'The VIP was killed.');
+});
+
+test('under fire the VIP keeps up, ducks behind nearby cover, and takes reduced damage', () => {
+  const { sim, squad } = arena('escort');
+  // A barrier beside the operative, with a guard firing from the far side of it.
+  const cover = { x: 0, z: 2, w: 1.6, d: .45 };
+  sim.plan = { ...sim.plan!, world: new World({ minX: -20, maxX: 20, minZ: -20, maxZ: 20 }, [], [cover]) };
+  const vip = sim.units.find(u => u.faction === 'vip')!;
+  squad.forEach((u, i) => { u.x = i; u.z = 0; });
+  vip.x = 1; vip.z = -1;
+  step(sim, VIP_SECURE_SECONDS + .1); assert.equal(sim.objectives[0].done, true);
+  const before = vip.hp;
+  (sim as unknown as { damage(t: Unit, n: number, from: Point): void }).damage(vip, 20, { x: 0, z: 6 });
+  assert.equal(before - vip.hp, 20 * VIP_DAMAGE_TAKEN);
+  step(sim, 1);
+  assert.ok(sim.plan!.world.coverBetween({ x: 0, z: 6 }, vip), `VIP at ${vip.x.toFixed(2)}, ${vip.z.toFixed(2)} is not behind the barrier`);
 });
 
 test('the assassination target flees on alarm and escaping fails', () => {
@@ -343,14 +371,19 @@ test('an EMP only delays a fleeing target', () => {
   assert.equal(sim.failReason, 'The target escaped.');
 });
 
-test('reinforcements arrive every interval up to the cap', () => {
+test('the first wave flanks from the exit nearest extraction soon after the alarm; later waves follow up to the cap', () => {
   const { sim, squad } = arena('heist');
+  sim.plan = { ...sim.plan!, exits: [{ x: 19, z: 0 }, { x: -19, z: 5 }] };
   squad.forEach(u => { u.hp = u.maxHp = 1e6; });
+  const waves = () => sim.units.filter(u => /^r\d+$/.test(u.id));
   (sim as unknown as { raiseAlarm(p: object, r: string): void }).raiseAlarm({ x: 0, z: 0 }, 'test');
-  step(sim, REINFORCE_SECONDS + .1);
-  assert.equal(sim.units.filter(u => /^r\d+$/.test(u.id)).length, 2);
+  step(sim, FIRST_WAVE_SECONDS - .1); assert.equal(waves().length, 0);
+  step(sim, .2);
+  assert.equal(waves().length, 2);
+  assert.ok(waves().every(u => distance(u, { x: -19, z: 5 }) < 2), 'the first wave entered away from extraction');
+  step(sim, REINFORCE_SECONDS); assert.equal(waves().length, 4);
   step(sim, REINFORCE_SECONDS * 4);
-  assert.equal(sim.units.filter(u => /^r\d+$/.test(u.id)).length, REINFORCE_CAP);
+  assert.equal(waves().length, REINFORCE_CAP);
 });
 
 test('revive takes three still seconds, restarts on damage, and restores 40% HP', () => {

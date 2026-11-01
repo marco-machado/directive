@@ -4,6 +4,7 @@ import { useFrame } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
 import { AdditiveBlending, CylinderGeometry, DoubleSide } from 'three';
 import type { Group, Mesh } from 'three';
+import { VIP_REACH } from '../game/simulation.ts';
 import type { Objective, Simulation } from '../game/simulation.ts';
 import { Box, ProgressRing, STILL } from './parts.tsx';
 
@@ -67,6 +68,13 @@ function Charge({ sim, index, o, labels, letter }: Props & { letter: string }) {
   </group>;
 }
 
+// The VIP's hold: the ring fills while an operative stands within reach, and goes once they are free.
+function VipHold({ sim, index, o }: Props) {
+  const ref = useRef<Group>(null);
+  useFrame(() => { if (ref.current) ref.current.visible = !sim.objectives[index]?.done; });
+  return <group ref={ref} position={[o.x, 0, o.z]}><ProgressRing radius={VIP_REACH} color="#ffe7a8" value={progress(sim, index)} segments={48} /></group>;
+}
+
 function Extraction({ sim, o, labels }: Props) {
   const ring = useRef<Mesh>(null);
   useFrame(({ clock }) => { if (ring.current) ring.current.rotation.z = clock.elapsedTime * .15; });
@@ -86,6 +94,7 @@ export function Objectives({ sim, objectives, labels }: { sim: Simulation; objec
     if (o.kind === 'terminal') return <Terminal key={key} {...props} />;
     if (o.kind === 'charge') return <Charge key={key} {...props} letter={'AB'[charges++] ?? ''} />;
     if (o.kind === 'extract') return <Extraction key={key} {...props} />;
+    if (o.kind === 'vip') return <VipHold key={key} {...props} />;
     return null;
   })}</>;
 }

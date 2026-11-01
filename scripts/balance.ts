@@ -1,6 +1,6 @@
 // Headless balance check: a no-tactics bot (select all, click the objective, then extraction) plays every
 // contract type and tier with three rosters and prints win rate, alarm rate, median time and HP lost.
-// Run: node --experimental-transform-types scripts/balance.ts [--seeds 12]
+// Run: node --experimental-transform-types scripts/balance.ts [--seeds 12] [--roster starters] [--tiers 1,3]
 import { Simulation } from '../src/game/simulation.ts';
 import type { Unit } from '../src/game/simulation.ts';
 import { CONTRACT_TYPES, contractPayout, freshCampaign, MAX_LEVEL, MAX_TIER } from '../src/game/campaign.ts';
@@ -9,8 +9,9 @@ import { mulberry32 } from '../src/game/rng.ts';
 import { distance } from '../src/game/world.ts';
 import type { Point } from '../src/game/world.ts';
 
-const arg = (name: string, fallback: number) => { const i = process.argv.indexOf(`--${name}`); return i > 0 ? Number(process.argv[i + 1]) : fallback; };
-const SEEDS = arg('seeds', 12);
+const option = (name: string) => { const i = process.argv.indexOf(`--${name}`); return i > 0 ? process.argv[i + 1] : undefined; };
+const SEEDS = Number(option('seeds') ?? 12);
+const TIERS = option('tiers')?.split(',').map(Number) ?? Array.from({ length: MAX_TIER }, (_, i) => i + 1);
 const TIME_LIMIT = 300; // seconds of mission time before the run counts as a loss
 const DT = 1 / 30;
 const THINK = .25;      // the bot looks at the field this often
@@ -63,10 +64,10 @@ const seeds = Array.from({ length: SEEDS }, (_, k) => 1000 + k * 7919);
 
 console.log(`Balance: no-tactics bot, ${SEEDS} seeds per cell, ${TIME_LIMIT} s limit.`);
 console.log('win = contracts won, alarm = runs that raised the alarm, time = median seconds of the wins, hp = mean squad HP lost in the wins, fails = loss reasons.\n');
-for (const roster of ROSTERS) {
+for (const roster of ROSTERS.filter(r => !option('roster') || r.name === option('roster'))) {
   console.log(`## ${roster.name}`);
   console.log('type           tier   win  alarm  time    hp  fails');
-  for (const type of CONTRACT_TYPES) for (let tier = 1; tier <= MAX_TIER; tier++) {
+  for (const type of CONTRACT_TYPES) for (const tier of TIERS) {
     const runs = seeds.map(seed => play(type, tier, seed, roster.extra)), wins = runs.filter(r => r.win);
     const reasons = new Map<string, number>();
     for (const r of runs) if (!r.win) reasons.set(r.reason, (reasons.get(r.reason) ?? 0) + 1);

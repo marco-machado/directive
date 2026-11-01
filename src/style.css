@@ -194,6 +194,10 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .offer-copy { min-width: 0 }
 .offer-copy strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 18px/1.1 var(--f-display); letter-spacing: .05em; text-transform: uppercase }
 .offer-copy small { display: block; margin-top: 5px; font: 500 12px/1.3 var(--f-ui); letter-spacing: .08em; text-transform: uppercase; color: var(--dim) }
+.offer-copy .threat-read, .brief .threat-read { display: block; margin-top: 5px; font: 700 11px/1.3 var(--f-ui); letter-spacing: .1em; text-transform: uppercase }
+.threat-low { color: var(--dim) }
+.threat-moderate { color: var(--amber) }
+.threat-high, .threat-extreme { color: var(--red) }
 .offer-side { display: grid; justify-items: end; gap: 8px }
 .offer-side .credits { font: 600 17px var(--f-ui); color: var(--gold) }
 .offer-tier { display: flex; align-items: center; gap: 6px; font: 700 11px var(--f-ui); letter-spacing: .1em; color: var(--threat) }
