@@ -68,6 +68,16 @@ test('districts are deterministic, reachable, and grow with tier', () => {
   }
 });
 
+test('a posted guard never stands with its back to the map edge, so a takedown has ground behind it', () => {
+  for (const type of ['assassination', 'heist', 'sabotage', 'escort'] as const) for (let tier = 1; tier <= MAX_TIER; tier++) for (let seed = 1; seed <= 12; seed++) {
+    const plan = planMission(contract(type, tier, seed * 7919 + tier));
+    for (const g of plan.enemies.filter(e => e.kind === 'guard' && !e.patrol.length)) {
+      const behind = { x: g.x - Math.sin(g.heading) * TAKEDOWN_REACH, z: g.z - Math.cos(g.heading) * TAKEDOWN_REACH };
+      assert.ok(plan.world.inBounds(behind), `${type} T${tier} seed ${seed}: guard at ${g.x.toFixed(1)}, ${g.z.toFixed(1)} has its back to the edge`);
+    }
+  }
+});
+
 test('hostiles scale gently up to tier 3 and turrets guard objectives only from tier 4', () => {
   assert.equal(tierHp(1), 1); assert.equal(tierDamage(1), 1);
   assert.ok(tierHp(3) <= 1.1 && tierDamage(3) <= 1.1, 'tier 3 hostiles should stay close to tier 1');

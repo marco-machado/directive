@@ -17,6 +17,7 @@ export type MissionPlan = {
 const STREET = 1.5; // clearance between a block's edge and its building
 const EDGE = .9;    // lattice inset from the map edge
 const SAFE_RADIUS = 9; // no hostile starts this close to the squad
+const BACK_ROOM = 1.5; // map left behind a posted guard, so a takedown has ground to end on
 export const TARGET_AREA_RADIUS = 6;
 export const TARGET_AREA_OFFSET = 3; // the area's center lies within this of the target, so the area always contains it
 const ACCENTS = ['#b9d6cc', '#ffb17d', '#73dfca', '#bad3c8', '#e2a078'];
@@ -113,13 +114,18 @@ function attempt(contract: Contract, rng: Rng, withCover: boolean): MissionPlan 
   const used: Point[] = [primary, ...sites];
   const free = (p: Point, gap = 1.5) => distance(p, extract) > SAFE_RADIUS && used.every(u => distance(u, p) >= gap);
   const add = (kind: EnemyKind, p: Point, patrol: Point[], heading = headingTo(p, extract)) => { enemies.push({ ...p, kind, heading, patrol }); used.push(p); };
-  const near = (center: Point, r: number) => shuffle(rng, candidates).find(p => distance(p, center) <= r && free(p)) ??
-    [0, 1, 2, 3, 4, 5].map(k => ({ x: center.x + Math.cos(k) * 1.6, z: center.z + Math.sin(k) * 1.6 })).find(p => bare.walkable(p, .5) && free(p, 1));
+  const near = (center: Point, r: number, ok = (_: Point) => true) => shuffle(rng, candidates).find(p => distance(p, center) <= r && free(p) && ok(p)) ??
+    [0, 1, 2, 3, 4, 5].map(k => ({ x: center.x + Math.cos(k) * 1.6, z: center.z + Math.sin(k) * 1.6 })).find(p => bare.walkable(p, .5) && free(p, 1) && ok(p));
+  // A posted guard faces the extraction, so its back is to the map's far side, where the objectives are.
+  // Takedowns end just behind it, so it never stands with its back to the map edge; near an edge that can
+  // push its post out past 4 m from the objective it holds.
+  const backRoom = (p: Point) => { const h = headingTo(p, extract); return bare.inBounds({ x: p.x - Math.sin(h) * BACK_ROOM, z: p.z - Math.cos(h) * BACK_ROOM }); };
+  const post = (site: Point) => near(site, 4, backRoom) ?? near(site, 6, backRoom) ?? near(site, 8, backRoom);
 
   // Two posted guards hold every objective; the rest walk the streets.
   const guards = 3 + contract.tier;
   for (const site of (sites.length ? sites : [primary]).slice(0, 2)) {
-    for (let k = 0; k < (sites.length > 1 ? 1 : 2); k++) { const p = near(site, 4); if (p) add('guard', p, []); }
+    for (let k = 0; k < (sites.length > 1 ? 1 : 2); k++) { const p = post(site); if (p) add('guard', p, []); }
   }
   const nodeStarts = shuffle(rng, nodes).filter(n => free(n.p, 3));
   while (enemies.filter(e => e.kind === 'guard').length < guards && nodeStarts.length) {
