@@ -4,7 +4,7 @@ import { client, sim } from '../app.ts';
 import type { ContractType, Operative } from '../game/campaign.ts';
 import { ABILITY_STATS, CLASS_STATS } from '../game/classes.ts';
 import { formatSaveCode, normalizeSaveCode } from '../game/saveCode.ts';
-import { HACK_SECONDS } from '../game/simulation.ts';
+import { HACK_SECONDS, VIP_SECURE_SECONDS } from '../game/simulation.ts';
 import { ApiError, fetchCampaign, rememberSaveCode } from '../net/campaignClient.ts';
 import { Icon, Portrait } from './icons.tsx';
 import { sound } from './audio.ts';
@@ -13,7 +13,7 @@ export const CONTRACTS: Record<ContractType, { title: string; brief: string }> =
   assassination: { title: 'Assassination', brief: 'Neutralize the target, then extract. Once the alarm sounds, the target runs for an exit.' },
   heist: { title: 'Data heist', brief: `Hold the vault terminal for ${HACK_SECONDS} seconds to download the data, then extract.` },
   sabotage: { title: 'Sabotage', brief: 'Plant a charge at every site, then extract.' },
-  escort: { title: 'Escort', brief: 'Reach the VIP and escort them to extraction. The VIP freezes under fire; if they die, the contract fails.' },
+  escort: { title: 'Escort', brief: `Stay beside the VIP for ${VIP_SECURE_SECONDS} seconds to free them, then escort them to extraction. Under fire, the VIP ducks behind cover near the squad; if they die, the contract fails.` },
 };
 export const pad = (n: number) => String(n).padStart(2, '0');
 export const clock = (seconds: number) => `${pad(Math.floor(seconds / 60))}:${pad(Math.floor(seconds % 60))}`;

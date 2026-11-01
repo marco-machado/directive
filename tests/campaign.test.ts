@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyDismiss, applyPurchase, applyRecruit, baseTier, clampCampaign, completeMission, contractPayout, dealBoard, freshCampaign, MIN_MISSION_MS, RECRUIT_COST, ROSTER_CAP, SILENT_CLASSES, startMission } from '../src/game/campaign.ts';
+import { applyDismiss, applyPurchase, applyRecruit, baseTier, clampCampaign, completeMission, contractPayout, dealBoard, freshCampaign, MIN_MISSION_MS, OPENING_CONTRACTS, RECRUIT_COST, ROSTER_CAP, SILENT_CLASSES, squadRating, startMission, threatFor } from '../src/game/campaign.ts';
 import type { Ledger } from '../src/game/campaign.ts';
 import { mulberry32 } from '../src/game/rng.ts';
 import { formatSaveCode, generateSaveCode, normalizeSaveCode } from '../src/game/saveCode.ts';
@@ -16,8 +16,28 @@ test('purchases charge the listed cost and stop at the level cap', () => {
   assert.equal(applyPurchase({ ...rich, abilities: { ...rich.abilities, tech: 3 } }, 'tech'), null);
 });
 
+test('until two contracts are complete, the board offers only the base tier and the one above', () => {
+  assert.equal(OPENING_CONTRACTS, 2);
+  assert.deepEqual(freshCampaign(rng).offers.map(o => o.tier), [1, 1, 2]);
+  assert.deepEqual(clampCampaign({ completed: 1 }, rng).offers.map(o => o.tier), [1, 1, 2]);
+  assert.deepEqual(clampCampaign({ completed: 2 }, rng).offers.map(o => o.tier), [1, 2, 3]);
+  // The Worker deals boards through the same rule when a mission starts.
+  const c = freshCampaign(rng), started = startMission({ campaign: c, activeMission: null }, 'm', 0, c.offers[0].id, ['vex'], rng)!;
+  assert.ok(started.campaign.offers.every(o => o.tier <= 2));
+});
+
+test('the threat read weighs the tier against roster size and upgrades', () => {
+  const starters = freshCampaign(rng);
+  assert.deepEqual([1, 2, 3, 4].map(t => threatFor(starters, t)), ['low', 'moderate', 'high', 'extreme']);
+  const four = { ...starters, roster: (['assault', 'support', 'recon', 'tech'] as const).map((cls, i) => ({ id: `o${i}`, name: `OP${i}`, cls })) };
+  assert.deepEqual([2, 3, 4, 5].map(t => threatFor(four, t)), ['low', 'moderate', 'high', 'extreme']);
+  const maxed = { ...four, weapon: 3, armor: 3, abilities: { assault: 3, support: 3, recon: 3, tech: 3 } };
+  assert.equal(threatFor(maxed, 5), 'low');
+  // Abilities count only for classes on the roster.
+  assert.equal(squadRating({ ...starters, abilities: { ...starters.abilities, recon: 3, tech: 3 } }), squadRating(starters));
+});
+
 test('offers bracket the base tier, which rises with completed contracts', () => {
-  assert.deepEqual(freshCampaign(rng).offers.map(o => o.tier), [1, 2, 3]);
   const veteran = clampCampaign({ completed: 6 }, rng);
   assert.equal(baseTier(6), 4);
   assert.deepEqual(veteran.offers.map(o => o.tier), [3, 4, 5]);

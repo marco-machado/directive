@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Simulation, parseCampaign, CALM_SECONDS, CAMERA_DETECT, COVER_FACTOR, DETECT_DRAIN, detectSeconds, HACK_SECONDS, LOOK_ANGLE, LOOK_EVERY, LOOK_PAUSE, QUEUE_SPACING, REINFORCE_CAP, SUSPICIOUS, REINFORCE_SECONDS, REVIVE_SECONDS, TAKEDOWN_REACH, TAKEDOWN_SECONDS } from '../src/game/simulation.ts';
+import { Simulation, parseCampaign, CALM_SECONDS, FIRST_WAVE_SECONDS, VIP_DAMAGE_TAKEN, VIP_SECURE_SECONDS, CAMERA_DETECT, COVER_FACTOR, DETECT_DRAIN, detectSeconds, GHOST_SECONDS, HACK_SECONDS, LOOK_ANGLE, LOOK_EVERY, LOOK_PAUSE, QUEUE_SPACING, REINFORCE_CAP, SUSPICIOUS, REINFORCE_SECONDS, REVIVE_SECONDS, SIGHT_RANGE, TAKEDOWN_REACH, TAKEDOWN_SECONDS, tierDamage, tierHp } from '../src/game/simulation.ts';
 import type { CampaignSync, Unit, Upgrade } from '../src/game/simulation.ts';
 import { contractPayout, freshCampaign, MAX_TIER } from '../src/game/campaign.ts';
 import type { Campaign, ContractType } from '../src/game/campaign.ts';
 import { abilityCooldown, CLASS_STATS } from '../src/game/classes.ts';
-import { mapSize, planMission } from '../src/game/mapgen.ts';
+import { mapSize, planMission, TARGET_AREA_OFFSET, TARGET_AREA_RADIUS } from '../src/game/mapgen.ts';
 import type { EnemyKind } from '../src/game/mapgen.ts';
 import { mulberry32 } from '../src/game/rng.ts';
 import { distance, World } from '../src/game/world.ts';
@@ -66,6 +66,16 @@ test('districts are deterministic, reachable, and grow with tier', () => {
     if (type === 'assassination') assert.equal(plan.enemies.filter(e => e.kind === 'target').length, 1);
     if (type === 'escort') assert.ok(plan.vip);
   }
+});
+
+test('hostiles scale gently up to tier 3 and turrets guard objectives only from tier 4', () => {
+  assert.equal(tierHp(1), 1); assert.equal(tierDamage(1), 1);
+  assert.ok(tierHp(3) <= 1.1 && tierDamage(3) <= 1.1, 'tier 3 hostiles should stay close to tier 1');
+  assert.ok(tierDamage(5) - tierDamage(4) > tierDamage(3) - tierDamage(2), 'the curve steepens past tier 3');
+  const turrets = (tier: number) => [1, 2, 3, 4, 5, 6].flatMap(seed => (['heist', 'sabotage'] as const).map(type => planMission(contract(type, tier, seed)).enemies.filter(e => e.kind === 'turret').length));
+  assert.ok(turrets(3).every(n => n === 0));
+  // A turret is skipped when no free spot lies near its objective, so only most tier-4 districts get one.
+  assert.ok(turrets(4).filter(n => n === 1).length >= 10);
 });
 
 test('buildings block movement and sight; cover blocks movement but not sight', () => {
@@ -305,7 +315,7 @@ test('escort completes once the squad and the VIP are in the zone', () => {
   const vip = sim.units.find(u => u.faction === 'vip')!, extract = sim.objectives.at(-1)!;
   assert.equal(squad.length, 4);
   vip.x = 1; vip.z = 2;
-  step(sim, .5); assert.equal(sim.objectives[0].done, true);
+  step(sim, VIP_SECURE_SECONDS + .1); assert.equal(sim.objectives[0].done, true);
   sim.selectAll(); sim.move({ x: extract.x, z: extract.z });
   step(sim, 30);
   assert.equal(sim.result, 'success', `VIP ${distance(vip, extract).toFixed(2)} from extraction`);
@@ -316,11 +326,51 @@ test('the escort VIP joins, follows, and its death fails the contract', () => {
   const vip = sim.units.find(u => u.faction === 'vip')!;
   vip.x = 8; vip.z = 0;
   step(sim, .5); assert.equal(sim.objectives[0].done, false);
-  squad[0].x = 6; step(sim, .5); assert.equal(sim.objectives[0].done, true);
+  squad[0].x = 6; step(sim, VIP_SECURE_SECONDS - .5);
+  assert.equal(sim.objectives[0].done, false); assert.ok(sim.objectives[0].progress > .8);
+  step(sim, .6); assert.equal(sim.objectives[0].done, true);
   squad[0].x = 0; squad[0].z = 6; squad[1].x = -15; squad[1].z = 15;
   step(sim, 3); assert.ok(distance(vip, squad[0]) < 2.5, String(distance(vip, squad[0])));
   vip.hp = 0; sim.update(1 / 60);
   assert.equal(sim.result, 'failure'); assert.equal(sim.failReason, 'The VIP was killed.');
+});
+
+test('under fire the VIP keeps up, ducks behind nearby cover, and takes reduced damage', () => {
+  const { sim, squad } = arena('escort');
+  // A barrier beside the operative, with a guard firing from the far side of it.
+  const cover = { x: 0, z: 2, w: 1.6, d: .45 };
+  sim.plan = { ...sim.plan!, world: new World({ minX: -20, maxX: 20, minZ: -20, maxZ: 20 }, [], [cover]) };
+  const vip = sim.units.find(u => u.faction === 'vip')!;
+  squad.forEach((u, i) => { u.x = i; u.z = 0; });
+  vip.x = 1; vip.z = -1;
+  step(sim, VIP_SECURE_SECONDS + .1); assert.equal(sim.objectives[0].done, true);
+  const before = vip.hp;
+  (sim as unknown as { damage(t: Unit, n: number, from: Point): void }).damage(vip, 20, { x: 0, z: 6 });
+  assert.equal(before - vip.hp, 20 * VIP_DAMAGE_TAKEN);
+  step(sim, 1);
+  assert.ok(sim.plan!.world.coverBetween({ x: 0, z: 6 }, vip), `VIP at ${vip.x.toFixed(2)}, ${vip.z.toFixed(2)} is not behind the barrier`);
+});
+
+test('the last known area always contains the assassination target at spawn', () => {
+  for (let seed = 1; seed <= 300; seed++) {
+    const plan = planMission(contract('assassination', 1 + seed % MAX_TIER, seed)), target = plan.enemies.find(e => e.kind === 'target')!, area = plan.targetArea!;
+    assert.equal(area.r, TARGET_AREA_RADIUS);
+    assert.ok(distance(area, target) <= TARGET_AREA_OFFSET + 1e-9, `seed ${seed}: center ${distance(area, target).toFixed(2)} m from the target`);
+    assert.ok(distance(area, target) < area.r, `seed ${seed}: target outside its area`);
+    assert.deepEqual(planMission(contract('assassination', 1 + seed % MAX_TIER, seed)).targetArea, area);
+  }
+  assert.equal(planMission(contract('heist')).targetArea, null);
+});
+
+test('the target area recenters on where the target was last seen', () => {
+  const { sim, squad, hostile } = arena('assassination');
+  const target = hostile('target', 8, 0, Math.PI, 110);
+  target.visible = false; sim.targetArea = { x: -5, z: -5, r: TARGET_AREA_RADIUS };
+  sim.update(1 / 60);
+  assert.ok(target.visible); assert.deepEqual([sim.targetArea.x, sim.targetArea.z], [8, 0]);
+  squad.forEach(u => { u.x -= 15; });
+  sim.update(1 / 60);
+  assert.ok(!target.visible); assert.deepEqual([sim.targetArea.x, sim.targetArea.z], [8, 0]);
 });
 
 test('the assassination target flees on alarm and escaping fails', () => {
@@ -343,14 +393,19 @@ test('an EMP only delays a fleeing target', () => {
   assert.equal(sim.failReason, 'The target escaped.');
 });
 
-test('reinforcements arrive every interval up to the cap', () => {
+test('the first wave flanks from the exit nearest extraction soon after the alarm; later waves follow up to the cap', () => {
   const { sim, squad } = arena('heist');
+  sim.plan = { ...sim.plan!, exits: [{ x: 19, z: 0 }, { x: -19, z: 5 }] };
   squad.forEach(u => { u.hp = u.maxHp = 1e6; });
+  const waves = () => sim.units.filter(u => /^r\d+$/.test(u.id));
   (sim as unknown as { raiseAlarm(p: object, r: string): void }).raiseAlarm({ x: 0, z: 0 }, 'test');
-  step(sim, REINFORCE_SECONDS + .1);
-  assert.equal(sim.units.filter(u => /^r\d+$/.test(u.id)).length, 2);
+  step(sim, FIRST_WAVE_SECONDS - .1); assert.equal(waves().length, 0);
+  step(sim, .2);
+  assert.equal(waves().length, 2);
+  assert.ok(waves().every(u => distance(u, { x: -19, z: 5 }) < 2), 'the first wave entered away from extraction');
+  step(sim, REINFORCE_SECONDS); assert.equal(waves().length, 4);
   step(sim, REINFORCE_SECONDS * 4);
-  assert.equal(sim.units.filter(u => /^r\d+$/.test(u.id)).length, REINFORCE_CAP);
+  assert.equal(waves().length, REINFORCE_CAP);
 });
 
 test('revive takes three still seconds, restarts on damage, and restores 40% HP', () => {
@@ -385,6 +440,66 @@ test('fog of war hides hostiles behind buildings until marked', () => {
   sim.update(1 / 60); assert.equal(guard.visible, false);
   sim.attack(guard.id); assert.equal(guard.targetId, null);
   guard.marked = 2; sim.update(1 / 60); assert.equal(guard.visible, true);
+});
+
+test('sight rays stop at the first building footprint', () => {
+  const world = new World({ minX: -10, maxX: 10, minZ: -10, maxZ: 10 }, [{ x: 3, z: 0, w: 2, d: 2, h: 3, name: 'A', accent: '#fff' }, { x: 6, z: 0, w: 2, d: 2, h: 3, name: 'B', accent: '#fff' }], []);
+  assert.ok(Math.abs(world.sightDistance({ x: 0, z: 0 }, 1, 0, 9) - 1.95) < 1e-9);
+  assert.equal(world.sightDistance({ x: 0, z: 0 }, 0, 1, 9), 9);
+  assert.equal(world.sightDistance({ x: 0, z: 0 }, 1, 0, 1.5), 1.5);
+  assert.equal(world.sightDistance({ x: 3, z: 0 }, 0, 1, 9), 0);
+  // A diagonal ray agrees with sightClear on where A starts blocking.
+  const from = { x: 0, z: -2 }, at = (t: number) => ({ x: t * Math.SQRT1_2, z: -2 + t * Math.SQRT1_2 });
+  const d = world.sightDistance(from, Math.SQRT1_2, Math.SQRT1_2, 9);
+  assert.ok(Math.abs(d - 1.95 * Math.SQRT2) < 1e-9, String(d));
+  assert.ok(world.sightClear(from, at(d - .01)));
+  assert.equal(world.sightClear(from, at(d + .5)), false);
+});
+
+test('a hostile that leaves sight leaves a last-seen record until it is seen again', () => {
+  const { sim, hostile } = arena('heist');
+  const guard = hostile('guard', 0, -6, Math.PI);
+  guard.patrol = [{ x: 0, z: -6 }, { x: 0, z: -16 }];
+  sim.update(1 / 60); assert.equal(guard.visible, true); assert.equal(sim.lastSeen.size, 0);
+  step(sim, 10, () => !guard.visible);
+  const seen = sim.lastSeen.get(guard.id);
+  assert.ok(seen, 'no record when the guard left sight');
+  assert.ok(Math.abs(seen.z + SIGHT_RANGE) < .1 && seen.x === 0, JSON.stringify(seen));
+  assert.equal(seen.heading, Math.PI); assert.equal(seen.at, sim.time);
+  // The record holds still while the guard walks on out of sight, and goes once the guard is back in view.
+  step(sim, GHOST_SECONDS, () => { if (guard.visible) return true; assert.deepEqual(sim.lastSeen.get(guard.id), seen); return false; });
+  assert.equal(guard.visible, true);
+  assert.ok(sim.time - seen.at < GHOST_SECONDS);
+  assert.equal(sim.lastSeen.has(guard.id), false);
+});
+
+test('last-seen records fade after GHOST_SECONDS and drop for the dead and on restart', () => {
+  const { sim, hostile } = arena('heist');
+  const posted = hostile('guard', 0, -5, Math.PI), other = hostile('guard', 3, -5, Math.PI);
+  sim.update(1 / 60);
+  posted.z = -18; other.z = -18; sim.update(1 / 60);
+  assert.deepEqual(sim.lastSeen.get(posted.id), { x: 0, z: -18, heading: posted.heading, at: sim.time });
+  other.hp = 0; sim.update(1 / 60);
+  assert.equal(sim.lastSeen.has(other.id), false);
+  step(sim, GHOST_SECONDS - .2);
+  assert.ok(sim.lastSeen.has(posted.id));
+  step(sim, .3);
+  assert.equal(sim.lastSeen.has(posted.id), false);
+  posted.z = -5; sim.update(1 / 60); posted.z = -18; sim.update(1 / 60);
+  assert.equal(sim.lastSeen.size, 1);
+  sim.restart(); assert.equal(sim.lastSeen.size, 0);
+});
+
+test('watching a guard finish a patrol leg reveals its whole route', () => {
+  const { sim, hostile } = arena('heist');
+  const watched = hostile('guard', 0, -3, Math.PI), far = hostile('guard', 0, -15, Math.PI);
+  watched.patrol = [{ x: 0, z: -3 }, { x: 0, z: -7 }]; far.patrol = [{ x: 0, z: -15 }, { x: 0, z: -19 }];
+  step(sim, 10, () => sim.intel.has(watched.id));
+  assert.deepEqual(sim.intel.get(watched.id), [{ x: 0, z: -3 }, { x: 0, z: -7 }, { x: 0, z: -3 }]);
+  assert.deepEqual({ x: watched.x, z: watched.z }, { x: 0, z: -7 }, 'learned at the end of the first leg');
+  step(sim, 10);
+  assert.equal(sim.intel.has(far.id), false, 'a leg walked out of sight teaches nothing');
+  assert.ok(sim.intel.has(watched.id), 'intel lasts the mission');
 });
 
 test('squad loss pays nothing and the board rerolls for the next contract', () => {
