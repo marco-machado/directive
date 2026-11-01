@@ -202,10 +202,23 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .offer-side { display: grid; justify-items: end; gap: 8px }
 .offer-side .credits { font: 600 17px var(--f-ui); color: var(--gold) }
 .offer-tier { display: flex; align-items: center; gap: 6px; font: 700 11px var(--f-ui); letter-spacing: .1em; color: var(--threat) }
-.select-brief { display: flex; flex-direction: column; min-height: 0; max-height: 100%; animation: slide-left .45s ease-out both }
-.brief-scroll { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 18px 18px 10px }
+.select-brief { display: flex; flex-direction: column; min-height: 0; max-height: 100%; container: brief / size; animation: slide-left .45s ease-out both }
+.brief-scroll { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 18px 18px 10px; container-type: scroll-state }
+/* Edge fades over the clipped side of a scroller; the negative margins keep them out of the layout. */
+.scroll-fade { position: sticky; z-index: 1; display: block; height: 28px; pointer-events: none; opacity: 0; transition: opacity .2s }
+.scroll-fade.top { top: 0; margin: -18px -18px -10px; background: linear-gradient(var(--panel-solid), transparent) }
+.scroll-fade.bottom { bottom: 0; margin: -28px -18px 0; background: linear-gradient(transparent, var(--panel-solid)) }
+.can-up > .scroll-fade.top, .can-down > .scroll-fade.bottom { opacity: 1 }
+@container scroll-state(scrollable: top) { .scroll-fade.top { opacity: 1 } }
+@container scroll-state(scrollable: bottom) { .scroll-fade.bottom { opacity: 1 } }
 .brief h3 { margin: 8px 0; font: 700 30px/1 var(--f-display); letter-spacing: .03em; text-transform: uppercase }
 .brief-copy { margin: 0; font: 400 14px/1.55 var(--f-body); color: var(--dim) }
+.brief-summary { display: none; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; padding: 0 0 0 12px; border: 1px solid var(--line); background: rgb(3 8 10 / .5);
+  font: 600 13px var(--f-ui); letter-spacing: .06em; text-transform: uppercase; color: var(--dim) }
+.brief-summary .credits { color: var(--gold) }
+.brief-summary .btn { min-height: 44px }
+.brief-summary .btn .icon { transform: rotate(90deg); transition: transform .2s }
+.brief.open .brief-summary .btn .icon { transform: rotate(-90deg) }
 .brief-objectives { list-style: none; display: grid; gap: 8px; margin: 14px 0; padding: 0 }
 .brief-objectives li { display: flex; align-items: center; gap: 10px; font: 500 14px var(--f-ui) }
 .brief-objectives .icon { width: 14px; height: 14px; color: var(--amber) }
@@ -223,7 +236,7 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .brief-pay .credits { display: block; margin-top: 4px; font: 600 22px/1 var(--f-ui); color: var(--gold) }
 .brief-pay .bonus { border-color: rgb(94 242 192 / .35) }
 .brief-pay .bonus .credits { color: var(--mint) }
-.squad-pick { min-width: 0; margin: 20px 0 4px; padding: 0; border: 0 }
+.squad-pick { min-width: 0; margin: 0 0 12px; padding: 0; border: 0 }
 .squad-pick legend { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; padding: 0; font: 600 20px/1 var(--f-display); letter-spacing: .08em; text-transform: uppercase }
 .squad-pick legend span { font: 700 12px var(--f-ui); letter-spacing: .14em; color: var(--amber) }
 .roster-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px }
@@ -279,8 +292,11 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .roster-row { display: flex; align-items: center; gap: 12px; padding: 8px 10px 8px 8px; border: 1px solid var(--line); background: rgb(9 21 25 / .6) }
 
 /* ---- Debrief ---- */
-.debrief { position: absolute; inset: var(--top) 0 0; z-index: 3; display: grid; place-items: center; padding: 24px; overflow: auto }
-.debrief-card { --accent: var(--mint); width: min(880px, 100%); padding: 28px 30px 24px; animation: rise .5s ease-out both }
+.debrief { position: absolute; inset: var(--top) 0 0; z-index: 3; display: grid; justify-items: center; padding: 24px 24px 0; overflow: auto }
+/* The bottom gap is a row, not padding: a sticky bar stops at the scroller's padding and would let the card scroll past beneath it. */
+.debrief::after { content: ''; height: 24px }
+/* Auto margins center the card but, unlike place-items, never push a tall card past the top of the scroller. */
+.debrief-card { --accent: var(--mint); width: min(880px, 100%); margin-block: auto; padding: 28px 30px 24px; animation: rise .5s ease-out both }
 .debrief.failure .debrief-card { --accent: var(--red) }
 .debrief-stamp { display: inline-flex; align-items: center; gap: 10px; margin: 0; padding: 6px 14px 6px 10px; border: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent);
   color: var(--accent); font: 700 13px var(--f-ui); letter-spacing: .26em; text-transform: uppercase; animation: stamp .45s .15s cubic-bezier(.2, 1.6, .4, 1) both }
@@ -289,8 +305,8 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .debrief-contract { display: flex; align-items: center; gap: 8px; margin: 0; font: 600 13px var(--f-ui); letter-spacing: .12em; text-transform: uppercase; color: var(--dim) }
 .debrief-contract .icon { width: 16px; height: 16px; color: var(--amber) }
 .debrief-reason { margin: 16px 0 0; padding: 10px 14px; border-left: 3px solid var(--red); background: rgb(255 81 72 / .08); font: 500 15px/1.5 var(--f-body) }
-.debrief-grid { display: grid; grid-template-columns: 1.1fr 1fr; gap: 18px; margin-top: 22px }
-.stats { display: grid; gap: 8px; align-content: start }
+.debrief-grid { display: grid; grid-template-columns: 1.1fr 1fr; grid-template-areas: "stats ledger" "squad squad"; gap: 18px; margin-top: 22px }
+.stats { grid-area: stats; display: grid; gap: 8px; align-content: start }
 .stat { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 12px; align-items: center; padding: 12px 14px; border: 1px solid var(--line); background: rgb(3 8 10 / .5) }
 .stat .icon { grid-row: span 2; width: 22px; height: 22px; color: var(--dim) }
 .stat small { font: 600 10px var(--f-ui); letter-spacing: .18em; text-transform: uppercase; color: var(--dim) }
@@ -298,7 +314,7 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .stat.good .icon, .stat.good strong { color: var(--mint) }
 .stat.bad .icon, .stat.bad strong { color: var(--red) }
 .stat.warn strong { color: var(--amber) }
-.ledger { margin: 0; padding: 4px 16px; border: 1px solid var(--line); background: rgb(3 8 10 / .5) }
+.ledger { grid-area: ledger; margin: 0; padding: 4px 16px; border: 1px solid var(--line); background: rgb(3 8 10 / .5) }
 .ledger div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px dashed var(--line) }
 .ledger dt { font: 600 12px var(--f-ui); letter-spacing: .16em; text-transform: uppercase; color: var(--dim) }
 .ledger dd { margin: 0; font: 600 18px var(--f-ui); font-variant-numeric: tabular-nums }
@@ -308,7 +324,7 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .ledger .total dd { font-size: 32px; color: var(--gold); text-shadow: 0 0 24px rgb(255 215 122 / .35) }
 .debrief.failure .ledger .total dd { color: var(--faint); text-shadow: none }
 .ledger .funds-row { border-bottom: 0 }
-.debrief-squad { list-style: none; display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 0; padding: 0 }
+.debrief-squad { grid-area: squad; list-style: none; display: flex; flex-wrap: wrap; align-content: start; gap: 8px; margin: 0; padding: 0 }
 .debrief-squad li { display: flex; align-items: center; gap: 10px; padding: 6px 14px 6px 6px; border: 1px solid var(--line); background: rgb(3 8 10 / .5) }
 .debrief-squad .portrait { width: 34px; height: 40px; border-bottom: 2px solid var(--cls) }
 .debrief-squad strong { display: block; font: 600 15px/1 var(--f-display); letter-spacing: .08em }
@@ -316,7 +332,8 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .debrief-squad li.down { border-color: rgb(255 81 72 / .4) }
 .debrief-squad li.down small { color: var(--red) }
 .debrief-squad li.down .portrait { filter: grayscale(1) brightness(.6) }
-.debrief-actions { display: flex; gap: 10px; margin-top: 22px }
+/* Pinned to the bottom of the scrolling debrief, so the way on is always on screen. */
+.debrief-actions { position: sticky; bottom: 0; z-index: 1; display: flex; gap: 10px; margin: 22px -30px 0; padding: 14px 30px; border-top: 1px solid var(--line); background: var(--panel-solid) }
 .debrief-actions .btn { min-height: 56px }
 .debrief-actions .btn.primary { flex: 1; justify-content: space-between; font-size: 15px }
 .debrief .save-code { margin: 16px 0 0 }
@@ -545,9 +562,30 @@ dialog::backdrop { overflow: hidden; overscroll-behavior: contain; background: r
   .agent-portrait { display: none }
   .cmd { width: 52px; height: 52px }
   .cmd span { display: none }
-  .debrief-grid { grid-template-columns: 1fr }
-  .debrief { place-items: start center }
+  .debrief-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: "stats stats" "squad ledger" }
+  .stats { grid-template-columns: repeat(3, minmax(0, 1fr)) }
+  .debrief-squad { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)) }
   .roster-grid { grid-template-columns: 1fr }
+}
+/* A short briefing panel packs the squad picker so it and Deploy fit without scrolling, and a very short one folds the details into a summary line. */
+@container brief (max-height: 720px) {
+  .brief h3 { font-size: 26px }
+  .squad-pick { position: relative }
+  .squad-pick legend { margin-bottom: 8px; font-size: 17px }
+  /* Beside the legend: the fieldset's box starts below it, so lift by the legend's height and margin. */
+  .pick-rule { position: absolute; top: -25px; right: 0; margin: 0; line-height: 17px }
+  .roster-grid { grid-template-columns: 1fr 1fr; gap: 6px }
+  .pick { grid-template-columns: 30px minmax(0, 1fr) auto; gap: 8px; min-height: 48px; padding: 4px 8px 4px 4px }
+  .pick .portrait { width: 30px; height: 38px }
+  .pick-copy strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px }
+  .pick-copy .pick-ability { display: none }
+  .pick-slot { width: 22px; height: 22px }
+  .deploy-dock { padding: 12px 14px 14px }
+  .btn.deploy { min-height: 56px }
+}
+@container brief (max-height: 600px) {
+  .brief-summary { display: flex }
+  .brief:not(.open) .brief-details { display: none }
 }
 @media (max-width: 1000px) {
   :root { --hud-b: 172px }
