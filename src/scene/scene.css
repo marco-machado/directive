@@ -19,5 +19,8 @@
 /* Attack hint over a hovered hostile, positioned by scene/hint.tsx. */
 .attack-hint { --c: #ffb454; position: absolute; left: 0; top: 0; padding: 2px 7px; border: 1px solid var(--c); border-left-width: 3px; background: rgb(3 10 10 / .88); white-space: nowrap; font: 700 11px/1.2 var(--f-ui); letter-spacing: .08em; color: #f2efe4 }
 .attack-hint[hidden] { display: none }
+/* Seconds since a hostile was last seen, over its ghost (scene/intel.tsx). */
+.ghost-label { position: absolute; left: 0; top: 0; padding: 1px 5px; border: 1px solid rgb(255 122 106 / .55); background: rgb(3 10 10 / .7); white-space: nowrap; font: 700 10px/1.2 var(--f-ui); letter-spacing: .08em; color: #ffc4ba }
+.ghost-label[hidden] { display: none }
 .attack-hint[data-tone=quiet] { --c: #5ef2c0; color: #c9fbe8 }
 .attack-hint[data-tone=loud] { --c: #ff5148; color: #ffd0c8 }

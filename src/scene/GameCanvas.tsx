@@ -12,6 +12,7 @@ import { dragged, trackDrags } from './drag.ts';
 import { Effects, Targeting } from './effects.tsx';
 import { focusPoint, missionMinZoom, overviewZoom, smoothstep, tacticalZoom } from './framing.ts';
 import { AttackHint } from './hint.tsx';
+import { LastSeenGhosts, PatrolIntel } from './intel.tsx';
 import type { Pointer } from './effects.tsx';
 import { Objectives } from './objectives.tsx';
 import { Pointers } from './pointers.tsx';
@@ -160,7 +161,9 @@ function World({ sim, reset, focus, overview, layout, attract, frame, labels, mi
       </mesh>
       <Objectives sim={sim} objectives={state.objectives} labels={labels} />
       <Units sim={sim} units={state.units} selected={state.selected} squad={state.squad} live={state.phase === 'mission'} labels={labels} hitboxes={hitboxes} />
+      <PatrolIntel sim={sim} />
       <Effects sim={sim} />
+      <LastSeenGhosts sim={sim} labels={labels} />
       <Pointers sim={sim} labels={labels} insets={insets} />
       <AttackHint sim={sim} labels={labels} hovered={hovered} />
       {pending ? <Targeting key={`${pending.unitId}:${pending.ability}`} sim={sim} pending={pending} pointer={pointer} /> : null}
