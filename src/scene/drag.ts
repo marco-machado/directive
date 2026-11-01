@@ -1,4 +1,4 @@
-// How far the pointer got from the last press. Left-drag orbits the view, so a drag must never count
+// How far the pointer got from the last press. A one-finger drag turns the view, so a drag must never count
 // as a click, even one that comes back to where it started: R3F's e.delta only measures press to release.
 let far = 0, x0 = 0, y0 = 0;
 export function trackDrags(el: HTMLElement) {

@@ -15,12 +15,24 @@ export const tacticalZoom = (frameWidth: number) => frameWidth / TACTICAL_SPAN;
 export const overviewZoom = (frameWidth: number, frameHeight: number, b: Bounds) =>
   Math.max(1, Math.min(frameWidth / ((b.maxX - b.minX) * 1.4), frameHeight / ((b.maxZ - b.minZ) * 1.5)));
 
-// The centroid of the selected operatives, or of the whole squad when nothing is selected.
-export function focusPoint(units: readonly (Point & { id: string })[], selected: readonly string[], squad: readonly string[]): Point | null {
+// The selected operatives, or the whole squad when nothing is selected.
+export function followGroup<U extends { id: string }>(units: readonly U[], selected: readonly string[], squad: readonly string[]): U[] {
   const pick = (ids: readonly string[]) => units.filter(u => ids.includes(u.id));
-  const group = selected.length && pick(selected).length ? pick(selected) : pick(squad);
+  return selected.length && pick(selected).length ? pick(selected) : pick(squad);
+}
+// The centroid of the follow group.
+export function focusPoint(units: readonly (Point & { id: string })[], selected: readonly string[], squad: readonly string[]): Point | null {
+  const group = followGroup(units, selected, squad);
   if (!group.length) return null;
   return { x: group.reduce((s, u) => s + u.x, 0) / group.length, z: group.reduce((s, u) => s + u.z, 0) / group.length };
+}
+
+// A followed view eases toward the focus point, closing about 63% of the gap every FOLLOW_SECONDS, so a walking
+// operative stays centered without the view jerking at each step.
+export const FOLLOW_SECONDS = .25;
+export function followStep(from: Point, to: Point, dt: number): Point {
+  const k = 1 - Math.exp(-dt / FOLLOW_SECONDS);
+  return { x: from.x + (to.x - from.x) * k, z: from.z + (to.z - from.z) * k };
 }
 
 // Screen distance from a point to a rectangle; zero inside it.

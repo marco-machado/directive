@@ -15,7 +15,7 @@ import { dressDistrict } from './district.ts';
 import { dragged, trackDrags } from './drag.ts';
 import { CoverPreview, Effects, Targeting } from './effects.tsx';
 import { cameraKick } from './kick.ts';
-import { focusPoint, missionMinZoom, overviewZoom, smoothstep, tacticalZoom } from './framing.ts';
+import { focusPoint, followGroup, followStep, missionMinZoom, overviewZoom, smoothstep, tacticalZoom } from './framing.ts';
 import { AttackHint } from './hint.tsx';
 import { LastSeenGhosts, PatrolIntel } from './intel.tsx';
 import { NightLighting } from './lighting.tsx';
@@ -38,13 +38,16 @@ const extent = (b: Bounds) => ({ cx: (b.minX + b.maxX) / 2, cz: (b.minZ + b.maxZ
 // element), and the camera looks in from the squad's spawn corner (`start`), which puts the squad on the near
 // side of the view. Missions open on the tactical view: the selection centered, about 22 m of street across the
 // frame. The overview fits the whole district; the briefing preview and the title's attract mode always use it,
-// and the overview prop swaps it in during a mission. Focus glides the target to the selection. Left-drag orbits.
+// and the overview prop swaps it in during a mission. Focus glides the target to the selection. Middle-drag pans,
+// right-drag orbits, the wheel zooms; the left button only selects and gives orders. The tactical view follows the selection. A pan stops that until the followed operatives
+// start moving again, focus brings the view back, or the overview is toggled.
 type Pose = { target: Vector3; offset: Spherical; zoom: number };
 const GLIDE_SECONDS = .4;
 function CameraRig({ sim, reset, focus, overview, bounds, start, layout, attract, frame, insets }: { sim: Simulation; reset: number; focus: number; overview: boolean; bounds: Bounds; start: Point | null; layout: string; attract: boolean; frame: RefObject<HTMLDivElement | null>; insets: RefObject<Insets> }) {
   const ref = useRef<ComponentRef<typeof OrbitControls>>(null), camera = useThree(s => s.camera), size = useThree(s => s.size), gl = useThree(s => s.gl), look = useMemo(() => new Vector3(), []);
   const free = useRef({ w: 1, h: 1 }), view = useRef({ x: 0, y: 0, kicked: false }), glide = useRef<{ from: Pose; to: Pose; t: number } | null>(null), mission = layout === 'mission';
-  useEffect(() => trackDrags(gl.domElement), [gl]);
+  // `at` is where the rig last left the target, so a target that moved since then was panned by the player.
+  const follow = useRef({ on: true, at: new Vector3(), moving: false });  useEffect(() => trackDrags(gl.domElement), [gl]);
   // Without damping, one update applies the rest of a drag's glide, so it can't carry on past a reset.
   const settle = () => { const c = ref.current; if (c) { c.enableDamping = false; c.update(); c.enableDamping = true; } };
   // Screen-space panning lifts the pivot off the street; slide it back along the view ray. The orthographic
@@ -68,7 +71,7 @@ function CameraRig({ sim, reset, focus, overview, bounds, start, layout, attract
   const place = ({ target, offset, zoom }: Pose) => {
     camera.position.setFromSpherical(offset).add(target); camera.lookAt(target);
     camera.zoom = zoom; camera.updateProjectionMatrix();
-    ref.current?.target.copy(target);
+    ref.current?.target.copy(target); follow.current.at.copy(target);
   };
   const glideTo = (to: Pose) => { if (!ref.current) return; settle(); glide.current = { from: current(), to, t: 0 }; };
   // A reset, a resize or a new screen snaps to the preset; the overview toggle and focus glide.
@@ -79,13 +82,13 @@ function CameraRig({ sim, reset, focus, overview, bounds, start, layout, attract
     insets.current = { l, t, r, b }; free.current = { w: Math.max(1, size.width - l - r), h: Math.max(1, size.height - t - b) };
     view.current = { x: (r - l) / 2, y: (b - t) / 2, kicked: false };
     camera.setViewOffset(size.width, size.height, view.current.x, view.current.y, size.width, size.height);
-    place(preset()); ref.current?.update();
+    place(preset()); ref.current?.update(); follow.current.on = true;
   }, [camera, gl, reset, size.width, size.height, bounds, start, layout, frame, insets]);
   const toggled = useRef(overview), focused = useRef(focus);
-  useEffect(() => { if (toggled.current !== overview) { toggled.current = overview; if (mission) glideTo(preset()); } }, [overview]);
+  useEffect(() => { if (toggled.current !== overview) { toggled.current = overview; follow.current.on = true; if (mission) glideTo(preset()); } }, [overview]);
   useEffect(() => {
     if (focused.current === focus) return;
-    focused.current = focus;
+    focused.current = focus; follow.current.on = true;
     const at = squad();
     if (at) glideTo({ ...current(), target: new Vector3(at.x, 0, at.z) });
   }, [focus]);
@@ -105,6 +108,19 @@ function CameraRig({ sim, reset, focus, overview, bounds, start, layout, attract
       });
       if (g.t >= 1) glide.current = null;
     }
+    const f = follow.current, moving = followGroup(sim.units, sim.selected, sim.squad).some(u => u.moving);
+    if (moving && !f.moving) f.on = true;
+    f.moving = moving;
+    if (!g && mission && !overview) {
+      if (c.target.distanceToSquared(f.at) > 1e-8) f.on = false;
+      const at = f.on ? squad() : null;
+      if (at) {
+        ground();
+        const next = followStep(c.target, at, dt);
+        look.set(next.x - c.target.x, 0, next.z - c.target.z); c.target.add(look); camera.position.add(look);
+      }
+    }
+    f.at.copy(c.target);
     c.minZoom = floor(c.getPolarAngle()); c.maxZoom = ceiling();
     // A blast kicks the view by nudging the projection's offset, which leaves the orbit untouched.
     const kick = mission ? cameraKick(sim.time) : null, v = view.current;
@@ -117,7 +133,7 @@ function CameraRig({ sim, reset, focus, overview, bounds, start, layout, attract
   });
   return <OrbitControls ref={ref} makeDefault autoRotate={attract} autoRotateSpeed={.35} enableDamping dampingFactor={.12} onStart={() => { glide.current = null; ground(); }}
     rotateSpeed={.7} minPolarAngle={Math.PI / 6} maxPolarAngle={Math.PI * 13 / 36}
-    mouseButtons={{ LEFT: MOUSE.ROTATE, MIDDLE: MOUSE.DOLLY, RIGHT: MOUSE.PAN }} touches={{ ONE: TOUCH.ROTATE, TWO: TOUCH.DOLLY_PAN }} />;
+    mouseButtons={{ MIDDLE: MOUSE.PAN, RIGHT: MOUSE.ROTATE }} touches={{ ONE: TOUCH.ROTATE, TWO: TOUCH.DOLLY_PAN }} />;
 }
 
 type Props = { sim: Simulation; reset: number; focus: number; overview: boolean; layout: string; attract: boolean; frame: RefObject<HTMLDivElement | null> };
