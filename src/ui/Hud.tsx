@@ -11,7 +11,8 @@ import { clock, CONTRACTS, Credits, threat } from './common.tsx';
 import { Icon, Portrait } from './icons.tsx';
 import { play } from './audio.ts';
 
-function Tracker({ state }: { state: Snapshot }) {
+// In portrait the tracker collapses to a drawer under the top bar that shows only the current objective; the toggle exists only there.
+function Tracker({ state, open, onToggle }: { state: Snapshot; open: boolean; onToggle: () => void }) {
   const c = state.contract!, current = state.objectives.findIndex(o => !o.done);
   const extractOpen = state.objectives.every(o => o.kind === 'extract' || o.done), team = state.squad.length;
   return <section className="tracker panel" aria-label="Mission status" style={threat(c.tier)}>
@@ -20,6 +21,7 @@ function Tracker({ state }: { state: Snapshot }) {
       <span className="tracker-title"><strong>{CONTRACTS[c.type].title}</strong><small>{c.district}</small></span>
       <span className="tier-badge">T{c.tier}</span>
     </header>
+    <button className="drawer-toggle" aria-expanded={open} aria-controls="mission-drawer" aria-label={open ? 'Hide mission details' : 'Show mission details'} onClick={onToggle}><Icon name="chevron" /></button>
     <ol className="objectives">{state.objectives.map((o, i) => {
       const timed = (o.kind === 'terminal' || o.kind === 'charge' || o.kind === 'vip' || (o.kind === 'extract' && extractOpen)) && !o.done;
       return <li key={i} className={o.done ? 'done' : i === current ? 'current' : ''}>
@@ -103,8 +105,9 @@ function Spotted({ state }: { state: Snapshot }) {
 }
 
 export function Hud({ state, overview, onFocusSelection, onToggleOverview }: { state: Snapshot; overview: boolean; onFocusSelection: () => void; onToggleOverview: () => void }) {
+  const [drawer, setDrawer] = useState(false);
   return <>
-    <aside className="hud-left"><Tracker state={state} /><Comms state={state} /></aside>
+    <aside id="mission-drawer" className={`hud-left${drawer ? ' open' : ''}`}><Tracker state={state} open={drawer} onToggle={() => setDrawer(v => !v)} /><Comms state={state} /></aside>
     <Spotted state={state} />
     {state.pending ? <Targeting pending={state.pending} /> : null}
     {state.paused ? <div className="pause-banner"><Icon name="pause" /><span><strong>Tactical pause</strong><small>Orders queue while paused</small></span>

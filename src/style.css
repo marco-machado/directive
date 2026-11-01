@@ -78,7 +78,7 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .btn.ghost { --fill: rgb(8 18 22 / .65) }
 .btn.small { --n: 6px; min-height: 34px; padding: 0 12px; font-size: 11px }
 .btn.small .icon { width: 15px; height: 15px }
-.icon-button { display: grid; place-items: center; width: 40px; height: 40px; padding: 0; border: 1px solid var(--line-2); background: rgb(6 14 17 / .72); color: var(--dim); transition: color .15s, border-color .15s, background .15s }
+.icon-button { flex: none; display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 1px solid var(--line-2); background: rgb(6 14 17 / .72); color: var(--dim); transition: color .15s, border-color .15s, background .15s }
 .icon-button:hover { color: var(--text); border-color: var(--mint); background: rgb(18 42 42 / .85) }
 .icon-button .icon { width: 20px; height: 20px }
 :is(.icon-button, .cmd, .offer, .pick, .tabs button, .menu-item, .ability, .agent-select):active:not(:disabled, [aria-disabled=true]) { transform: translateY(1px); filter: brightness(1.2) }
@@ -151,6 +151,7 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .status-state strong { font: 700 14px var(--f-display); letter-spacing: .22em; text-transform: uppercase }
 .status-detail { min-width: 150px; font: 500 12px var(--f-ui); letter-spacing: .06em; color: var(--dim); white-space: nowrap }
 .status-detail b { color: var(--text); font-variant-numeric: tabular-nums }
+.status-pause { display: none }
 .status-clock { display: grid; place-items: center; height: 30px; padding: 0 10px; border-left: 1px solid var(--line); font: 600 18px var(--f-ui); font-variant-numeric: tabular-nums; letter-spacing: .06em }
 .status.alarm { border-color: var(--red); background: repeating-linear-gradient(-45deg, rgb(255 81 72 / .2) 0 8px, rgb(52 8 8 / .88) 8px 16px); animation: alarm-pulse .9s ease-in-out infinite alternate }
 .status.alarm .status-state { color: #ffd6d2 }
@@ -344,6 +345,7 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .obj-progress { display: block; height: 4px; margin-top: 7px; background: rgb(255 255 255 / .08) }
 .obj-progress b { display: block; height: 100%; background: var(--amber); box-shadow: 0 0 8px var(--amber); transition: width .2s linear }
 .obj-pct { min-width: 4ch; text-align: right; font: 700 12px var(--f-ui); font-variant-numeric: tabular-nums; color: var(--amber) }
+.drawer-toggle { display: none }
 .tracker-pay { display: flex; justify-content: space-between; gap: 10px; padding: 10px 14px 12px; border-top: 1px solid var(--line) }
 .tracker-pay > span { display: grid; gap: 2px; font: 600 15px var(--f-ui); color: var(--gold) }
 .tracker-pay > span:last-child { justify-items: end; text-align: right }
@@ -561,6 +563,10 @@ dialog::backdrop { overflow: hidden; overscroll-behavior: contain; background: r
   .cmd span { display: inline }
   .cmd kbd { display: none }
 }
+/* The mission menu carries Audio and the manual, so the top bar drops them when space runs short. */
+@media (max-width: 899.98px) {
+  .screen-mission .topbar .optional { display: none }
+}
 @media (max-width: 1000px) and (max-height: 760px) {
   .comms li:nth-last-child(n+3) { display: none }
 }
@@ -568,9 +574,37 @@ dialog::backdrop { overflow: hidden; overscroll-behavior: contain; background: r
   .screen-title .view-frame { inset: 0 0 55% 0 }
   .screen-title .scene-fx { background: linear-gradient(rgb(4 9 11 / 0) 0%, rgb(4 9 11 / .7) 45%, rgb(4 9 11 / .96) 70%), radial-gradient(ellipse at 50% 25%, transparent 45%, rgb(2 6 8 / .7) 100%) }
   .title-stack { margin-block: auto 0 }
+  /* Mission: the tracker and comms collapse into a drawer under the top bar, and the view spans the full width above the squad dock. */
+  :root { --drawer: 60px }
+  .screen-mission .view-frame { inset: calc(var(--top) + var(--drawer) + 16px) calc(24px + var(--sr)) var(--hud-b) calc(24px + var(--sl)) }
+  .hud-left { top: calc(var(--top) + 8px); right: calc(20px + var(--sr)); width: auto; max-height: calc(100dvh - var(--top) - var(--hud-b) - 16px); overflow: auto; overscroll-behavior: contain }
+  .drawer-toggle { position: absolute; z-index: 1; top: 0; right: 0; display: grid; place-items: center; width: 52px; height: var(--drawer); padding: 0; border: 0; background: transparent; color: var(--dim); touch-action: manipulation }
+  .drawer-toggle:hover { color: var(--text) }
+  .drawer-toggle .icon { width: 20px; height: 20px; transform: rotate(-90deg); transition: transform .2s }
+  .tracker-head { min-height: var(--drawer); padding-right: 58px }
+  .hud-left:not(.open) .tracker { display: grid; grid-template-columns: minmax(0, auto) minmax(0, 1fr); align-items: center; padding-right: 44px }
+  .hud-left:not(.open) .tracker-head { padding-right: 14px; border-bottom: 0; border-right: 1px solid var(--line) }
+  /* Collapsed, the whole bar is the toggle, so a tap anywhere on it opens the drawer. */
+  .hud-left:not(.open) .drawer-toggle { width: 100%; height: 100%; justify-items: end; padding-right: 14px }
+  .hud-left:not(.open) .drawer-toggle .icon { transform: rotate(90deg) }
+  .hud-left:not(.open) .objectives { padding: 8px 14px }
+  .hud-left:not(.open) .objectives li:not(.current), .hud-left:not(.open) .tracker-pay, .hud-left:not(.open) .comms { display: none }
+  /* Paused shows in the status pill rather than in a banner over the view. */
+  .pause-banner { display: none }
+  .status-pause { display: flex; align-items: center; gap: 8px; height: 30px; padding-right: 14px; border-right: 1px solid var(--line); color: var(--mint) }
+  .status-pause strong { font: 700 14px var(--f-display); letter-spacing: .22em; text-transform: uppercase; color: var(--text) }
+  /* Timers stand still while paused, and the pill has to leave room for the top-bar buttons. */
+  .status-pause ~ .status-detail { display: none }
+  .spotted { top: calc(var(--top) + var(--drawer) + 16px) }
+  .callouts { top: calc(var(--top) + var(--drawer) + 16px); left: calc(24px + var(--sl)); right: calc(24px + var(--sr)) }
+  .spotted ~ .callouts { top: calc(var(--top) + var(--drawer) + 72px) }
+  /* The open drawer shows the comms log itself, so callouts wait, and the spotting warning moves above the dock. */
+  .hud-left.open ~ .callouts { display: none }
+  .hud-left.open ~ .spotted { top: auto; bottom: calc(var(--hud-b) + 8px) }
+  .hud-left.open ~ .spotted:has(~ .targeting) { bottom: calc(var(--hud-b) + 72px) }
+  .targeting { left: 50%; right: auto; translate: -50% 0; max-width: calc(100% - 48px - var(--sl) - var(--sr)) }
 }
 @media (pointer: coarse) {
-  .icon-button { width: 44px; height: 44px }
   .btn.small, .btn.buy, .tabs button { min-height: 44px }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important } }
