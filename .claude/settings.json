@@ -1,0 +1,14 @@
+{
+  "attribution": {
+    "commit": "",
+    "pr": "",
+    "sessionUrl": false
+  },
+  "includeCoAuthoredBy": false,
+  "env": {
+    "GIT_AUTHOR_NAME": "Marco Machado",
+    "GIT_AUTHOR_EMAIL": "marco.machado@gmail.com",
+    "GIT_COMMITTER_NAME": "Marco Machado",
+    "GIT_COMMITTER_EMAIL": "marco.machado@gmail.com"
+  }
+}
