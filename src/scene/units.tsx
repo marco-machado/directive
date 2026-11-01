@@ -3,9 +3,9 @@ import type { ReactNode, RefObject } from 'react';
 import { useFrame } from '@react-three/fiber';
 import type { ThreeEvent } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
-import { AlwaysStencilFunc, CircleGeometry, GreaterDepth, MeshBasicMaterial, NotEqualStencilFunc, PlaneGeometry, ReplaceStencilOp, RingGeometry, Vector3 } from 'three';
+import { AlwaysStencilFunc, CanvasTexture, CircleGeometry, GreaterDepth, MeshBasicMaterial, NotEqualStencilFunc, PlaneGeometry, ReplaceStencilOp, RingGeometry, SRGBColorSpace, Vector3 } from 'three';
 import type { Camera, Group, Material, Mesh } from 'three';
-import { REVIVE_SECONDS, TAKEDOWN_SECONDS } from '../game/simulation.ts';
+import { REVIVE_SECONDS, SUSPICIOUS, TAKEDOWN_SECONDS } from '../game/simulation.ts';
 import type { Faction, Simulation, Unit, UnitKind } from '../game/simulation.ts';
 import { dragged } from './drag.ts';
 import { rectDistance } from './framing.ts';
@@ -91,6 +91,51 @@ const BAR_BACK = overlay('#04090b', .8), BAR = { mint: overlay('#5ef2c0'), amber
 const ARCS = [0, 1, 2, 3].map(k => new RingGeometry(.5, .57, 10, 1, k * Math.PI / 2 + .2, Math.PI / 2 - .4)), DISC = new CircleGeometry(.5, 32);
 const RING = new MeshBasicMaterial({ color: '#5ef2c0', transparent: true, opacity: .95, depthWrite: false, toneMapped: false });
 const RING_FILL = new MeshBasicMaterial({ color: '#5ef2c0', transparent: true, opacity: .12, depthWrite: false });
+
+// Detection marker: an arc over a hostile that fills clockwise as it notices the squad, with "?" once it is
+// suspicious and "!" at the alarm. Billboarded and drawn over buildings like the health bars, and built in
+// screen pixels (scaled by 1 / zoom) so it reads the same at every zoom.
+const MARK_R = 15, ARC_STEPS = 48, ARC_IN = 10.5, ARC_OUT = 14;
+const ARCS_BY_STEP = Array.from({ length: ARC_STEPS }, (_, k) => {
+  const length = (k + 1) / ARC_STEPS * 2 * Math.PI;
+  return new RingGeometry(ARC_IN, ARC_OUT, Math.max(4, k + 1), 1, Math.PI / 2 - length, length);
+});
+const MARK_DISC = new CircleGeometry(MARK_R, 32), MARK_TRACK = new RingGeometry(ARC_IN, ARC_OUT, 48);
+const MARK_BACK = overlay('#04090b', .85), MARK_TRACK_FILL = overlay('#e9dcc0', .22);
+const DETECT_FILL = { noticing: overlay('#ffb454'), suspicious: overlay('#ff8a3a'), alarm: overlay('#ff5148') };
+function glyph(char: string, color: string) {
+  const canvas = document.createElement('canvas'), g = canvas.getContext('2d')!;
+  canvas.width = canvas.height = 64;
+  g.font = '900 50px Arial, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = color; g.fillText(char, 32, 35);
+  const map = new CanvasTexture(canvas); map.colorSpace = SRGBColorSpace;
+  return new MeshBasicMaterial({ map, transparent: true, depthTest: false, depthWrite: false, toneMapped: false });
+}
+const QUERY = glyph('?', '#ffc27a'), BANG = glyph('!', '#ff6a5e');
+const screenUp = new Vector3();
+function DetectMarker({ sim, id, top }: { sim: Simulation; id: string; top: number }) {
+  const root = useRef<Group>(null), arc = useRef<Mesh>(null), sign = useRef<Mesh>(null);
+  useFrame(({ camera }) => {
+    const u = sim.units.find(v => v.id === id), g = root.current;
+    if (!g || !arc.current || !sign.current) return;
+    const show = !!u && u.hp > 0 && u.detect > 0 && sim.phase === 'mission';
+    g.visible = show;
+    if (!show) return;
+    // Anchored on the health bar's top edge (top + .32), then lifted clear of it, and of the target's label, in screen pixels.
+    const px = 1 / camera.zoom, lift = MARK_R + 4 + (u.kind === 'target' ? 24 : 0);
+    g.quaternion.copy(camera.quaternion); g.scale.setScalar(px);
+    g.position.set(0, top + .22, 0).addScaledVector(screenUp.set(0, 1, 0).applyQuaternion(camera.quaternion), .1 + lift * px);
+    const level = u.detect >= 1 ? 'alarm' : u.detect > SUSPICIOUS ? 'suspicious' : 'noticing';
+    arc.current.geometry = ARCS_BY_STEP[Math.min(ARC_STEPS, Math.max(1, Math.round(u.detect * ARC_STEPS))) - 1];
+    arc.current.material = DETECT_FILL[level];
+    sign.current.visible = level !== 'noticing'; sign.current.material = level === 'alarm' ? BANG : QUERY;
+  });
+  return <group ref={root} visible={false}>
+    <mesh geometry={MARK_DISC} material={MARK_BACK} renderOrder={22} />
+    <mesh geometry={MARK_TRACK} material={MARK_TRACK_FILL} renderOrder={23} />
+    <mesh ref={arc} geometry={ARCS_BY_STEP[0]} material={DETECT_FILL.noticing} renderOrder={24} />
+    <mesh ref={sign} geometry={PLANE} material={QUERY} scale={[21, 21, 1]} renderOrder={25} />
+  </group>;
+}
 
 function Humanoid({ body, head, visor, legs, legColor = '#192f33', torso = [.47, .62, .32], children }: { body: string; head: string; visor: string; legs: RefObject<Group | null>; legColor?: string; torso?: Vec3; children?: ReactNode }) {
   return <>
@@ -264,6 +309,7 @@ function Agent({ sim, unit, selected, slot, tagged, labels, hitboxes }: { sim: S
       </group>
       <mesh ref={mark} geometry={DIAMOND} material={glow('#ffb17d')} scale={[1, 1.5, 1]} visible={false} />
       <group ref={hold} visible={false}><ProgressRing radius={.7} color="#9ff7d1" value={takedownProgress} segments={24} /></group>
+      <DetectMarker sim={sim} id={id} top={top} />
     </> : null}
     {downed ? <group ref={revive} visible={false}><ProgressRing radius={.7} color="#9ff7d1" value={reviveProgress} segments={24} /></group> : null}
     {label ? <Html portal={labels} center position={[0, top + .62, 0]} style={{ pointerEvents: 'none' }}><span className={`unit-label${kind === 'target' ? ' hostile' : kind === 'vip' ? ' vip' : ` squad cls-${kind}`}`}>{label}</span></Html> : null}

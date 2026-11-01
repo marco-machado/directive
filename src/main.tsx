@@ -12,6 +12,7 @@ import { Headquarters } from './ui/Headquarters.tsx';
 import { Hud } from './ui/Hud.tsx';
 import { Icon } from './ui/icons.tsx';
 import { Manual } from './ui/Manual.tsx';
+import { gameOptions } from './ui/options.ts';
 import { MissionSelect } from './ui/MissionSelect.tsx';
 import { play, setMood, sound } from './ui/audio.ts';
 import { TitleScreen } from './ui/TitleScreen.tsx';
@@ -23,6 +24,8 @@ import './style.css';
 function App() {
   const state = useSyncExternalStore(sim.subscribe, sim.getSnapshot);
   const { muted } = useSyncExternalStore(sound.subscribe, sound.settings);
+  const { autoPause } = useSyncExternalStore(gameOptions.subscribe, gameOptions.get);
+  useEffect(() => { sim.setAutoPause(autoPause); }, [autoPause]);
   const tooSmall = useTooSmall();
   const [saveCode, setSaveCode] = useState<string | null>(null), [connecting, setConnecting] = useState(true), [loadingCode, setLoadingCode] = useState(false);
   useEffect(() => { connection.then(setSaveCode, () => sim.setSaveUnavailable(true)).finally(() => setConnecting(false)); }, []);
@@ -98,6 +101,8 @@ function App() {
         <button className="menu-item primary" data-autofocus onClick={() => { setMenu(false); if (sim.paused) sim.togglePause(); }}><span className="menu-item-copy"><strong>Resume</strong></span><Icon name="play" /></button>
         <button className="menu-item" onClick={() => { setMenu(false); setConfirmRestart(true); }}><span className="menu-item-copy"><strong>Restart contract</strong><small>Same map, same squad</small></span><Icon name="restart" /></button>
         <button className="menu-item" onClick={() => { setMenu(false); setHelp(true); }}><span className="menu-item-copy"><strong>Operator manual</strong></span><Icon name="help" /></button>
+        <button className="menu-item" aria-pressed={autoPause} onClick={gameOptions.toggleAutoPause}><span className="menu-item-copy"><strong>Auto-pause when spotted</strong>
+          <small>{autoPause ? 'On · pauses the first time each hostile turns suspicious' : 'Off'}</small></span><Icon name={autoPause ? 'pause' : 'play'} /></button>
         <button className="menu-item" onClick={() => { setMenu(false); setAudio('from-menu'); }}><span className="menu-item-copy"><strong>Audio</strong><small>{muted ? 'Sound off' : 'Volume and mute'}</small></span><Icon name={muted ? 'soundOff' : 'soundOn'} /></button>
       </nav>
     </div></Dialog> : null}

@@ -1,7 +1,7 @@
 import { useMemo, useRef } from 'react';
 import type { RefObject } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { BufferGeometry, CircleGeometry, Color, CylinderGeometry, Float32BufferAttribute, Group, Mesh, MeshBasicMaterial, RingGeometry, SphereGeometry, Vector3 } from 'three';
+import { BufferGeometry, CircleGeometry, Color, CylinderGeometry, DoubleSide, Float32BufferAttribute, Group, Mesh, MeshBasicMaterial, RingGeometry, SphereGeometry, Vector3 } from 'three';
 import { ABILITY_STATS } from '../game/classes.ts';
 import { HOSTILE_STATS, SUSPICIOUS } from '../game/simulation.ts';
 import type { Blast, Faction, Pending, Shot, Simulation } from '../game/simulation.ts';
@@ -70,30 +70,61 @@ function Blasts({ sim }: { sim: Simulation }) {
   </group>)}</>;
 }
 
-// Vision cones: one fan per hostile kind, laid flat in x/z so rotation.y = heading aims it.
+// Vision cones: one fan per hostile kind, laid flat in x/z at unit range so rotation.y = heading aims it and
+// the scale sets the range. The fill fades from the hostile out to its range, strongest on the near ground where
+// detection is fastest; a bright outline marks the edge of what it sees.
+const FADE = [[0, 1], [.45, .65], [1, .35]] as const; // [share of the range, fill alpha]
+const SEGMENTS = 24, EDGE_WIDTH = .09; // m
 function fan(fov: number) {
-  const segments = 24, points = [0, 0, 0], index: number[] = [];
-  for (let k = 0; k <= segments; k++) { const a = -fov + 2 * fov * k / segments; points.push(Math.sin(a), 0, Math.cos(a)); }
-  for (let k = 0; k < segments; k++) index.push(0, k + 1, k + 2);
+  const points: number[] = [], colors: number[] = [], index: number[] = [];
+  for (const [r, alpha] of FADE) for (let k = 0; k <= SEGMENTS; k++) {
+    const a = -fov + 2 * fov * k / SEGMENTS;
+    points.push(Math.sin(a) * r, 0, Math.cos(a) * r); colors.push(1, 1, 1, alpha);
+  }
+  for (let row = 0; row < FADE.length - 1; row++) for (let k = 0; k < SEGMENTS; k++) {
+    const a = row * (SEGMENTS + 1) + k, b = a + SEGMENTS + 1;
+    index.push(a, b, b + 1, a, b + 1, a + 1);
+  }
+  const g = new BufferGeometry(); g.setAttribute('position', new Float32BufferAttribute(points, 3)); g.setAttribute('color', new Float32BufferAttribute(colors, 4)); g.setIndex(index); return g;
+}
+// The outline: the rim arc and both sides of the fan, EDGE_WIDTH wide whatever the range.
+function edge(fov: number, range: number) {
+  const w = EDGE_WIDTH / range, points: number[] = [], index: number[] = [];
+  const quad = (...corners: number[][]) => { const n = points.length / 3; corners.forEach(([x, z]) => points.push(x, 0, z)); index.push(n, n + 1, n + 2, n, n + 2, n + 3); };
+  for (let k = 0; k < SEGMENTS; k++) {
+    const a = -fov + 2 * fov * k / SEGMENTS, b = a + 2 * fov / SEGMENTS;
+    quad([Math.sin(a) * (1 - w), Math.cos(a) * (1 - w)], [Math.sin(a), Math.cos(a)], [Math.sin(b), Math.cos(b)], [Math.sin(b) * (1 - w), Math.cos(b) * (1 - w)]);
+  }
+  for (const side of [-1, 1]) {
+    const a = side * fov, ix = -side * Math.cos(a) * w, iz = side * Math.sin(a) * w; // a step inward, across the side
+    quad([0, 0], [Math.sin(a), Math.cos(a)], [Math.sin(a) + ix, Math.cos(a) + iz], [ix, iz]);
+  }
   const g = new BufferGeometry(); g.setAttribute('position', new Float32BufferAttribute(points, 3)); g.setIndex(index); return g;
 }
-const FANS = Object.fromEntries(Object.entries(HOSTILE_STATS).map(([kind, s]) => [kind, fan(s.fov)])) as Record<EnemyKind, BufferGeometry>;
-const CALM = new Color('#e9dcc0'), ALERT = new Color('#ff4b3a');
+const KINDS = Object.entries(HOSTILE_STATS) as [EnemyKind, (typeof HOSTILE_STATS)[EnemyKind]][];
+const FANS = Object.fromEntries(KINDS.map(([kind, s]) => [kind, fan(s.fov)])) as Record<EnemyKind, BufferGeometry>;
+const EDGES = Object.fromEntries(KINDS.map(([kind, s]) => [kind, edge(s.fov, s.vision)])) as Record<EnemyKind, BufferGeometry>;
+const CALM = new Color('#f2e6c8'), ALERT = new Color('#ff4b3a');
 function VisionCones({ sim }: { sim: Simulation }) {
-  const cones = useRef<(Mesh | null)[]>([]);
+  const cones = useRef<(Group | null)[]>([]);
   useFrame(() => {
     let n = 0;
     for (const u of sim.units) {
       if (u.faction !== 'hostile' || u.hp <= 0 || !u.visible || u.stunned > 0) continue;
-      const mesh = cones.current[n++]; if (!mesh) break;
-      const kind = u.kind as EnemyKind, range = HOSTILE_STATS[kind].vision, material = mesh.material as MeshBasicMaterial;
-      mesh.visible = true; mesh.geometry = FANS[kind];
-      mesh.position.set(u.x, .03, u.z); mesh.rotation.y = u.heading; mesh.scale.set(range, 1, range);
-      material.color.lerpColors(CALM, ALERT, u.detect); material.opacity = .12 + .2 * u.detect;
+      const cone = cones.current[n++]; if (!cone) break;
+      const kind = u.kind as EnemyKind, range = HOSTILE_STATS[kind].vision, [fill, outline] = cone.children as Mesh[];
+      const fillMat = fill.material as MeshBasicMaterial, edgeMat = outline.material as MeshBasicMaterial;
+      cone.visible = true; fill.geometry = FANS[kind]; outline.geometry = EDGES[kind];
+      cone.position.set(u.x, .03, u.z); cone.rotation.y = u.heading; cone.scale.set(range, 1, range);
+      fillMat.color.lerpColors(CALM, ALERT, u.detect); fillMat.opacity = .42 + .3 * u.detect;
+      edgeMat.color.copy(fillMat.color); edgeMat.opacity = .6 + .4 * u.detect;
     }
     for (; n < cones.current.length; n++) if (cones.current[n]) cones.current[n]!.visible = false;
   });
-  return <>{Array.from({ length: 40 }, (_, i) => <mesh ref={el => { cones.current[i] = el; }} key={i} geometry={FANS.guard} visible={false} renderOrder={1}><meshBasicMaterial transparent depthWrite={false} /></mesh>)}</>;
+  return <>{Array.from({ length: 40 }, (_, i) => <group ref={el => { cones.current[i] = el; }} key={i} visible={false}>
+    <mesh geometry={FANS.guard} renderOrder={1}><meshBasicMaterial vertexColors transparent depthWrite={false} /></mesh>
+    <mesh geometry={EDGES.guard} position={[0, .005, 0]} renderOrder={2}><meshBasicMaterial transparent depthWrite={false} toneMapped={false} side={DoubleSide} /></mesh>
+  </group>)}</>;
 }
 
 // The move order's destination, with a ping that expands each time a new order lands.

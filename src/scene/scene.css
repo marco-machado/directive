@@ -11,6 +11,7 @@
 .pointer[hidden] { display: none }
 .pointer[data-kind=extract] { --c: var(--mint) }
 .pointer[data-kind=vip] { --c: var(--gold) }
+.pointer[data-kind=watcher] { --c: var(--red) }
 .pointer-dot { position: absolute; left: -6px; top: -6px; width: 12px; height: 12px; border: 2px solid var(--c); background: rgb(3 8 10 / .85); box-shadow: 0 0 10px var(--c); transform: rotate(45deg) }
 .pointer-arrow { position: absolute; left: -18px; top: -18px; width: 36px; height: 36px }
 .pointer-arrow::before { content: ''; position: absolute; right: -4px; top: 50%; margin-top: -6px; border: 6px solid transparent; border-left: 10px solid var(--c); filter: drop-shadow(0 0 4px var(--c)) }

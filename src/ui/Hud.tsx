@@ -5,6 +5,7 @@ import { missionPayout } from '../game/campaign.ts';
 import type { Campaign } from '../game/campaign.ts';
 import { abilityCooldown, ABILITY_STATS, CLASS_STATS } from '../game/classes.ts';
 import type { ClassId } from '../game/classes.ts';
+import { SUSPICIOUS } from '../game/simulation.ts';
 import type { Pending, Snapshot, Unit } from '../game/simulation.ts';
 import { clock, CONTRACTS, Credits, threat } from './common.tsx';
 import { Icon, Portrait } from './icons.tsx';
@@ -85,12 +86,29 @@ function Targeting({ pending }: { pending: NonNullable<Pending> }) {
   </div>;
 }
 
+// Who is noticing the squad before the alarm: the hostile closest to raising it, by name, with its detection.
+// Its marker sits over it on the map, or an edge arrow points to it when it is off screen.
+const WATCHER: Partial<Record<Unit['kind'], string>> = { guard: 'Guard', heavy: 'Heavy', camera: 'Camera', turret: 'Turret', target: 'Target' };
+function Spotted({ state }: { state: Snapshot }) {
+  const watchers = state.alarm ? [] : state.units.filter(u => u.faction === 'hostile' && u.hp > 0 && u.visible && u.detect > 0).sort((a, b) => b.detect - a.detect);
+  const top = watchers[0];
+  if (!top) return null;
+  const suspicious = top.detect > SUSPICIOUS, percent = Math.round(top.detect * 100);
+  return <div className={`spotted${suspicious ? ' suspicious' : ''}`}>
+    <Icon name="eye" />
+    <span className="spotted-copy"><strong>Being spotted</strong>
+      <small>{WATCHER[top.kind]} · {suspicious ? 'suspicious' : 'noticing'}{watchers.length > 1 ? ` · +${watchers.length - 1} more` : ''}</small></span>
+    <span className="spotted-meter" role="meter" aria-label={`${WATCHER[top.kind]} detection`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}><i style={{ width: `${percent}%` }} /></span>
+  </div>;
+}
+
 export function Hud({ state, overview, onFocusSelection, onToggleOverview }: { state: Snapshot; overview: boolean; onFocusSelection: () => void; onToggleOverview: () => void }) {
   return <>
     <aside className="hud-left"><Tracker state={state} /><Comms state={state} /></aside>
+    <Spotted state={state} />
+    {state.pending ? <Targeting pending={state.pending} /> : null}
     {state.paused ? <div className="pause-banner"><Icon name="pause" /><span><strong>Tactical pause</strong><small>Orders queue while paused</small></span>
       <button className="btn small" onClick={sim.togglePause}><Icon name="play" />Resume <kbd>Space</kbd></button></div> : null}
-    {state.pending ? <Targeting pending={state.pending} /> : null}
     <p className="sr-only" role="status">{state.message}</p>
     <footer className="hud-bottom">
       <section className="squad" aria-label="Squad selection">{state.squad.map((id, i) => {
