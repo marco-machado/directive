@@ -1,16 +1,15 @@
-import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { BoxGeometry, CanvasTexture, Color, CylinderGeometry, InstancedBufferAttribute, InstancedMesh, MeshBasicMaterial, MeshStandardMaterial, Object3D, OctahedronGeometry, SRGBColorSpace } from 'three';
-import type { Material, WebGLProgramParametersWithUniforms } from 'three';
+import { BoxGeometry, CanvasTexture, Color, InstancedBufferAttribute, InstancedMesh, MeshBasicMaterial, MeshStandardMaterial, Object3D, OctahedronGeometry, SRGBColorSpace } from 'three';
+import type { WebGLProgramParametersWithUniforms } from 'three';
 
 // Decorative motion (spins, pulses, the title orbit) stops for players who ask for reduced motion.
 export const STILL = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 // Shared geometry and materials keep the many small boxes cheap: each Box only scales a unit cube.
 export const BOX = new BoxGeometry();
-export const CYLINDER = new CylinderGeometry(1, 1, 1, 12);
 export const DIAMOND = new OctahedronGeometry(.13);
-const solids = new Map<string, MeshStandardMaterial>(), glows = new Map<string, MeshBasicMaterial>(), dimmed = new Map<string, string>();
+const solids = new Map<string, MeshStandardMaterial>(), glows = new Map<string, MeshBasicMaterial>();
 export function solid(color: string, emissive?: string) {
   const key = `${color}|${emissive ?? ''}`;
   let m = solids.get(key);
@@ -39,22 +38,10 @@ export function shield(color: string) {
   }
   return m;
 }
-export function dim(color: string) {
-  let d = dimmed.get(color);
-  if (!d) { d = `#${new Color(color).multiplyScalar(.42).getHexString()}`; dimmed.set(color, d); }
-  return d;
-}
-
-// How a Box and the unit models get their material and render order. Units draw twice, lit and
-// then as a flat silhouette where something hides them, by rendering the same model under two paints.
-export type Paint = { material: (color: string, emissive?: string) => Material; shadows: boolean; order: number };
-export const PaintContext = createContext<Paint>({ material: solid, shadows: true, order: 0 });
-export const usePaint = () => useContext(PaintContext);
 
 type Vec3 = [number, number, number];
 export function Box({ position, size, color, emissive, castShadow }: { position: Vec3; size: Vec3; color: string; emissive?: string; castShadow?: boolean }) {
-  const paint = usePaint();
-  return <mesh position={position} scale={size} geometry={BOX} material={paint.material(color, emissive)} castShadow={castShadow && paint.shadows} renderOrder={paint.order} />;
+  return <mesh position={position} scale={size} geometry={BOX} material={solid(color, emissive)} castShadow={castShadow} />;
 }
 
 // Screen-door fade: each instance carries the share of its pixels to drop (0 keeps it solid), and
