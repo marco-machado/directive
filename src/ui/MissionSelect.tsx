@@ -1,7 +1,8 @@
 import type { RefObject } from 'react';
 import { sim } from '../app.ts';
-import { MAX_TIER, missionPayout, SQUAD_MAX } from '../game/campaign.ts';
+import { MAX_TIER, missionPayout, SQUAD_MAX, threatFor } from '../game/campaign.ts';
 import { ABILITY_STATS, CLASS_STATS } from '../game/classes.ts';
+import type { Threat } from '../game/campaign.ts';
 import type { EnemyKind } from '../game/mapgen.ts';
 import type { Snapshot } from '../game/simulation.ts';
 import { CONTRACTS, Credits, pad, Pips, SaveWarning, threat } from './common.tsx';
@@ -9,9 +10,12 @@ import { Icon, Portrait } from './icons.tsx';
 import type { IconName } from './icons.tsx';
 
 const INTEL: { kind: EnemyKind; label: string; icon: IconName }[] = [
-  { kind: 'guard', label: 'Guards', icon: 'guard' }, { kind: 'heavy', label: 'Heavies', icon: 'heavy' },
+  { kind: 'target', label: 'Target', icon: 'assassination' }, { kind: 'guard', label: 'Guards', icon: 'guard' }, { kind: 'heavy', label: 'Heavies', icon: 'heavy' },
   { kind: 'camera', label: 'Cameras', icon: 'camera' }, { kind: 'turret', label: 'Turrets', icon: 'turret' },
 ];
+
+// A read of the contract's danger for this roster and its upgrades, beside the raw tier.
+const ThreatRead = ({ level }: { level: Threat }) => <small className={`threat-read threat-${level}`}>Threat: {level} for your squad</small>;
 
 export function MissionSelect({ state, titleRef, onChoose, onDeploy, onRecenter, deployBlocked, connecting }: {
   state: Snapshot; titleRef: RefObject<HTMLHeadingElement | null>; onChoose: (id: string) => void; onDeploy: () => void; onRecenter: () => void; deployBlocked: boolean; connecting: boolean;
@@ -25,7 +29,7 @@ export function MissionSelect({ state, titleRef, onChoose, onDeploy, onRecenter,
           const on = c.id === contract?.id;
           return <button key={c.id} className={`offer${on ? ' selected' : ''}`} aria-pressed={on} style={threat(c.tier)} onClick={() => onChoose(c.id)}>
             <span className="offer-icon"><Icon name={c.type} /></span>
-            <span className="offer-copy"><strong>{CONTRACTS[c.type].title}</strong><small>Sector {pad(c.sector)} · {c.district}</small></span>
+            <span className="offer-copy"><strong>{CONTRACTS[c.type].title}</strong><small>Sector {pad(c.sector)} · {c.district}</small><ThreatRead level={threatFor(campaign, c.tier)} /></span>
             <span className="offer-side"><Credits value={c.payout} /><span className="offer-tier">T{c.tier}<Pips value={c.tier} max={MAX_TIER} label="Threat tier" /></span></span>
           </button>;
         })}</div>
@@ -42,6 +46,7 @@ export function MissionSelect({ state, titleRef, onChoose, onDeploy, onRecenter,
       <div className="brief-scroll">
         {contract ? <div className="brief" style={threat(contract.tier)}>
           <p className="kicker"><Icon name={contract.type} />Briefing · Tier {contract.tier}</p>
+          <ThreatRead level={threatFor(campaign, contract.tier)} />
           <h3>{CONTRACTS[contract.type].title}</h3>
           <p className="brief-copy">{CONTRACTS[contract.type].brief}</p>
           <ol className="brief-objectives">{objectives.map((o, i) => <li key={i}><Icon name={o.kind === 'extract' ? 'flag' : 'diamond'} />{o.label}</li>)}</ol>
