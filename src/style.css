@@ -412,6 +412,18 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .comms li:nth-last-child(n+3) { opacity: .5 }
 .comms li.danger { border-left-color: var(--red); color: #ffc2bc }
 .comms time { padding-top: 1px; font: 600 11px var(--f-ui); font-variant-numeric: tabular-nums; color: var(--faint) }
+/* First-time tips dock under the tracker in the HUD column. The empty dock stays in place for the live region; the negative margin cancels its grid gap. */
+.tip-dock:empty { margin-top: -10px }
+.tip { --accent: var(--cyan); display: grid; grid-template-columns: 30px minmax(0, 1fr) 32px; align-items: start; gap: 10px; padding: 10px 8px 12px 12px; pointer-events: auto; animation: slide-right .3s ease-out both }
+.tip-icon { display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid rgb(98 208 255 / .45); background: rgb(98 208 255 / .1); color: var(--cyan) }
+.tip-icon .icon { width: 17px; height: 17px }
+.tip-copy { display: grid; gap: 3px; min-width: 0 }
+.tip-copy small { font: 600 10px var(--f-ui); letter-spacing: .2em; text-transform: uppercase; color: var(--cyan) }
+.tip-copy strong { font: 700 15px/1.1 var(--f-display); letter-spacing: .06em; text-transform: uppercase }
+.tip-copy > span { font: 400 13px/1.45 var(--f-body); color: var(--dim) }
+.tip-copy kbd { min-width: 16px; height: 16px; font-size: 9px; vertical-align: 1px }
+.tip-close.icon-button { width: 32px; height: 32px; border-color: transparent; background: transparent }
+.tip-close.icon-button .icon { width: 16px; height: 16px }
 .squad { grid-area: squad; display: flex; gap: 8px; animation: rise .4s ease-out both }
 .agent { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 56px; width: 228px; min-width: 0; border: 1px solid var(--line); background: var(--panel); backdrop-filter: blur(10px);
   transition: border-color .15s, background .15s, transform .15s, box-shadow .15s }
@@ -507,6 +519,7 @@ dialog::backdrop { overflow: hidden; overscroll-behavior: contain; background: r
 .rules li { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 10px; font: 400 14px/1.5 var(--f-body); color: var(--dim) }
 .rules .icon { width: 20px; height: 20px; margin-top: 1px; color: var(--amber) }
 .manual .save-code { margin: 20px 0 0 }
+.tips-reset { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; font: 500 13px var(--f-ui); color: var(--dim) }
 .render-error { position: absolute; inset: 20%; z-index: 6; display: grid; place-content: center; justify-items: center; gap: 12px; padding: 40px; border: 1px solid var(--line-2); background: var(--panel-solid); text-align: center }
 .render-error h2 { margin: 0; font: 700 28px var(--f-display); text-transform: uppercase }
 .render-error p { margin: 0; color: var(--dim) }
@@ -636,6 +649,8 @@ dialog::backdrop { overflow: hidden; overscroll-behavior: contain; background: r
   .hud-left:not(.open) .drawer-toggle .icon { transform: rotate(90deg) }
   .hud-left:not(.open) .objectives { padding: 8px 14px }
   .hud-left:not(.open) .objectives li:not(.current), .hud-left:not(.open) .tracker-pay, .hud-left:not(.open) .comms { display: none }
+  /* Under the closed drawer a tip would cover the view, so it waits for the drawer to open. */
+  .hud-left:not(.open) .tip { display: none }
   /* Paused shows in the status pill rather than in a banner over the view. */
   .pause-banner { display: none }
   .status-pause { display: flex; align-items: center; gap: 8px; height: 30px; padding-right: 14px; border-right: 1px solid var(--line); color: var(--mint) }
@@ -653,5 +668,7 @@ dialog::backdrop { overflow: hidden; overscroll-behavior: contain; background: r
 }
 @media (pointer: coarse) {
   .btn.small, .btn.buy, .tabs button { min-height: 44px }
+  .tip { grid-template-columns: 30px minmax(0, 1fr) 44px }
+  .tip-close.icon-button { width: 44px; height: 44px }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important } }

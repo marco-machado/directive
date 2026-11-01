@@ -34,11 +34,13 @@ export type Pending = { unitId: string; ability: AbilityId } | null;
 export type Shield = 'covered' | 'flanked' | null;
 export type CoverStatus = { threats: { id: string; covered: boolean }[]; shield: Shield };
 export type CoverSnap = Point & { along: Point; span: { lo: number; hi: number } | null };
+// Situations a first-time player meets, each recorded the first time it happens in a mission, in order.
+export type Milestone = 'hostileSeen' | 'suspicious' | 'alarm' | 'abilityReady' | 'downed' | 'extractOpen';
 export type Snapshot = {
   phase: Phase; paused: boolean; selected: string[]; squad: string[]; squadPick: string[]; units: Unit[]; campaign: Campaign;
   contract: Contract | null; plan: MissionPlan | null; objectives: Objective[]; alarm: boolean; calmIn: number; reinforceIn: number; reinforced: number;
   result: 'success' | 'failure' | null; failReason: string; payout: number; stealth: boolean; time: number; message: string;
-  saveUnavailable: boolean; syncing: boolean; pending: Pending; cover: Record<string, Shield>;
+  saveUnavailable: boolean; syncing: boolean; pending: Pending; cover: Record<string, Shield>; milestones: Milestone[];
 };
 // Reports campaign events to the server; the server answers through applyCampaign.
 export type CampaignSync = {
@@ -155,6 +157,7 @@ export class Simulation {
   // route of each guard the squad has watched finish a leg. Both are replaced with each mission.
   lastSeen = new Map<string, Sighting>();
   intel = new Map<string, Point[]>();
+  milestones: Milestone[] = [];
   private reinforced = 0;
   private vipJoined = false;
   private vipThreat: Point | null = null; // where the last shot at the VIP came from
@@ -183,10 +186,12 @@ export class Simulation {
       objectives: this.objectives.map(o => ({ ...o })), alarm: this.alarm, calmIn: this.calmIn, reinforceIn: this.reinforceIn, reinforced: this.reinforced, result: this.result,
       failReason: this.failReason, payout: this.payout, stealth: !this.detected, time: this.time, message: this.message,
       saveUnavailable: this.saveUnavailable, syncing: this.syncing, pending: this.pending,
+      milestones: this.milestones,
       cover: Object.fromEntries(this.phase === 'mission' && this.plan ? this.livingSquad().map(u => [u.id, this.coverStatus(u).shield]) : []),
     };
     this.listeners.forEach(fn => fn());
   }
+  private reach(m: Milestone) { if (this.phase === 'mission' && !this.milestones.includes(m)) this.milestones = [...this.milestones, m]; }
   private report(send: (sync: CampaignSync) => void) { if (this.sync) try { send(this.sync); } catch { this.saveUnavailable = true; } }
   applyCampaign(campaign: Campaign) { this.campaign = campaign; if (this.phase !== 'mission') this.refreshBoard(); this.emit(); }
   setSaveUnavailable(unavailable: boolean) { if (this.saveUnavailable !== unavailable) { this.saveUnavailable = unavailable; this.emit(); } }
@@ -241,7 +246,7 @@ export class Simulation {
   private resetUnits() {
     const plan = this.plan;
     this.units = []; this.objectives = []; this.shots = []; this.blasts = []; this.casts = []; this.hitThisFrame.clear(); this.volleyReady.clear(); this.autoPaused.clear();
-    this.alarm = false; this.detected = false; this.calmIn = 0; this.lastKnown = null; this.lastSeen = new Map(); this.intel = new Map();
+    this.alarm = false; this.detected = false; this.calmIn = 0; this.lastKnown = null; this.lastSeen = new Map(); this.intel = new Map(); this.milestones = [];
     this.reinforceIn = 0; this.reinforced = 0; this.vipJoined = false; this.vipThreat = null; this.holdup = ''; this.pending = null; this.commandPoint = null;
     this.targetArea = plan?.targetArea ? { ...plan.targetArea } : null;
     if (!plan) { this.squad = []; this.selected = []; return; }
@@ -467,7 +472,7 @@ export class Simulation {
     // A fresh trigger during the alarm only restarts the stand-down countdown.
     this.contact(null);
     if (this.alarm) return;
-    this.alarm = true; this.detected = true; this.reinforceIn = this.reinforced ? REINFORCE_SECONDS : FIRST_WAVE_SECONDS; this.calmIn = CALM_SECONDS;
+    this.alarm = true; this.detected = true; this.reach('alarm'); this.reinforceIn = this.reinforced ? REINFORCE_SECONDS : FIRST_WAVE_SECONDS; this.calmIn = CALM_SECONDS;
     const known = seen ?? at; this.lastKnown = { x: known.x, z: known.z };
     for (const u of this.units) {
       if (u.faction !== 'hostile' || u.hp <= 0) continue;
@@ -510,7 +515,7 @@ export class Simulation {
     else {
       target.hurt = 1.5; target.revive = 0;
       // A downed operative drops its orders; once revived it stays where it fell.
-      if (target.hp <= 0) { target.path = []; this.clearOrders(target); }
+      if (target.hp <= 0) { target.path = []; this.clearOrders(target); if (target.faction === 'squad') this.reach('downed'); }
     }
   }
   private shoot(from: Unit, to: Unit, amount: number, kind: Shot['kind'] = 'bullet') {
@@ -549,7 +554,7 @@ export class Simulation {
     if (success) {
       const stealth = !this.detected;
       this.payout = missionPayout(this.contract, stealth);
-      this.campaign = applyPayout(this.campaign, this.contract, stealth); this.report(s => s.completed(stealth));
+      this.campaign = applyPayout(this.campaign, this.contract, stealth, Math.random); this.report(s => s.completed(stealth));
     }
     this.emit();
   }
@@ -568,6 +573,7 @@ export class Simulation {
       if (u.faction !== 'hostile') { u.visible = true; continue; }
       const was = u.visible;
       u.visible = u.marked > 0 || (!!world && eyes.some(e => distance(e, u) <= SIGHT_RANGE && world.sightClear(e, u)));
+      if (u.visible && u.hp > 0) this.reach('hostileSeen');
       if (u.kind === 'target' && u.visible && u.hp > 0 && this.targetArea) { this.targetArea.x = u.x; this.targetArea.z = u.z; }
       if (u.visible || u.hp <= 0) this.lastSeen.delete(u.id);
       else if (was) this.lastSeen.set(u.id, { x: u.x, z: u.z, heading: u.heading, at: this.time });
@@ -591,7 +597,7 @@ export class Simulation {
       const was = u.detect;
       u.detect = Math.min(1, u.detect + dt / detectSeconds(u.kind as EnemyKind, distance(u, seen)));
       if (u.detect >= 1) { this.raiseAlarm(u, `${stats.name} spotted the squad`, seen); return; }
-      if (was <= SUSPICIOUS && u.detect > SUSPICIOUS) this.suspicious(u);
+      if (was <= SUSPICIOUS && u.detect > SUSPICIOUS) { this.reach('suspicious'); this.suspicious(u); }
     } else u.detect = Math.max(0, u.detect - DETECT_DRAIN * dt);
     if (!this.alarm && !(u.kind === 'target' && u.exit)) {
       // A suspicious guard stops and stares instead of walking on.
@@ -662,6 +668,7 @@ export class Simulation {
     const world = this.plan!.world, stats = CLASS_STATS[u.kind as ClassId];
     u.moving = false;
     u.cooldown -= dt; u.abilityCd = Math.max(0, u.abilityCd - dt); u.hurt = Math.max(0, u.hurt - dt);
+    if (u.ability && u.abilityCd <= 0) this.reach('abilityReady');
     if (u.reviveTarget) {
       const down = this.unit(u.reviveTarget);
       if (!down || down.hp > 0) { u.reviveTarget = null; u.revive = 0; }
@@ -844,6 +851,7 @@ export class Simulation {
     const inZone = (s: Unit) => distance(s, extract) < 2;
     extract.progress = team.filter(s => s.hp > 0 && inZone(s)).length / team.length;
     if (!this.extractReady) return;
+    this.reach('extractOpen');
     const vipIn = !vip || distance(vip, extract) < 2.4;
     if (extract.progress === 1 && vipIn) { extract.done = true; this.finish(true); return; }
     const down = team.find(s => s.hp <= 0);
