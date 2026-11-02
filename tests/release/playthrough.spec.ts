@@ -50,8 +50,12 @@ async function until(game: JSHandle<Game>, done: (s: State) => boolean, gameSeco
   }
 }
 
+// Deploy stays disabled until the server's campaign is in and no save is in flight. Before that the board can be
+// the client's own deal, which the server's replaces: a contract chosen from it falls back to the first offer.
+const boardReady = (page: Page) => expect(page.locator('.deploy')).toBeEnabled({ timeout: 15_000 });
+
 async function deploy(page: Page) {
-  await expect(page.locator('.deploy')).toBeEnabled({ timeout: 15_000 });
+  await boardReady(page);
   await page.locator('.deploy').click();
   await expect(page.locator('.tracker')).toBeVisible({ timeout: 15_000 });
   await sleep(1500);
@@ -79,7 +83,7 @@ test('lose a contract, retry and win contract 01, buy, drop the Worker, deploy a
       for (;;) {
         await page.goto('/');
         await page.locator('.title-menu .menu-item.primary:not([disabled])').click({ timeout: 20_000 });
-        await expect(offers).toHaveCount(3);
+        await boardReady(page);
         const types = (await offers.allInnerTexts()).map(t => t.split('\n')[0]);
         boards.push(types);
         const i = types.findIndex(t => /assassination/i.test(t));
@@ -116,7 +120,7 @@ test('lose a contract, retry and win contract 01, buy, drop the Worker, deploy a
 
     const game = await test.step('retry: contract 01 is still first on the board', async () => {
       await page.locator('.debrief-actions .btn.primary').click();
-      await expect(offers).toHaveCount(3);
+      await boardReady(page);
       await offers.first().click();
       const game = await deploy(page);
       expect((await state(game)).contract).toEqual({ type: 'heist', tier: 1 });
