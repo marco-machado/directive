@@ -12,5 +12,12 @@
     "bindings": [{ "name": "PLAYERS", "class_name": "PlayerCampaign" }]
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["PlayerCampaign"] }],
+  // Per client IP and Cloudflare location. Another Worker on the account that reuses a namespace_id shares its counters.
+  "ratelimits": [
+    { "name": "API_LIMIT", "namespace_id": "4201", "simple": { "limit": 120, "period": 60 } },
+    { "name": "CREATE_LIMIT", "namespace_id": "4202", "simple": { "limit": 20, "period": 60 } }
+  ],
+  // About 15 times the observed p99 of 3 ms. Enforced only on Cloudflare's network.
+  "limits": { "cpu_ms": 50 },
   "observability": { "enabled": true }
 }
