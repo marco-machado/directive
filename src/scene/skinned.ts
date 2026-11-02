@@ -1,9 +1,10 @@
 import { Box3, Euler, Group, Matrix3, Matrix4, Mesh, Object3D, Quaternion, Vector3 } from 'three';
-import type { Bone, BufferAttribute, MeshStandardMaterial, Skeleton, SkinnedMesh, Texture } from 'three';
+import type { Bone, BufferAttribute, BufferGeometry, MeshStandardMaterial, Skeleton, SkinnedMesh, Texture } from 'three';
 import type { GLTF } from 'three/addons/loaders/GLTFLoader.js';
 import { clone } from 'three/addons/utils/SkeletonUtils.js';
 import type { UnitKind } from '../game/simulation.ts';
 import { twoBone } from './ik.ts';
+import type { WeaponFile } from './models.ts';
 import { ARMED, briefcaseModel, shieldModel, weaponModel } from './rigs.ts';
 import type { Motion, RigModel } from './rigs.ts';
 
@@ -11,7 +12,7 @@ import type { Motion, RigModel } from './rigs.ts';
 // height, turned to face +z and stood on y = 0. The procedural rigs' animation layers drive it: the legs, spine
 // and head turn by deltas in model space, the rifle and the heavy's shield ride on the chest as the procedural gun
 // and shield bones do, and the arms reach for their grips (or swing at the sides) by two-bone IK. The target's
-// briefcase hangs from its right hand.
+// briefcase hangs from its right hand. The rifle is the unit's imported one once that has loaded, else the procedural one.
 
 const HEIGHT = 1.3;
 const JOINTS = ['Hips', 'Spine', 'Spine2', 'Head', 'LeftUpLeg', 'LeftLeg', 'RightUpLeg', 'RightLeg', 'LeftArm', 'LeftForeArm', 'LeftHand', 'RightArm', 'RightForeArm', 'RightHand'] as const;
@@ -20,7 +21,7 @@ type JointName = typeof JOINTS[number];
 type Joint = { bone: Bone; q: Quaternion; p: Vector3; parent: Quaternion };
 // A carried model hung off the upper spine; `rest` takes model space into the spine's, and the markers are wrist targets.
 type Held = { pivot: Object3D; rest: Matrix4 };
-type Prop = { body: Mesh; glow: Mesh | null };
+type Prop = { body: Mesh; glow: Mesh | null; map: Texture | null };
 export type ImportedRig = {
   kind: UnitKind; root: Group; body: SkinnedMesh; skeleton: Skeleton; map: Texture | null; joints: Record<JointName, Joint>;
   // Which side (±x) the right hand is on, the shoulder height, and model up in the hips' parent space (for the bob).
@@ -59,7 +60,30 @@ function fitOf(gltf: GLTF) {
   return fit;
 }
 
-export function importRig(kind: UnitKind, gltf: GLTF): ImportedRig {
+// An imported rifle, scaled to the procedural rifle's length, the muzzle turned to +z and the grip moved to the
+// origin, with the off hand's wrist target under its handguard.
+export type ImportedWeapon = { gltf: GLTF; file: WeaponFile };
+type FittedWeapon = { geometry: BufferGeometry; map: Texture | null; fore: Vector3 };
+const fittedWeapons = new WeakMap<GLTF, FittedWeapon>();
+function fitWeapon(kind: UnitKind, { gltf, file }: ImportedWeapon) {
+  let fitted = fittedWeapons.get(gltf);
+  if (fitted) return fitted;
+  let mesh: Mesh | null = null;
+  gltf.scene.updateMatrixWorld(true);
+  gltf.scene.traverse(o => { if (!mesh && (o as Mesh).isMesh) mesh = o as Mesh; });
+  if (!mesh) throw new Error(`${file.url} has no mesh`);
+  const { geometry: source, material, matrixWorld } = mesh as Mesh, geometry = source.clone().applyMatrix4(matrixWorld);
+  geometry.computeBoundingBox();
+  const length = weaponModel(kind).body.boundingBox!, box = geometry.boundingBox!, scale = (length.max.z - length.min.z) / (box.max.x - box.min.x);
+  const [gx, gy] = file.grip, [fx, fy] = file.fore;
+  geometry.translate(-gx, -gy, 0).scale(scale, scale, scale).rotateY(-Math.PI / 2);
+  geometry.computeBoundingBox(); geometry.computeBoundingSphere();
+  fitted = { geometry, map: (material as MeshStandardMaterial).map ?? null, fore: new Vector3(0, (fy - gy) * scale - .04, (fx - gx) * scale - .06) };
+  fittedWeapons.set(gltf, fitted);
+  return fitted;
+}
+
+export function importRig(kind: UnitKind, gltf: GLTF, weapon: ImportedWeapon | null): ImportedRig {
   const fit = fitOf(gltf), scene = clone(gltf.scene), wrap = new Group(), root = new Group();
   wrap.rotation.y = fit.turn; wrap.scale.setScalar(fit.scale); wrap.position.y = fit.lift;
   wrap.add(scene); root.add(wrap); root.updateMatrixWorld(true);
@@ -73,25 +97,26 @@ export function importRig(kind: UnitKind, gltf: GLTF): ImportedRig {
   const shoulder = joints.RightArm.bone.getWorldPosition(v), side = Math.sign(shoulder.x) || -1;
   const up = new Vector3(0, 1, 0).applyMatrix3(new Matrix3().setFromMatrix4(m4.copy(joints.Hips.bone.parent!.matrixWorld).invert()));
   const props: Prop[] = [], spine = joints.Spine2.bone;
-  const dress = (parent: Object3D, model: RigModel, ...markers: Object3D[]) => {
-    const prop = { body: new Mesh(model.body), glow: model.glow ? new Mesh(model.glow) : null };
+  const dress = (parent: Object3D, model: Pick<RigModel, 'body' | 'glow'>, map: Texture | null, ...markers: Object3D[]) => {
+    const prop = { body: new Mesh(model.body), glow: model.glow ? new Mesh(model.glow) : null, map };
     parent.add(prop.body, ...markers); if (prop.glow) parent.add(prop.glow);
     props.push(prop);
   };
-  const hold = (model: RigModel, ...markers: Object3D[]): Held => {
+  const hold = (model: Pick<RigModel, 'body' | 'glow'>, map: Texture | null, ...markers: Object3D[]): Held => {
     const pivot = new Object3D();
-    pivot.matrixAutoUpdate = false; spine.add(pivot); dress(pivot, model, ...markers);
+    pivot.matrixAutoUpdate = false; spine.add(pivot); dress(pivot, model, map, ...markers);
     return { pivot, rest: new Matrix4().copy(spine.matrixWorld).invert() };
   };
   const marker = (x: number, y: number, z: number) => { const o = new Object3D(); o.position.set(x, y, z); return o; };
   let gun: ImportedRig['gun'] = null, shield: ImportedRig['shield'] = null, briefcase: Object3D | null = null;
   if (ARMED[kind]) {
     // Wrist targets: behind and below the pistol grip, and under the handguard.
-    const model = weaponModel(kind), grip = marker(0, -.09, -.02), fore = marker(0, -.08, model.body.boundingBox!.max.z * .42 - .06);
-    gun = { ...hold(model, grip, fore), grip, fore };
+    const imported = weapon ? fitWeapon(kind, weapon) : null, model = weaponModel(kind), grip = marker(0, -.09, -.02);
+    const fore = imported ? marker(imported.fore.x, imported.fore.y, imported.fore.z) : marker(0, -.08, model.body.boundingBox!.max.z * .42 - .06);
+    gun = { ...(imported ? hold({ body: imported.geometry, glow: null }, imported.map, grip, fore) : hold(model, null, grip, fore)), grip, fore };
   }
-  if (kind === 'heavy') { const handle = marker(0, -.05, -.05); shield = { ...hold(shieldModel(), handle), handle }; }
-  if (kind === 'target') { briefcase = new Object3D(); root.add(briefcase); dress(briefcase, briefcaseModel()); }
+  if (kind === 'heavy') { const handle = marker(0, -.05, -.05); shield = { ...hold(shieldModel(), null, handle), handle }; }
+  if (kind === 'target') { briefcase = new Object3D(); root.add(briefcase); dress(briefcase, briefcaseModel(), null); }
   return { kind, root, body, skeleton: body.skeleton, map: (body.material as MeshStandardMaterial).map ?? null, joints, side, shoulder: shoulder.y, up, gun, shield, briefcase, props };
 }
 
