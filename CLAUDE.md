@@ -24,6 +24,7 @@ Node.js 24+. Install with `npm ci` (its `postinstall` reapplies `patches/@react-
 - `npm test`: Node's built-in runner with `--experimental-transform-types` over `tests/*.test.ts` (no Vitest/Jest).
 - One file: `node --test --experimental-transform-types tests/game.test.ts`
 - One test: add `--test-name-pattern="<regex>"` to the command above.
+- `npm run test:release`: the release check, local only. Builds, then Playwright (`tests/release/`) drives `vite preview` and the dev server in headless Chromium on the real GPU with real input, and fails on any console, page or network error, a failing step, or clipped text and off-screen controls. Needs `npx playwright install chromium` once. Do not add test hooks to game code for it.
 - `npm run typecheck`: checks the browser code (`tsconfig.json`) and the Worker (`worker/tsconfig.json`) separately.
 - `npm run build`: bundles `dist/`. The `three` chunk exceeds Vite's 500 kB warning; that is expected.
 - `npm run cf-typegen`: run after editing `wrangler.jsonc` to regenerate `worker/worker-configuration.d.ts`.
