@@ -14,8 +14,9 @@ import { rectDistance } from './framing.ts';
 import { BOX, DIAMOND, glow, ProgressRing, shield, SHIELD_COLOR, STILL } from './parts.tsx';
 import { animate, CLASS_COLOR, makeRig, REACH, SCALE, skin } from './rigs.ts';
 import type { Motion } from './rigs.ts';
-import { useUnitModel, useWeaponModel, WEAPONS } from './models.ts';
+import { BRIEFCASE, SHIELD, usePropModel, useUnitModel, WEAPONS } from './models.ts';
 import { animateImported, importRig } from './skinned.ts';
+import type { Carried } from './skinned.ts';
 import { mayBeHidden, viewAlong } from './view.ts';
 
 type Vec3 = [number, number, number];
@@ -79,9 +80,9 @@ function texturedPaint(map: Texture) {
   }
   return p;
 }
-function figureOf(kind: UnitKind, template: GLTF | null, weapon: GLTF | null): Figure {
+function figureOf(kind: UnitKind, template: GLTF | null, carried: Carried): Figure {
   if (template) {
-    const rig = importRig(kind, template, weapon ? { gltf: weapon, file: WEAPONS[kind]! } : null), paints: Paint[] = [{ mesh: rig.body, ...(rig.map ? texturedPaint(rig.map) : { lit: BODY, dim: BODY_DIM }) }];
+    const rig = importRig(kind, template, carried), paints: Paint[] = [{ mesh: rig.body, ...(rig.map ? texturedPaint(rig.map) : { lit: BODY, dim: BODY_DIM }) }];
     for (const { body, glow, map } of rig.props) {
       paints.push({ mesh: body, ...(map ? texturedPaint(map) : { lit: BODY, dim: BODY_DIM }) });
       if (glow) paints.push({ mesh: glow, lit: GLOW, dim: GLOW_DIM });
@@ -304,13 +305,19 @@ function Agent({ sim, unit, selected, slot, tagged, labels, hitboxes }: { sim: S
   const register = useCallback((mesh: Mesh) => { hitboxes.set(mesh, id); return () => { hitboxes.delete(mesh); }; }, [hitboxes, id]);
   const c = (color: string) => downed ? dim(color) : color;
   // The figure and its silhouette skin share one skeleton; only their materials follow the downed state.
-  const template = useUnitModel(kind), weapon = useWeaponModel(kind);
+  const template = useUnitModel(kind), weaponFile = WEAPONS[kind], shieldFile = kind === 'heavy' ? SHIELD : undefined, caseFile = kind === 'target' ? BRIEFCASE : undefined;
+  const weapon = usePropModel(weaponFile), shield = usePropModel(shieldFile), briefcase = usePropModel(caseFile);
   const { figure, ghost } = useMemo(() => {
-    const figure = figureOf(kind, template, weapon), ghost = skin(figure, BODY);
+    const carried: Carried = {
+      weapon: weapon && weaponFile ? { gltf: weapon, file: weaponFile } : null,
+      shield: shield && shieldFile ? { gltf: shield, file: shieldFile } : null,
+      briefcase: briefcase && caseFile ? { gltf: briefcase, file: caseFile } : null,
+    };
+    const figure = figureOf(kind, template, carried), ghost = skin(figure, BODY);
     for (const { mesh, lit } of figure.paints) { mesh.renderOrder = 1; mesh.castShadow = lit !== GLOW; }
     ghost.renderOrder = 1; ghost.frustumCulled = figure.body.frustumCulled;
     return { figure, ghost };
-  }, [kind, template, weapon]);
+  }, [kind, template, weapon, shield, briefcase]);
   useEffect(() => () => figure.skeleton.dispose(), [figure]);
   // Set once per change, not every render, so a combat look swapped in by dress() survives snapshots.
   useEffect(() => { for (const p of figure.paints) p.mesh.material = downed ? p.dim : p.lit; }, [figure, downed]);

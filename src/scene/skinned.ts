@@ -4,7 +4,7 @@ import type { GLTF } from 'three/addons/loaders/GLTFLoader.js';
 import { clone } from 'three/addons/utils/SkeletonUtils.js';
 import type { UnitKind } from '../game/simulation.ts';
 import { twoBone } from './ik.ts';
-import type { WeaponFile } from './models.ts';
+import type { PropFile } from './models.ts';
 import { ARMED, briefcaseModel, shieldModel, weaponModel } from './rigs.ts';
 import type { Motion, RigModel } from './rigs.ts';
 
@@ -60,13 +60,13 @@ function fitOf(gltf: GLTF) {
   return fit;
 }
 
-// An imported rifle, scaled to the procedural rifle's length, the muzzle turned to +z and the grip moved to the
-// origin, with the off hand's wrist target under its handguard.
-export type ImportedWeapon = { gltf: GLTF; file: WeaponFile };
-type FittedWeapon = { geometry: BufferGeometry; map: Texture | null; fore: Vector3 };
-const fittedWeapons = new WeakMap<GLTF, FittedWeapon>();
-function fitWeapon(kind: UnitKind, { gltf, file }: ImportedWeapon) {
-  let fitted = fittedWeapons.get(gltf);
+// An imported prop, scaled to the procedural prop it replaces (by length or height, see PropFile), turned so its
+// long axis runs along +z when fitted by length, and moved so the point the hand holds is at the origin.
+export type ImportedProp = { gltf: GLTF; file: PropFile };
+type FittedProp = { geometry: BufferGeometry; map: Texture | null; scale: number };
+const fittedProps = new WeakMap<GLTF, FittedProp>();
+function fitProp({ gltf, file }: ImportedProp, procedural: RigModel) {
+  let fitted = fittedProps.get(gltf);
   if (fitted) return fitted;
   let mesh: Mesh | null = null;
   gltf.scene.updateMatrixWorld(true);
@@ -74,16 +74,19 @@ function fitWeapon(kind: UnitKind, { gltf, file }: ImportedWeapon) {
   if (!mesh) throw new Error(`${file.url} has no mesh`);
   const { geometry: source, material, matrixWorld } = mesh as Mesh, geometry = source.clone().applyMatrix4(matrixWorld);
   geometry.computeBoundingBox();
-  const length = weaponModel(kind).body.boundingBox!, box = geometry.boundingBox!, scale = (length.max.z - length.min.z) / (box.max.x - box.min.x);
-  const [gx, gy] = file.grip, [fx, fy] = file.fore;
-  geometry.translate(-gx, -gy, 0).scale(scale, scale, scale).rotateY(-Math.PI / 2);
+  const want = procedural.body.boundingBox!, box = geometry.boundingBox!, byLength = file.fit === 'length';
+  const scale = byLength ? (want.max.z - want.min.z) / (box.max.x - box.min.x) : (want.max.y - want.min.y) / (box.max.y - box.min.y);
+  geometry.translate(-file.hold[0], -file.hold[1], -file.hold[2]).scale(scale, scale, scale);
+  if (byLength) geometry.rotateY(-Math.PI / 2);
   geometry.computeBoundingBox(); geometry.computeBoundingSphere();
-  fitted = { geometry, map: (material as MeshStandardMaterial).map ?? null, fore: new Vector3(0, (fy - gy) * scale - .04, (fx - gx) * scale - .06) };
-  fittedWeapons.set(gltf, fitted);
+  fitted = { geometry, map: (material as MeshStandardMaterial).map ?? null, scale };
+  fittedProps.set(gltf, fitted);
   return fitted;
 }
+// The props a unit carries, each its imported model once that has loaded.
+export type Carried = { weapon: ImportedProp | null; shield: ImportedProp | null; briefcase: ImportedProp | null };
 
-export function importRig(kind: UnitKind, gltf: GLTF, weapon: ImportedWeapon | null): ImportedRig {
+export function importRig(kind: UnitKind, gltf: GLTF, carried: Carried): ImportedRig {
   const fit = fitOf(gltf), scene = clone(gltf.scene), wrap = new Group(), root = new Group();
   wrap.rotation.y = fit.turn; wrap.scale.setScalar(fit.scale); wrap.position.y = fit.lift;
   wrap.add(scene); root.add(wrap); root.updateMatrixWorld(true);
@@ -108,15 +111,27 @@ export function importRig(kind: UnitKind, gltf: GLTF, weapon: ImportedWeapon | n
     return { pivot, rest: new Matrix4().copy(spine.matrixWorld).invert() };
   };
   const marker = (x: number, y: number, z: number) => { const o = new Object3D(); o.position.set(x, y, z); return o; };
+  // A prop's imported model when there is one, else the procedural one.
+  const pick = (imported: ImportedProp | null, procedural: RigModel) => {
+    const fitted = imported ? fitProp(imported, procedural) : null;
+    return { model: fitted ? { body: fitted.geometry, glow: null } : procedural, map: fitted?.map ?? null, fitted };
+  };
   let gun: ImportedRig['gun'] = null, shield: ImportedRig['shield'] = null, briefcase: Object3D | null = null;
   if (ARMED[kind]) {
     // Wrist targets: behind and below the pistol grip, and under the handguard.
-    const imported = weapon ? fitWeapon(kind, weapon) : null, model = weaponModel(kind), grip = marker(0, -.09, -.02);
-    const fore = imported ? marker(imported.fore.x, imported.fore.y, imported.fore.z) : marker(0, -.08, model.body.boundingBox!.max.z * .42 - .06);
-    gun = { ...(imported ? hold({ body: imported.geometry, glow: null }, imported.map, grip, fore) : hold(model, null, grip, fore)), grip, fore };
+    const procedural = weaponModel(kind), { model, map, fitted } = pick(carried.weapon, procedural), grip = marker(0, -.09, -.02);
+    const [fx, fy] = carried.weapon?.file.fore ?? [0, 0], [hx, hy] = carried.weapon?.file.hold ?? [0, 0];
+    const fore = fitted ? marker(0, (fy - hy) * fitted.scale - .04, (fx - hx) * fitted.scale - .06) : marker(0, -.08, procedural.body.boundingBox!.max.z * .42 - .06);
+    gun = { ...hold(model, map, grip, fore), grip, fore };
   }
-  if (kind === 'heavy') { const handle = marker(0, -.05, -.05); shield = { ...hold(shieldModel(), null, handle), handle }; }
-  if (kind === 'target') { briefcase = new Object3D(); root.add(briefcase); dress(briefcase, briefcaseModel(), null); }
+  if (kind === 'heavy') {
+    const { model, map } = pick(carried.shield, shieldModel()), handle = marker(0, -.05, -.05);
+    shield = { ...hold(model, map, handle), handle };
+  }
+  if (kind === 'target') {
+    const { model, map } = pick(carried.briefcase, briefcaseModel());
+    briefcase = new Object3D(); root.add(briefcase); dress(briefcase, model, map);
+  }
   return { kind, root, body, skeleton: body.skeleton, map: (body.material as MeshStandardMaterial).map ?? null, joints, side, shoulder: shoulder.y, up, gun, shield, briefcase, props };
 }
 
