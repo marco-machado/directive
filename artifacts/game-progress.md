@@ -100,3 +100,20 @@ Player orders the squad to complete the contract objective while patrols, camera
 
 ## Assets
 37 files in `public/audio/` (sfx 30, ambience 2, music 5 incl. stingers), prompts in `artifacts/generate-audio.py`.
+
+# Production readiness pass (2026-11-01)
+
+Full results in `artifacts/final-evidence.md`; captures and the real-input Playwright driver in `artifacts/release-qa/` (gitignored, local only).
+
+## Fixed
+- Squad cards showed world labels through their glass: the `.squad` entrance animation held its end opacity (`both`), which made `.squad` the backdrop root. Now `backwards`.
+- `public/_headers`: `/assets/*` cached for a year, immutable. Models and audio keep the default revalidation.
+- `public/favicon.svg` (the N logo), linked from `index.html`.
+- `.claude/launch.json` gained a `preview` entry (production build on port 4173).
+
+## Open (owner's call)
+- `npm audit`: undici advisory in dev and deploy tooling; the fix needs `@cloudflare/vite-plugin` 1.67.0 / `wrangler` 4.156.1, released 2026-11-01.
+- No rate limit on `POST /api/players`.
+- 9.6 MB of uncompressed GLBs load on the title screen (meshopt candidate).
+- Google Fonts from Google's CDN (self-host candidate).
+- Scorecard average 2.25 (premium line 2.3): Hero, Materials and VFX are the categories to lift.
