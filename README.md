@@ -54,6 +54,8 @@ The campaign starts with VEX (Assault) and ROOK (Support). Until the first contr
 | `POST /api/campaign/:code/recruits/:id` | Hires an offered recruit |
 | `DELETE /api/campaign/:code/roster/:id` | Dismisses an operative |
 
+To bound the bill, each client IP gets 120 `/api` requests a minute, and 20 of them may create players; past either limit the Worker answers 429. Cloudflare counts these per location, so they slow a flood down rather than cap it exactly. The Worker stops reading a request body past 16 KB and answers 413. `wrangler.jsonc` also caps each invocation at 50 ms of CPU, which Cloudflare enforces only on its own network.
+
 ## Deploy
 
 GitHub Actions deploys on every push to `main` (`.github/workflows/deploy-to-cloudflare.yml`) after the checks in `.github/workflows/verify-game-and-worker.yml`, which also run on pull requests.
