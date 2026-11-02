@@ -1,5 +1,5 @@
-import { Bone, BufferAttribute, Color, CylinderGeometry, Euler, ExtrudeGeometry, LatheGeometry, Matrix4, Quaternion, Shape, Skeleton, SkinnedMesh, TorusGeometry, Uint16BufferAttribute, Vector2, Vector3 } from 'three';
-import type { BufferGeometry, Material } from 'three';
+import { Bone, BufferAttribute, BufferGeometry, Color, CylinderGeometry, Euler, ExtrudeGeometry, LatheGeometry, Matrix4, Quaternion, Shape, Skeleton, SkinnedMesh, TorusGeometry, Uint16BufferAttribute, Vector2, Vector3 } from 'three';
+import type { Material } from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { UnitKind } from '../game/simulation.ts';
 
@@ -301,6 +301,19 @@ export function rigModel(kind: UnitKind) {
   if (!m) { m = BUILDERS[kind](); models.set(kind, m); }
   return m;
 }
+// The triangles of a rig geometry bound to the given bones, or null when none are.
+export function partsOn(geometry: BufferGeometry, bones: number[]) {
+  const index = geometry.getAttribute('skinIndex'), keep: number[] = [];
+  for (let v = 0; v < index.count; v += 3) if (bones.includes(index.getX(v))) keep.push(v, v + 1, v + 2);
+  if (!keep.length) return null;
+  const part = new BufferGeometry();
+  for (const [name, attribute] of Object.entries(geometry.attributes)) {
+    const { itemSize, normalized } = attribute, array = new (attribute.array.constructor as new (n: number) => typeof attribute.array)(keep.length * itemSize);
+    keep.forEach((v, k) => { for (let c = 0; c < itemSize; c++) array[k * itemSize + c] = attribute.array[v * itemSize + c]; });
+    part.setAttribute(name, new BufferAttribute(array, itemSize, normalized));
+  }
+  return part;
+}
 // Carried things on their own, for models that hold them in a hand: a unit's rifle (the grip at the origin, the muzzle
 // toward +z), the heavy's shield (the handle at the origin, the face toward +z) and the target's briefcase (hanging
 // from its handle at the origin).
@@ -313,17 +326,20 @@ export const briefcaseModel = () => prop('briefcase', () => briefcase(new Kit('t
 // One unit's live rig: its bones, the lit body, the glow, and an optional extra skin (the silhouette) on the
 // same skeleton. The glow is a child of the body; an extra skin must sit at the body's world transform too.
 export type Rig = { kind: UnitKind; body: SkinnedMesh; glow: SkinnedMesh | null; bones: Record<string, Bone>; rest: Vector3[]; skeleton: Skeleton };
-export function makeRig(kind: UnitKind, body: Material, glow: Material) {
-  const model = rigModel(kind);
-  const bones = model.bones.map(spec => { const b = new Bone(); b.name = spec.name; return b; });
-  const rest = model.bones.map((spec, i) => {
-    const p = spec.parent >= 0 ? model.bones[spec.parent].at : [0, 0, 0];
+// Bones from their specs, each placed at its rest offset from its parent; bones[0] is the root.
+export function skeletonOf(specs: BoneSpec[]) {
+  const bones = specs.map(spec => { const b = new Bone(); b.name = spec.name; return b; });
+  const rest = specs.map((spec, i) => {
+    const p = spec.parent >= 0 ? specs[spec.parent].at : [0, 0, 0];
     const v = new Vector3(spec.at[0] - p[0], spec.at[1] - p[1], spec.at[2] - p[2]);
     bones[i].position.copy(v);
     if (spec.parent >= 0) bones[spec.parent].add(bones[i]);
     return v;
   });
-  const skeleton = new Skeleton(bones), mesh = new SkinnedMesh(model.body, body);
+  return { bones, rest, skeleton: new Skeleton(bones) };
+}
+export function makeRig(kind: UnitKind, body: Material, glow: Material) {
+  const model = rigModel(kind), { bones, rest, skeleton } = skeletonOf(model.bones), mesh = new SkinnedMesh(model.body, body);
   mesh.add(bones[0]); mesh.bind(skeleton);
   const lit = model.glow ? new SkinnedMesh(model.glow, glow) : null;
   if (lit) { lit.bind(skeleton, mesh.bindMatrix); mesh.add(lit); }

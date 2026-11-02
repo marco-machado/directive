@@ -14,9 +14,9 @@ import { rectDistance } from './framing.ts';
 import { BOX, DIAMOND, glow, ProgressRing, shield, SHIELD_COLOR, STILL } from './parts.tsx';
 import { animate, CLASS_COLOR, makeRig, REACH, SCALE, skin } from './rigs.ts';
 import type { Motion } from './rigs.ts';
-import { BRIEFCASE, SHIELD, usePropModel, useUnitModel, WEAPONS } from './models.ts';
-import { animateImported, importRig } from './skinned.ts';
-import type { Carried } from './skinned.ts';
+import { BRIEFCASE, MACHINES, SHIELD, useModelFile, useUnitModel, WEAPONS } from './models.ts';
+import { animateImported, animateMachine, importMachine, importRig } from './skinned.ts';
+import type { Carried, ImportedMachine } from './skinned.ts';
 import { mayBeHidden, viewAlong } from './view.ts';
 
 type Vec3 = [number, number, number];
@@ -51,9 +51,9 @@ GLOW.color.setScalar(GLOW_GAIN);
 const BODY_DIM = nightGlow(BODY.clone()), GLOW_DIM = GLOW.clone();
 BODY_DIM.color.setScalar(DIM); GLOW_DIM.color.setScalar(DIM);
 // What the scene draws and poses for one unit: its procedural rig, or its imported model once that has loaded.
-// Each painted mesh has a lit material and a darkened one for a downed operative.
+// Each painted mesh has a lit material and a darkened one for a downed operative; each skin gets a silhouette.
 type Paint = { mesh: Mesh; lit: Material; dim: Material };
-type Figure = { root: Object3D; body: SkinnedMesh; skeleton: Skeleton; paints: Paint[]; pose: (m: Motion) => void };
+type Figure = { root: Object3D; skins: SkinnedMesh[]; skeleton: Skeleton; paints: Paint[]; pose: (m: Motion) => void };
 // Imported textures are painted darker than the procedural palette, so at play scale a unit's suit sinks into the
 // street and its class color fades. A gamma lift on the texture brightens the dark tones most and barely moves
 // near-white parts (the med pack), which keeps them under the bloom threshold. The lift also grays the colors, so a
@@ -80,18 +80,23 @@ function texturedPaint(map: Texture) {
   }
   return p;
 }
-function figureOf(kind: UnitKind, template: GLTF | null, carried: Carried): Figure {
+function figureOf(kind: UnitKind, template: GLTF | null, carried: Carried, machine: ImportedMachine | null): Figure {
+  if (machine) {
+    const rig = importMachine(kind, machine);
+    const paints = rig.paints.map(({ mesh, map, glow }): Paint => ({ mesh, ...(glow ? { lit: GLOW, dim: GLOW_DIM } : map ? texturedPaint(map) : { lit: BODY, dim: BODY_DIM }) }));
+    return { root: rig.root, skins: rig.skins, skeleton: rig.skeleton, paints, pose: m => animateMachine(rig, m) };
+  }
   if (template) {
     const rig = importRig(kind, template, carried), paints: Paint[] = [{ mesh: rig.body, ...(rig.map ? texturedPaint(rig.map) : { lit: BODY, dim: BODY_DIM }) }];
     for (const { body, glow, map } of rig.props) {
       paints.push({ mesh: body, ...(map ? texturedPaint(map) : { lit: BODY, dim: BODY_DIM }) });
       if (glow) paints.push({ mesh: glow, lit: GLOW, dim: GLOW_DIM });
     }
-    return { root: rig.root, body: rig.body, skeleton: rig.skeleton, paints, pose: m => animateImported(rig, m) };
+    return { root: rig.root, skins: [rig.body], skeleton: rig.skeleton, paints, pose: m => animateImported(rig, m) };
   }
   const rig = makeRig(kind, BODY, GLOW), paints: Paint[] = [{ mesh: rig.body, lit: BODY, dim: BODY_DIM }];
   if (rig.glow) paints.push({ mesh: rig.glow, lit: GLOW, dim: GLOW_DIM });
-  return { root: rig.body, body: rig.body, skeleton: rig.skeleton, paints, pose: m => animate(rig, m) };
+  return { root: rig.body, skins: [rig.body], skeleton: rig.skeleton, paints, pose: m => animate(rig, m) };
 }
 const silhouettes = new Map<string, Material>();
 function silhouette(color: string) {
@@ -306,22 +311,25 @@ function Agent({ sim, unit, selected, slot, tagged, labels, hitboxes }: { sim: S
   const c = (color: string) => downed ? dim(color) : color;
   // The figure and its silhouette skin share one skeleton; only their materials follow the downed state.
   const template = useUnitModel(kind), weaponFile = WEAPONS[kind], shieldFile = kind === 'heavy' ? SHIELD : undefined, caseFile = kind === 'target' ? BRIEFCASE : undefined;
-  const weapon = usePropModel(weaponFile), shield = usePropModel(shieldFile), briefcase = usePropModel(caseFile);
-  const { figure, ghost } = useMemo(() => {
+  const weapon = useModelFile(weaponFile?.url), shield = useModelFile(shieldFile?.url), briefcase = useModelFile(caseFile?.url);
+  // A machine swaps in only once all its parts have loaded.
+  const machineFile = MACHINES[kind], machineBase = useModelFile(machineFile?.base?.url), machineHead = useModelFile(machineFile?.head.url);
+  const { figure, ghosts } = useMemo(() => {
     const carried: Carried = {
       weapon: weapon && weaponFile ? { gltf: weapon, file: weaponFile } : null,
       shield: shield && shieldFile ? { gltf: shield, file: shieldFile } : null,
       briefcase: briefcase && caseFile ? { gltf: briefcase, file: caseFile } : null,
     };
-    const figure = figureOf(kind, template, carried), ghost = skin(figure, BODY);
+    const machine = machineFile && machineHead && (!machineFile.base || machineBase) ? { machine: machineFile, base: machineBase, head: machineHead } : null;
+    const figure = figureOf(kind, template, carried, machine), ghosts = figure.skins.map(body => skin({ body, skeleton: figure.skeleton }, BODY));
     for (const { mesh, lit } of figure.paints) { mesh.renderOrder = 1; mesh.castShadow = lit !== GLOW; }
-    ghost.renderOrder = 1; ghost.frustumCulled = figure.body.frustumCulled;
-    return { figure, ghost };
-  }, [kind, template, weapon, shield, briefcase]);
+    ghosts.forEach((ghost, k) => { ghost.renderOrder = 1; ghost.frustumCulled = figure.skins[k].frustumCulled; });
+    return { figure, ghosts };
+  }, [kind, template, weapon, shield, briefcase, machineBase, machineHead]);
   useEffect(() => () => figure.skeleton.dispose(), [figure]);
   // Set once per change, not every render, so a combat look swapped in by dress() survives snapshots.
   useEffect(() => { for (const p of figure.paints) p.mesh.material = downed ? p.dim : p.lit; }, [figure, downed]);
-  ghost.material = silhouette(c(silhouetteColor(kind, faction)));
+  for (const ghost of ghosts) ghost.material = silhouette(c(silhouetteColor(kind, faction)));
   const motion = useRef<Motion>({ t: 0, walk: 0, phase: 0, aim: 0, kick: 0, kickSide: 0, flinch: 0, down: 0, die: 0 }).current;
   const seen = useRef({ shot: newestShot(sim), fired: -Infinity }).current;
   // Combat state, kept in mission time: when the last hit landed and when the unit went down (-Infinity: before this view saw it).
@@ -383,7 +391,8 @@ function Agent({ sim, unit, selected, slot, tagged, labels, hitboxes }: { sim: S
     if (disc.current) disc.current.visible = !dead;
     // The silhouette only draws when a building or barrier could be in front of the unit.
     const world = sim.plan?.world, d = camera.getWorldDirection(look);
-    ghost.visible = !dead && !!world && mayBeHidden(world.buildings, world.cover, viewAlong(d.x, d.y, d.z), u, REACH);
+    const hiding = !dead && !!world && mayBeHidden(world.buildings, world.cover, viewAlong(d.x, d.y, d.z), u, REACH);
+    for (const ghost of ghosts) ghost.visible = hiding;
     if (ring.current) ring.current.visible = sim.selected.includes(id);
     if (spin.current && !STILL) spin.current.rotation.z = t * .9;
     if (bar.current && fill.current) {
@@ -416,7 +425,7 @@ function Agent({ sim, unit, selected, slot, tagged, labels, hitboxes }: { sim: S
     <group ref={model}>
       <group ref={pose} onClick={click}>
         <mesh ref={register} position={[0, hitbox[1] / 2, 0]} scale={hitbox} geometry={BOX} visible={false} />
-        <group scale={SCALE[kind] ?? 1}><group ref={lit}><primitive object={figure.root} /></group><primitive object={ghost} /></group>
+        <group scale={SCALE[kind] ?? 1}><group ref={lit}><primitive object={figure.root} /></group>{ghosts.map((ghost, k) => <primitive key={k} object={ghost} />)}</group>
       </group>
     </group>
     {faction === 'squad' ? <group ref={ring} rotation={[-Math.PI / 2, 0, 0]} position={[0, .045, 0]} visible={false}>

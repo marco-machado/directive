@@ -1,12 +1,12 @@
-import { Box3, Euler, Group, Matrix3, Matrix4, Mesh, Object3D, Quaternion, Vector3 } from 'three';
-import type { Bone, BufferAttribute, BufferGeometry, MeshStandardMaterial, Skeleton, SkinnedMesh, Texture } from 'three';
+import { Box3, BufferAttribute, Euler, Group, Matrix3, Matrix4, Mesh, Object3D, Quaternion, SkinnedMesh, Uint16BufferAttribute, Vector3 } from 'three';
+import type { Bone, BufferGeometry, MeshStandardMaterial, Skeleton, Texture } from 'three';
 import type { GLTF } from 'three/addons/loaders/GLTFLoader.js';
 import { clone } from 'three/addons/utils/SkeletonUtils.js';
 import type { UnitKind } from '../game/simulation.ts';
 import { twoBone } from './ik.ts';
-import type { PropFile } from './models.ts';
-import { ARMED, briefcaseModel, shieldModel, weaponModel } from './rigs.ts';
-import type { Motion, RigModel } from './rigs.ts';
+import type { Machine, MachinePart, PropFile } from './models.ts';
+import { animate, ARMED, briefcaseModel, partsOn, rigModel, shieldModel, skeletonOf, weaponModel } from './rigs.ts';
+import type { BoneSpec, Motion, Rig, RigModel } from './rigs.ts';
 
 // Units built from an imported, auto-rigged model with a Mixamo-named skeleton. The model is scaled to a unit's
 // height, turned to face +z and stood on y = 0. The procedural rigs' animation layers drive it: the legs, spine
@@ -201,4 +201,81 @@ export function animateImported(rig: ImportedRig, m: Motion) {
   reach(j.LeftArm, j.LeftForeArm, j.LeftHand, left, bend.set(-s * .5, -1, -.3).applyQuaternion(rootQ));
   // The briefcase's handle sits in the right palm, just below the wrist.
   if (briefcase) briefcase.position.copy(rig.root.worldToLocal(j.RightHand.bone.getWorldPosition(v))).y -= .07;
+}
+
+// ---- Machines ----
+// The turret and camera keep their procedural skeleton and animation (animate in rigs.ts). Their imported parts are
+// bound rigidly to its bones in place of the procedural ones: the turret's base to the root and its head, barrels
+// included, to the head bone; the camera's head to its head bone. The head bone moves to the imported head's bearing,
+// and the turret's laser to its muzzle. What has no imported part stays procedural: the laser line and the camera's
+// pole. With the barrels fused into the head, a shot kicks the whole head back.
+export type ImportedMachine = { machine: Machine; base: GLTF | null; head: GLTF };
+export type MachineRig = Rig & { root: Group; skins: SkinnedMesh[]; paints: { mesh: SkinnedMesh; map: Texture | null; glow: boolean }[] };
+
+const placedParts = new WeakMap<GLTF, BufferGeometry>(), leftovers = new Map<string, { lit: BufferGeometry | null; glow: BufferGeometry | null }>();
+// A part's geometry in model space, its `at` point on the bone at `to`, every vertex bound to `bone`.
+function placePart(gltf: GLTF, part: MachinePart, to: Vector3, bone: number) {
+  let geometry = placedParts.get(gltf);
+  if (geometry) return geometry;
+  let mesh: Mesh | null = null;
+  gltf.scene.updateMatrixWorld(true);
+  gltf.scene.traverse(o => { if (!mesh && (o as Mesh).isMesh) mesh = o as Mesh; });
+  if (!mesh) throw new Error(`${part.url} has no mesh`);
+  const { geometry: source, matrixWorld } = mesh as Mesh, [x, y, z] = part.at;
+  geometry = source.clone().applyMatrix4(matrixWorld).translate(-x, -y, -z).scale(part.scale, part.scale, part.scale).translate(to.x, to.y, to.z);
+  const n = geometry.getAttribute('position').count, index = new Uint16Array(n * 4), weight = new Float32Array(n * 4);
+  for (let k = 0; k < n; k++) { index[k * 4] = bone; weight[k * 4] = 1; }
+  geometry.setAttribute('skinIndex', new Uint16BufferAttribute(index, 4));
+  geometry.setAttribute('skinWeight', new BufferAttribute(weight, 4));
+  geometry.computeBoundingBox(); geometry.computeBoundingSphere();
+  placedParts.set(gltf, geometry);
+  return geometry;
+}
+
+export function importMachine(kind: UnitKind, { machine, base, head }: ImportedMachine): MachineRig {
+  const model = rigModel(kind), specs: BoneSpec[] = model.bones.map(b => ({ ...b, at: [...b.at] }));
+  const index = (name: string) => specs.findIndex(b => b.name === name), h = index('head'), laser = index('laser');
+  const pivot = new Vector3(0, machine.pivot, 0);
+  specs[h].at = [0, machine.pivot, 0];
+  if (laser >= 0 && machine.head.muzzle) {
+    const [mx, my, mz] = machine.head.muzzle, [ax, ay, az] = machine.head.at, s = machine.head.scale;
+    specs[laser].at = [(mx - ax) * s, machine.pivot + (my - ay) * s, (mz - az) * s];
+  }
+  const { bones, rest, skeleton } = skeletonOf(specs), root = new Group();
+  root.add(bones[0]); root.updateMatrixWorld(true); skeleton.calculateInverses();
+  const paints: MachineRig['paints'] = [], identity = new Matrix4();
+  const skinned = (geometry: BufferGeometry, map: Texture | null, glow = false) => {
+    const mesh = new SkinnedMesh(geometry);
+    mesh.bind(skeleton, identity); mesh.frustumCulled = false; root.add(mesh);
+    paints.push({ mesh, map, glow });
+    return mesh;
+  };
+  const textureOf = (gltf: GLTF) => { let map: Texture | null = null; gltf.scene.traverse(o => { map ??= ((o as Mesh).material as MeshStandardMaterial | undefined)?.map ?? null; }); return map; };
+  const skins: SkinnedMesh[] = [];
+  if (base && machine.base) skins.push(skinned(placePart(base, machine.base, new Vector3(), 0), textureOf(base)));
+  skins.push(skinned(placePart(head, machine.head, pivot, h), textureOf(head)));
+  // The procedural parts left: those on bones no imported part covers, moved with their bone if it moved.
+  const covered = ['head', 'barrelL', 'barrelR', ...(base ? ['root'] : [])], keep = specs.map((b, i) => i).filter(i => !covered.includes(specs[i].name));
+  const leftover = (geometry: BufferGeometry | null) => {
+    const part = geometry && partsOn(geometry, keep);
+    if (!part) return null;
+    const position = part.getAttribute('position'), bone = part.getAttribute('skinIndex');
+    for (let v = 0; v < position.count; v++) {
+      const b = bone.getX(v), from = model.bones[b].at, to = specs[b].at;
+      position.setXYZ(v, position.getX(v) + to[0] - from[0], position.getY(v) + to[1] - from[1], position.getZ(v) + to[2] - from[2]);
+    }
+    part.computeBoundingBox(); part.computeBoundingSphere();
+    return part;
+  };
+  const key = `${kind}:${base ? 'base' : ''}`;
+  let left = leftovers.get(key);
+  if (!left) leftovers.set(key, left = { lit: leftover(model.body), glow: leftover(model.glow) });
+  const { lit, glow } = left;
+  if (lit) skins.push(skinned(lit, null));
+  const glowMesh = glow ? skinned(glow, null, true) : null;
+  return { kind, root, body: skins[0], glow: glowMesh, bones: Object.fromEntries(bones.map(b => [b.name, b])), rest, skeleton, skins, paints };
+}
+export function animateMachine(rig: MachineRig, m: Motion) {
+  animate(rig, m);
+  if (rig.kind === 'turret') rig.bones.head.position.z -= m.kick * .05;
 }

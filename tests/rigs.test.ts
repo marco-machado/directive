@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { MeshBasicMaterial, Vector3 } from 'three';
 import type { UnitKind } from '../src/game/simulation.ts';
-import { animate, makeRig, REACH, rigModel, SCALE } from '../src/scene/rigs.ts';
+import { animate, makeRig, partsOn, REACH, rigModel, SCALE } from '../src/scene/rigs.ts';
 import type { Motion } from '../src/scene/rigs.ts';
 
 const KINDS: UnitKind[] = ['assault', 'support', 'recon', 'tech', 'guard', 'heavy', 'camera', 'turret', 'target', 'vip'];
@@ -62,4 +62,15 @@ test('the turret recoils one barrel at a time and stretches its laser while aimi
   assert.ok(laser.scale.z > 2);
   animate(rig, still());
   assert.ok(laser.scale.z < 1);
+});
+
+test('a rig geometry splits by bone: the camera keeps its pole without its head', () => {
+  const model = rigModel('camera'), root = model.bones.findIndex(b => b.name === 'root'), head = model.bones.findIndex(b => b.name === 'head');
+  const pole = partsOn(model.body, [root])!, all = model.body.getAttribute('position').count;
+  const bones = pole.getAttribute('skinIndex');
+  assert.ok(pole.getAttribute('position').count > 0 && pole.getAttribute('position').count < all);
+  for (let v = 0; v < bones.count; v++) assert.equal(bones.getX(v), root);
+  assert.equal(pole.getAttribute('color').count, pole.getAttribute('position').count);
+  assert.equal(partsOn(model.body, [head])!.getAttribute('position').count + pole.getAttribute('position').count, all);
+  assert.equal(partsOn(rigModel('turret').body, [model.bones.length + 5]), null);
 });

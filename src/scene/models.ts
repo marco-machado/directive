@@ -26,13 +26,27 @@ export const WEAPONS: Partial<Record<UnitKind, PropFile>> = {
 // The shield's handle is on its back, at mid height; the briefcase's on top.
 export const SHIELD: PropFile = { url: '/models/riot-shield.glb', hold: [0, .5, -.05], fit: 'height' };
 export const BRIEFCASE: PropFile = { url: '/models/briefcase.glb', hold: [0, .8, 0], fit: 'length' };
+// A machine part file: the point that sits on its bone (the base's foot, the head's bearing), in the file's own
+// units with up along +y and forward along +z, and its scale into meters. A turret head also gives its muzzle.
+export type MachinePart = { url: string; at: [number, number, number]; scale: number; muzzle?: [number, number, number] };
+// A machine's head turns at `pivot` (model height): on the turret's bearing, on top of the camera's pole.
+export type Machine = { pivot: number; base?: MachinePart; head: MachinePart };
+export const MACHINES: Partial<Record<UnitKind, Machine>> = {
+  turret: {
+    pivot: .43,
+    base: { url: '/models/turret-base.glb', at: [-.045, 0, 0], scale: .72 },
+    head: { url: '/models/turret-head.glb', at: [.02, 0, -.22], scale: .72, muzzle: [.01, .22, .5] },
+  },
+  camera: { pivot: 1.86, head: { url: '/models/camera-head.glb', at: [0, 0, -.135], scale: .5 } },
+};
 const loaded = new Map<string, GLTF>(), listeners = new Set<() => void>();
 let started = false;
 
 function load() {
   started = true;
   const loader = new GLTFLoader();
-  for (const url of [...Object.values(UNITS), ...[...Object.values(WEAPONS), SHIELD, BRIEFCASE].map(p => p.url)]) {
+  const parts = Object.values(MACHINES).flatMap(m => [m.base, m.head]).filter(p => !!p);
+  for (const url of [...Object.values(UNITS), ...[...Object.values(WEAPONS), SHIELD, BRIEFCASE, ...parts].map(p => p.url)]) {
     loader.loadAsync(url).then(gltf => { loaded.set(url, gltf); listeners.forEach(l => l()); }, err => console.warn(`Model ${url} failed to load; keeping the procedural one.`, err));
   }
 }
@@ -41,6 +55,5 @@ const subscribe = (listener: () => void) => {
   listeners.add(listener);
   return () => { listeners.delete(listener); };
 };
-const useFile = (url: string | undefined) => useSyncExternalStore(subscribe, () => url ? loaded.get(url) ?? null : null);
-export const useUnitModel = (kind: UnitKind) => useFile(UNITS[kind]);
-export const usePropModel = (file: PropFile | undefined) => useFile(file?.url);
+export const useModelFile = (url: string | undefined) => useSyncExternalStore(subscribe, () => url ? loaded.get(url) ?? null : null);
+export const useUnitModel = (kind: UnitKind) => useModelFile(UNITS[kind]);
