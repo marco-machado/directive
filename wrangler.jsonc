@@ -17,7 +17,5 @@
     { "name": "API_LIMIT", "namespace_id": "4201", "simple": { "limit": 120, "period": 60 } },
     { "name": "CREATE_LIMIT", "namespace_id": "4202", "simple": { "limit": 20, "period": 60 } }
   ],
-  // About 15 times the observed p99 of 3 ms. Enforced only on Cloudflare's network.
-  "limits": { "cpu_ms": 50 },
   "observability": { "enabled": true }
 }
