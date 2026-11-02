@@ -327,8 +327,6 @@ function Agent({ sim, unit, selected, slot, tagged, labels, hitboxes }: { sim: S
     return { figure, ghosts };
   }, [kind, template, weapon, shield, briefcase, machineBase, machineHead]);
   useEffect(() => () => figure.skeleton.dispose(), [figure]);
-  // Set once per change, not every render, so a combat look swapped in by dress() survives snapshots.
-  useEffect(() => { for (const p of figure.paints) p.mesh.material = downed ? p.dim : p.lit; }, [figure, downed]);
   for (const ghost of ghosts) ghost.material = silhouette(c(silhouetteColor(kind, faction)));
   const motion = useRef<Motion>({ t: 0, walk: 0, phase: 0, aim: 0, kick: 0, kickSide: 0, flinch: 0, down: 0, die: 0 }).current;
   const seen = useRef({ shot: newestShot(sim), fired: -Infinity }).current;
@@ -336,6 +334,13 @@ function Agent({ sim, unit, selected, slot, tagged, labels, hitboxes }: { sim: S
   // It resets for a new plan or when the clock runs back, since a restart keeps the plan and rewinds time.
   const combat = useRef({ plan: null as Simulation['plan'], time: 0, hp: 0, hitAt: -Infinity, downAt: null as number | null, look: 'normal' as Look, base: new Map<Mesh, Material>(), dead: new Map<Material, Tinted>() }).current;
   useEffect(() => () => combat.dead.forEach(m => m.dispose()), [combat]);
+  // Set once per change, not every render, so a combat look swapped in by dress() survives snapshots. The meshes are
+  // back in their own materials then, so the look is marked normal and the next frame dresses them again if it is
+  // not, as when a model or prop finishes loading on a stunned unit or a destroyed machine.
+  useEffect(() => {
+    for (const p of figure.paints) p.mesh.material = downed ? p.dim : p.lit;
+    combat.look = 'normal';
+  }, [figure, downed, combat]);
   const reviveProgress = () => { let p = 0; for (const v of sim.units) if (v.reviveTarget === id) p = Math.max(p, v.revive / REVIVE_SECONDS); return p; };
   const takedownProgress = () => (sim.units.find(v => v.id === id)?.held ?? 0) / TAKEDOWN_SECONDS;
   useFrame(({ clock, camera }, frame) => {
