@@ -449,7 +449,9 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .tip-copy kbd { min-width: 16px; height: 16px; font-size: 9px; vertical-align: 1px }
 .tip-close.icon-button { width: 32px; height: 32px; border-color: transparent; background: transparent }
 .tip-close.icon-button .icon { width: 16px; height: 16px }
-.squad { grid-area: squad; display: flex; gap: 8px; animation: rise .4s ease-out both }
+/* Backwards fill only: an opacity animation that holds its end state makes .squad the backdrop root, and the cards
+   inside it then show the street through their glass instead of blurring it. */
+.squad { grid-area: squad; display: flex; gap: 8px; animation: rise .4s ease-out backwards }
 .agent { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 56px; width: 228px; min-width: 0; border: 1px solid var(--line); background: var(--panel); backdrop-filter: blur(10px);
   transition: border-color .15s, background .15s, transform .15s, box-shadow .15s }
 .agent:has(.agent-select:hover:not(:disabled)) { border-color: var(--line-2) }

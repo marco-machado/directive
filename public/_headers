@@ -1,0 +1,4 @@
+# Vite fingerprints everything under /assets/, so a browser can keep it for good.
+# Models and audio keep Cloudflare's default (revalidate with an ETag): their names don't change with their content.
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
