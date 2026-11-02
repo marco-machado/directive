@@ -5,8 +5,8 @@ import { BufferGeometry, CylinderGeometry, DoubleSide, Float32BufferAttribute, M
 import type { Group } from 'three';
 import { GHOST_SECONDS } from '../game/simulation.ts';
 import type { Simulation } from '../game/simulation.ts';
-import { distance } from '../game/world.ts';
 import type { Point } from '../game/world.ts';
+import { eachDash } from './dashes.ts';
 
 const GHOST_COLOR = '#ff7a6a', ROUTE_COLOR = '#ff8a7a';
 
@@ -61,23 +61,13 @@ export function LastSeenGhosts({ sim, labels }: { sim: Simulation; labels: RefOb
 
 // Earned patrol intel: once the squad has watched a guard finish a patrol leg, its whole route stays on the
 // ground as a dashed line for the rest of the mission. A route's geometry is built once, when it is learned.
-const DASH = .5, GAP = .35, WIDTH = .09; // m
 function dashes(route: Point[]) {
-  const points: number[] = [], index: number[] = [], period = DASH + GAP;
-  let s0 = 0;
-  for (let i = 1; i < route.length; i++) {
-    const a = route[i - 1], b = route[i], len = distance(a, b), s1 = s0 + len;
-    if (!len) continue;
-    const ux = (b.x - a.x) / len, uz = (b.z - a.z) / len, nx = -uz * WIDTH / 2, nz = ux * WIDTH / 2;
-    for (let k = Math.floor(s0 / period); k * period < s1; k++) {
-      const from = Math.max(s0, k * period) - s0, to = Math.min(s1, k * period + DASH) - s0;
-      if (to <= from) continue;
-      const n = points.length / 3, fx = a.x + ux * from, fz = a.z + uz * from, tx = a.x + ux * to, tz = a.z + uz * to;
-      points.push(fx + nx, 0, fz + nz, fx - nx, 0, fz - nz, tx - nx, 0, tz - nz, tx + nx, 0, tz + nz);
-      index.push(n, n + 1, n + 2, n, n + 2, n + 3);
-    }
-    s0 = s1;
-  }
+  const points: number[] = [], index: number[] = [];
+  eachDash(route, (fx, fz, tx, tz, nx, nz) => {
+    const n = points.length / 3;
+    points.push(fx + nx, 0, fz + nz, fx - nx, 0, fz - nz, tx - nx, 0, tz - nz, tx + nx, 0, tz + nz);
+    index.push(n, n + 1, n + 2, n, n + 2, n + 3);
+  });
   const g = new BufferGeometry(); g.setAttribute('position', new Float32BufferAttribute(points, 3)); g.setIndex(index); return g;
 }
 const ROUTE = new MeshBasicMaterial({ color: ROUTE_COLOR, transparent: true, opacity: .55, depthWrite: false, toneMapped: false, side: DoubleSide, forceSinglePass: true });

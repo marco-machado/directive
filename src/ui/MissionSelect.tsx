@@ -1,3 +1,4 @@
+import { useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import { sim } from '../app.ts';
 import { MAX_TIER, missionPayout, SQUAD_MAX, threatFor } from '../game/campaign.ts';
@@ -5,7 +6,7 @@ import { ABILITY_STATS, CLASS_STATS } from '../game/classes.ts';
 import type { Threat } from '../game/campaign.ts';
 import type { EnemyKind } from '../game/mapgen.ts';
 import type { Snapshot } from '../game/simulation.ts';
-import { CONTRACTS, Credits, pad, Pips, SaveWarning, threat } from './common.tsx';
+import { Clearance, CONTRACTS, Credits, pad, Pips, SaveWarning, threat, useScrollEdges } from './common.tsx';
 import { Icon, Portrait } from './icons.tsx';
 import type { IconName } from './icons.tsx';
 
@@ -21,6 +22,9 @@ export function MissionSelect({ state, titleRef, onChoose, onDeploy, onRecenter,
   state: Snapshot; titleRef: RefObject<HTMLHeadingElement | null>; onChoose: (id: string) => void; onDeploy: () => void; onRecenter: () => void; deployBlocked: boolean; connecting: boolean;
 }) {
   const { campaign, contract, squadPick, plan, objectives } = state;
+  const [details, setDetails] = useState(false), scroller = useRef<HTMLDivElement>(null), rosterScroller = useRef<HTMLDivElement>(null);
+  useScrollEdges(scroller); useScrollEdges(rosterScroller);
+  const hostiles = plan?.enemies.length ?? 0;
   return <div className="select">
     <section className="select-offers panel" aria-labelledby="ops-title">
       <header className="panel-head"><h2 id="ops-title" ref={titleRef} tabIndex={-1}>Contracts</h2><span className="panel-meta">Contract {pad(campaign.completed + 1)}</span></header>
@@ -34,6 +38,7 @@ export function MissionSelect({ state, titleRef, onChoose, onDeploy, onRecenter,
           </button>;
         })}</div>
         {campaign.offers.length ? null : <p className="empty-note">No contracts on the board.</p>}
+        <Clearance campaign={campaign} short className="board-clearance" />
       </div>
     </section>
 
@@ -43,39 +48,52 @@ export function MissionSelect({ state, titleRef, onChoose, onDeploy, onRecenter,
     </div>
 
     <section className="select-brief panel" aria-label="Briefing">
-      <div className="brief-scroll">
-        {contract ? <div className="brief" style={threat(contract.tier)}>
+      <div className="brief-scroll" ref={scroller}>
+        <i className="scroll-fade top" aria-hidden="true" />
+        {contract ? <div className={`brief${details ? ' open' : ''}`} style={threat(contract.tier)}>
           <p className="kicker"><Icon name={contract.type} />Briefing · Tier {contract.tier}</p>
           <ThreatRead level={threatFor(campaign, contract.tier)} />
           <h3>{CONTRACTS[contract.type].title}</h3>
           <p className="brief-copy">{CONTRACTS[contract.type].brief}</p>
-          <ol className="brief-objectives">{objectives.map((o, i) => <li key={i}><Icon name={o.kind === 'extract' ? 'flag' : 'diamond'} />{o.label}</li>)}</ol>
-          <ul className="intel" aria-label="Known hostiles">{INTEL.map(({ kind, label, icon }) => {
-            const n = plan?.enemies.filter(e => e.kind === kind).length ?? 0;
-            return <li key={kind} className={n ? '' : 'none'}><Icon name={icon} /><b>{n}</b><small>{label}</small></li>;
-          })}</ul>
-          <div className="brief-pay">
-            <div><small>Payout</small><Credits value={contract.payout} /></div>
-            <div className="bonus"><small>No alarm</small><Credits value={missionPayout(contract, true)} /></div>
+          {/* Shown instead of the details when the panel is short; see the "brief" container query. */}
+          <div className="brief-summary">
+            <span>{objectives.length} objective{objectives.length === 1 ? '' : 's'} · {hostiles} hostile{hostiles === 1 ? '' : 's'} · <Credits value={contract.payout} /></span>
+            <button className="btn ghost small" aria-expanded={details} aria-controls="brief-details" onClick={() => setDetails(!details)}><span>{details ? 'Less' : 'Details'}</span><Icon name="arrow" /></button>
+          </div>
+          <div className="brief-details" id="brief-details">
+            <ol className="brief-objectives">{objectives.map((o, i) => <li key={i}><Icon name={o.kind === 'extract' ? 'flag' : 'diamond'} />{o.label}</li>)}</ol>
+            <ul className="intel" aria-label="Known hostiles">{INTEL.map(({ kind, label, icon }) => {
+              const n = plan?.enemies.filter(e => e.kind === kind).length ?? 0;
+              return <li key={kind} className={n ? '' : 'none'}><Icon name={icon} /><b>{n}</b><small>{label}</small></li>;
+            })}</ul>
+            <div className="brief-pay">
+              <div><small>Payout</small><Credits value={contract.payout} /></div>
+              <div className="bonus"><small>No alarm</small><Credits value={missionPayout(contract, true)} /></div>
+            </div>
           </div>
         </div> : null}
-        <fieldset className="squad-pick">
-          <legend>Squad <span>{squadPick.length} / {SQUAD_MAX}</span></legend>
-          <div className="roster-grid">{campaign.roster.map(o => {
-            const on = squadPick.includes(o.id), locked = on ? squadPick.length <= 1 : squadPick.length >= SQUAD_MAX;
-            return <button key={o.id} className={`pick cls-${o.cls}${on ? ' on' : ''}`} aria-pressed={on} aria-disabled={locked} aria-describedby={locked ? 'squad-rule' : undefined} onClick={() => { if (!locked) sim.toggleSquad(o.id); }}>
-              <Portrait cls={o.cls} />
-              <span className="pick-copy"><strong>{o.name}</strong><small>{CLASS_STATS[o.cls].title}</small><small className="pick-ability">{ABILITY_STATS[CLASS_STATS[o.cls].ability].name}</small></span>
-              <span className="pick-slot" aria-hidden="true">{on ? squadPick.indexOf(o.id) + 1 : <Icon name="plus" />}</span>
-            </button>;
-          })}</div>
-          <small id="squad-rule" className="pick-rule">Deploy 1 to {SQUAD_MAX} operatives.</small>
-        </fieldset>
+        <i className="scroll-fade bottom" aria-hidden="true" />
       </div>
       <div className="deploy-dock">
+        <fieldset className="squad-pick">
+          <legend>Squad <span>{squadPick.length} / {SQUAD_MAX}</span></legend>
+          <div className="roster-scroll" ref={rosterScroller}>
+            <i className="scroll-fade top" aria-hidden="true" />
+            <div className="roster-grid">{campaign.roster.map(o => {
+              const on = squadPick.includes(o.id), locked = on ? squadPick.length <= 1 : squadPick.length >= SQUAD_MAX;
+              return <button key={o.id} className={`pick cls-${o.cls}${on ? ' on' : ''}`} aria-pressed={on} aria-disabled={locked} aria-describedby={locked ? 'squad-rule' : undefined} onClick={() => { if (!locked) sim.toggleSquad(o.id); }}>
+                <Portrait cls={o.cls} />
+                <span className="pick-copy"><strong>{o.name}</strong><small>{CLASS_STATS[o.cls].title}</small><small className="pick-ability">{ABILITY_STATS[CLASS_STATS[o.cls].ability].name}</small></span>
+                <span className="pick-slot" aria-hidden="true">{on ? squadPick.indexOf(o.id) + 1 : <Icon name="plus" />}</span>
+              </button>;
+            })}</div>
+            <i className="scroll-fade bottom" aria-hidden="true" />
+          </div>
+          <small id="squad-rule" className="pick-rule">Deploy 1 to {SQUAD_MAX} operatives.</small>
+        </fieldset>
         {state.saveUnavailable ? <SaveWarning /> : null}
         <button className="btn primary deploy" onClick={onDeploy} disabled={deployBlocked || !contract}>
-          <span className="deploy-copy"><strong>{connecting ? 'Connecting…' : 'Deploy squad'}</strong><small>{squadPick.length} operative{squadPick.length === 1 ? '' : 's'}{contract ? ` · ${CONTRACTS[contract.type].title} · Tier ${contract.tier}` : ''}</small></span>
+          <span className="deploy-copy"><strong>{connecting ? 'Connecting…' : state.syncing ? 'Saving…' : 'Deploy squad'}</strong><small>{squadPick.length} operative{squadPick.length === 1 ? '' : 's'}{contract ? ` · ${CONTRACTS[contract.type].title} · Tier ${contract.tier}` : ''}</small></span>
           <Icon name="arrow" />
         </button>
       </div>

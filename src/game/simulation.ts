@@ -13,9 +13,14 @@ export type { Campaign, Upgrade } from './campaign.ts';
 
 export type Faction = 'squad' | 'hostile' | 'vip';
 export type UnitKind = ClassId | EnemyKind | 'vip';
+// A queued leg of an operative's move order: the path from the previous leg's end, and how long to hold at its own end.
+export type Leg = { path: Point[]; wait: number };
+// A stop on a planned route, as the scene numbers it.
+export type Waypoint = Point & { wait: number };
 export type Unit = Point & {
   id: string; name: string; kind: UnitKind; faction: Faction; hp: number; maxHp: number; cooldown: number;
-  path: Point[]; targetId: string | null; heading: number; moving: boolean; repath: number;
+  // `path` is the leg being walked. An operative holds `wait` seconds at its end, then takes the next leg of `route`.
+  path: Point[]; route: Leg[]; targetId: string | null; heading: number; moving: boolean; repath: number;
   ability: AbilityId | null; abilityCd: number; reviveTarget: string | null; revive: number; hurt: number;
   patrol: Point[]; patrolIndex: number; exit: Point | null; wait: number; detect: number; stunned: number; marked: number; visible: boolean; hunting: boolean; sweep: number;
   // Takedowns: the hostile an operative is closing on, and how long a hostile has been held.
@@ -34,11 +39,17 @@ export type Pending = { unitId: string; ability: AbilityId } | null;
 export type Shield = 'covered' | 'flanked' | null;
 export type CoverStatus = { threats: { id: string; covered: boolean }[]; shield: Shield };
 export type CoverSnap = Point & { along: Point; span: { lo: number; hi: number } | null };
+// Situations a first-time player meets, each recorded the first time it happens in a mission, in order.
+export type Milestone = 'hostileSeen' | 'suspicious' | 'alarm' | 'abilityReady' | 'downed' | 'extractOpen';
+// What raised the mission's first alarm, the one that cost the stealth bonus: how, the hostile that raised it (null for a
+// grenade), the operative that gave the squad away (null when there was none), where, the nearest objective, and mission time.
+export type AlarmTrigger = 'sighting' | 'takedown' | 'gunfire' | 'grenade';
+export type AlarmCause = Point & { trigger: AlarmTrigger | null; hostile: EnemyKind | null; operative: string | null; near: string; at: number };
 export type Snapshot = {
   phase: Phase; paused: boolean; selected: string[]; squad: string[]; squadPick: string[]; units: Unit[]; campaign: Campaign;
   contract: Contract | null; plan: MissionPlan | null; objectives: Objective[]; alarm: boolean; calmIn: number; reinforceIn: number; reinforced: number;
-  result: 'success' | 'failure' | null; failReason: string; payout: number; stealth: boolean; time: number; message: string;
-  saveUnavailable: boolean; syncing: boolean; pending: Pending; cover: Record<string, Shield>;
+  result: 'success' | 'failure' | null; failReason: string; payout: number; stealth: boolean; alarmCause: AlarmCause | null; time: number; message: string;
+  saveUnavailable: boolean; syncing: boolean; pending: Pending; cover: Record<string, Shield>; milestones: Milestone[];
 };
 // Reports campaign events to the server; the server answers through applyCampaign.
 export type CampaignSync = {
@@ -88,6 +99,9 @@ export const PLANT_SECONDS = 3;
 export const COVER_FACTOR = .5;
 export const WEAPON_BONUS = 12, ARMOR_BONUS = 40;
 export const QUEUE_SPACING = .9;    // gap between operatives, side by side or in single file
+export const ROUTE_MAX = 8;         // waypoints an operative's route can hold, the one it is walking to included
+export const WAIT_STEP = 2;         // each wait order adds this many seconds at the last waypoint
+export const WAIT_MAX = 10;         // and one past this clears the wait
 export const TAKEDOWN_REACH = 1.2;  // an operative this close to an unaware hostile starts the takedown
 export const TAKEDOWN_SECONDS = 1.5;
 const TAKEDOWN_STANDOFF = .9;       // where the approach route ends, behind the hostile
@@ -108,6 +122,8 @@ const hashed = (seed: number, id: string, n: number) => {
   for (let i = 0; i < id.length; i++) h = Math.imul(h ^ id.charCodeAt(i), 0x01000193);
   return mulberry32((h ^ Math.imul(n + 1, 0x9e3779b1)) >>> 0)();
 };
+// How the debrief names each objective as a landmark (charges carry their letter from the label).
+const LANDMARK: Record<Objective['kind'], string> = { target: 'the target', terminal: 'the vault terminal', charge: 'a charge site', vip: 'the VIP', extract: 'extraction' };
 const takedownable = (u: Unit) => u.kind === 'guard' || u.kind === 'heavy' || u.kind === 'target';
 const posted = (u: Unit) => (u.kind === 'guard' || u.kind === 'heavy') && u.patrol.length < 2;
 const headingTo = (a: Point, b: Point) => Math.atan2(b.x - a.x, b.z - a.z);
@@ -139,6 +155,7 @@ export class Simulation {
   contract: Contract | null = null;
   alarm = false;
   detected = false; // stays set once the alarm has sounded, even after it stands down
+  alarmCause: AlarmCause | null = null;
   calmIn = 0;
   reinforceIn = 0;
   result: Snapshot['result'] = null;
@@ -155,13 +172,14 @@ export class Simulation {
   // route of each guard the squad has watched finish a leg. Both are replaced with each mission.
   lastSeen = new Map<string, Sighting>();
   intel = new Map<string, Point[]>();
+  milestones: Milestone[] = [];
   private reinforced = 0;
   private vipJoined = false;
   private vipThreat: Point | null = null; // where the last shot at the VIP came from
   private lastKnown: Point | null = null;
   private holdup = '';
   private casts: { unitId: string; ability: AbilityId; point: Point; targetId: string | null }[] = [];
-  private hitThisFrame = new Set<Unit>();
+  private hitThisFrame = new Map<Unit, Unit | null>(); // hostiles hit this frame, and by whom
   private volleyReady = new Set<Unit>();
   private autoPaused = new Set<string>();
   private rng: Rng = Math.random;
@@ -181,12 +199,14 @@ export class Simulation {
       phase: this.phase, paused: this.paused, selected: [...this.selected], squad: [...this.squad], squadPick: [...this.squadPick],
       units: this.units.map(u => ({ ...u })), campaign: this.campaign, contract: this.contract, plan: this.plan,
       objectives: this.objectives.map(o => ({ ...o })), alarm: this.alarm, calmIn: this.calmIn, reinforceIn: this.reinforceIn, reinforced: this.reinforced, result: this.result,
-      failReason: this.failReason, payout: this.payout, stealth: !this.detected, time: this.time, message: this.message,
+      failReason: this.failReason, payout: this.payout, stealth: !this.detected, alarmCause: this.alarmCause, time: this.time, message: this.message,
       saveUnavailable: this.saveUnavailable, syncing: this.syncing, pending: this.pending,
+      milestones: this.milestones,
       cover: Object.fromEntries(this.phase === 'mission' && this.plan ? this.livingSquad().map(u => [u.id, this.coverStatus(u).shield]) : []),
     };
     this.listeners.forEach(fn => fn());
   }
+  private reach(m: Milestone) { if (this.phase === 'mission' && !this.milestones.includes(m)) this.milestones = [...this.milestones, m]; }
   private report(send: (sync: CampaignSync) => void) { if (this.sync) try { send(this.sync); } catch { this.saveUnavailable = true; } }
   applyCampaign(campaign: Campaign) { this.campaign = campaign; if (this.phase !== 'mission') this.refreshBoard(); this.emit(); }
   setSaveUnavailable(unavailable: boolean) { if (this.saveUnavailable !== unavailable) { this.saveUnavailable = unavailable; this.emit(); } }
@@ -233,7 +253,7 @@ export class Simulation {
   // ---- Mission setup ----
   private makeUnit(id: string, name: string, kind: UnitKind, faction: Faction, p: Point, maxHp: number, heading = 0): Unit {
     return {
-      id, name, kind, faction, x: p.x, z: p.z, hp: maxHp, maxHp, cooldown: faction === 'hostile' ? 1 : 0, path: [], targetId: null, heading, moving: false, repath: 0,
+      id, name, kind, faction, x: p.x, z: p.z, hp: maxHp, maxHp, cooldown: faction === 'hostile' ? 1 : 0, path: [], route: [], targetId: null, heading, moving: false, repath: 0,
       ability: null, abilityCd: 0, reviveTarget: null, revive: 0, hurt: 0, patrol: [], patrolIndex: 0, exit: null, wait: 0, detect: 0, stunned: 0, marked: 0, visible: false, hunting: false, sweep: heading,
       takedownId: null, held: 0, look: 0, lookEvery: 0, lookCycle: 0,
     };
@@ -241,7 +261,7 @@ export class Simulation {
   private resetUnits() {
     const plan = this.plan;
     this.units = []; this.objectives = []; this.shots = []; this.blasts = []; this.casts = []; this.hitThisFrame.clear(); this.volleyReady.clear(); this.autoPaused.clear();
-    this.alarm = false; this.detected = false; this.calmIn = 0; this.lastKnown = null; this.lastSeen = new Map(); this.intel = new Map();
+    this.alarm = false; this.detected = false; this.alarmCause = null; this.calmIn = 0; this.lastKnown = null; this.lastSeen = new Map(); this.intel = new Map(); this.milestones = [];
     this.reinforceIn = 0; this.reinforced = 0; this.vipJoined = false; this.vipThreat = null; this.holdup = ''; this.pending = null; this.commandPoint = null;
     this.targetArea = plan?.targetArea ? { ...plan.targetArea } : null;
     if (!plan) { this.squad = []; this.selected = []; return; }
@@ -268,8 +288,10 @@ export class Simulation {
     this.objectives.push(o('extract', t === 'escort' ? 'Escort the VIP and the whole squad to extraction' : 'Get the whole squad to extraction', plan.extract));
     this.updateVisibility();
   }
+  // While a save is in flight the board may be one the client dealt itself (the first payout replaces contract 01),
+  // so a deploy waits for the server's offers: the server would reject an id it never dealt.
   deploy = () => {
-    if (this.phase !== 'briefing' || !this.contract || !this.campaign.offers.some(o => o.id === this.contract!.id)) return;
+    if (this.phase !== 'briefing' || this.syncing || !this.contract || !this.campaign.offers.some(o => o.id === this.contract!.id)) return;
     const contract = this.contract;
     // Mirrors the server: deploying deals the next board, so offers reroll whatever the outcome.
     this.campaign = dealBoard(this.campaign, Math.random);
@@ -297,43 +319,67 @@ export class Simulation {
   pause = () => { if (this.phase === 'mission' && !this.paused) { this.paused = true; this.emit(); } };
   setAutoPause(on: boolean) { this.autoPause = on; }
   private orderable() { return this.selected.map(id => this.unit(id)).filter((u): u is Unit => !!u && u.hp > 0); }
-  private clearOrders(u: Unit) { u.targetId = null; u.reviveTarget = null; u.revive = 0; u.takedownId = null; }
+  private clearOrders(u: Unit) { u.targetId = null; u.reviveTarget = null; u.revive = 0; u.takedownId = null; u.route = []; u.wait = 0; }
+  // On a move order: walking a leg, holding at a waypoint, or with legs still queued.
+  private planned(u: Unit) { return !u.targetId && !u.reviveTarget && !u.takedownId && (u.path.length > 0 || u.wait > 0 || u.route.length > 0); }
+  // Where an operative's move order ends: its last queued leg, else the leg it is on, else where it stands.
+  private planEnd(u: Unit): Point {
+    for (let i = u.route.length - 1; i >= 0; i--) { const end = u.route[i].path.at(-1); if (end) return end; }
+    return u.path.at(-1) ?? { x: u.x, z: u.z };
+  }
+  // The stops of an operative's move order: the end of the leg it is on (where it stands while it holds there),
+  // then the end of each queued leg. Empty without a move order.
+  waypoints(u: Unit): Waypoint[] {
+    if (u.faction !== 'squad' || !this.planned(u)) return [];
+    let at: Point = u.path.at(-1) ?? u;
+    const stops = [{ x: at.x, z: at.z, wait: u.wait }];
+    for (const leg of u.route) { at = leg.path.at(-1) ?? at; stops.push({ x: at.x, z: at.z, wait: leg.wait }); }
+    return stops;
+  }
   // Operatives line up side by side; where the street is too narrow for that, they queue in single file.
   // An order next to a barrier ends on its sheltered side (see coverSnap), the line running along the barrier and
   // packed closer, if it has to, to stay within the stretch the barrier shelters.
-  move(click: Point) {
+  // A plain order replaces each operative's route. An appended one becomes the next leg of every route on a move
+  // order, the line forming from where those routes end; an operative without one sets off from where it stands.
+  move(click: Point, append = false) {
     if (this.phase !== 'mission' || !this.plan) return;
-    const world = this.plan.world, units = this.orderable(), n = units.length;
+    const selection = this.orderable(), units = append ? selection.filter(u => this.waypoints(u).length < ROUTE_MAX) : selection, n = units.length;
+    if (!n && selection.length) { this.message = `Route full: ${ROUTE_MAX} waypoints per operative.`; this.emit(); return; }
+    const world = this.plan.world, from = new Map(units.map(u => [u, append && this.planned(u) ? this.planEnd(u) : { x: u.x, z: u.z }])), at = (u: Unit) => from.get(u)!;
     const snap = this.coverSnap(click), point = { x: snap?.x ?? click.x, z: snap?.z ?? click.z }, along = snap?.along ?? { x: 1, z: 0 }, span = snap?.span;
     const gap = span && n > 1 ? Math.min(QUEUE_SPACING, (span.hi - span.lo) / (n - 1)) : QUEUE_SPACING, half = gap * (n - 1) / 2;
     const middle = span ? Math.min(Math.max(0, span.lo + half), span.hi - half) : 0;
     const line = units.map((u, i) => {
       // A formation slot off the map (extraction sits by the edge) falls back to the clicked point itself.
-      const k = middle + (i - (n - 1) / 2) * gap, slot = { x: point.x + along.x * k, z: point.z + along.z * k }, path = world.findPath(u, slot);
-      return path.length || world.inBounds(slot) ? path : world.findPath(u, point);
+      const k = middle + (i - (n - 1) / 2) * gap, slot = { x: point.x + along.x * k, z: point.z + along.z * k }, path = world.findPath(at(u), slot);
+      return path.length || world.inBounds(slot) ? path : world.findPath(at(u), point);
     });
-    const orders = line.every(path => path.length) ? new Map(units.map((u, i) => [u, line[i]])) : this.queue(units, point);
-    orders.forEach((path, u) => { u.path = path; this.clearOrders(u); });
-    const moved = orders.size > 0;
+    const orders = line.every(path => path.length) ? new Map(units.map((u, i) => [u, line[i]])) : this.queue(units, point, at);
+    orders.forEach((path, u) => {
+      if (append && this.planned(u)) u.route.push({ path, wait: 0 });
+      else { this.clearOrders(u); u.path = path; }
+    });
+    const moved = orders.size > 0, fire = this.alarm ? 'Weapons free.' : 'Holding fire until ordered.';
     this.commandPoint = moved ? point : null;
-    this.message = moved ? (this.alarm ? 'Move order confirmed. Weapons free.' : 'Move order confirmed. Holding fire until ordered.') : 'Route blocked. Choose an open street.'; this.emit();
+    this.message = !moved ? 'Route blocked. Choose an open street.' : append ? `Waypoint added. ${fire}` : `Move order confirmed. ${fire}`; this.emit();
   }
   // The first to arrive takes the point; the rest take slots back along the longest approach route.
   // Units do not collide, so the queue forms on arrival; followers that run out of route stack on the point.
-  private queue(units: Unit[], point: Point) {
+  // `at` is where each unit sets off from: where it stands, or where its route ends.
+  private queue(units: Unit[], point: Point, at: (u: Unit) => Point) {
     const world = this.plan!.world, orders = new Map<Unit, Point[]>();
-    const reach = units.map(u => ({ u, path: world.findPath(u, point) })).filter(r => r.path.length).map(r => ({ ...r, length: routeLength(r.u, r.path) }));
+    const reach = units.map(u => ({ u, from: at(u), path: world.findPath(at(u), point) })).filter(r => r.path.length).map(r => ({ ...r, length: routeLength(r.from, r.path) }));
     if (!reach.length) return orders;
     const leader = [...reach].sort((a, b) => a.length - b.length)[0];
     const approach = reach.reduce((a, b) => b.length > a.length ? b : a);
-    const route = [{ x: approach.u.x, z: approach.u.z }, ...approach.path], slots = [point];
+    const route = [{ x: approach.from.x, z: approach.from.z }, ...approach.path], slots = [point];
     let free = reach.filter(r => r !== leader);
     orders.set(leader.u, leader.path);
     for (let d = QUEUE_SPACING; free.length && d <= approach.length; d += .3) {
       const slot = pointBack(route, d);
       if (!world.walkable(slot) || slots.some(s => distance(s, slot) < QUEUE_SPACING - 1e-3)) continue;
-      const best = free.map(f => ({ f, path: world.findPath(f.u, slot) })).filter(c => c.path.length)
-        .map(c => ({ ...c, length: routeLength(c.f.u, c.path) })).sort((a, b) => a.length - b.length)[0];
+      const best = free.map(f => ({ f, path: world.findPath(f.from, slot) })).filter(c => c.path.length)
+        .map(c => ({ ...c, length: routeLength(c.f.from, c.path) })).sort((a, b) => a.length - b.length)[0];
       if (!best) continue;
       orders.set(best.f.u, best.path); slots.push(slot); free = free.filter(f => f !== best.f);
       d += QUEUE_SPACING - .3;
@@ -421,6 +467,20 @@ export class Simulation {
     this.commandPoint = null;
     this.message = this.alarm ? 'Holding position. Weapons free.' : 'Holding position. Holding fire.'; this.emit();
   };
+  // A wait order adds WAIT_STEP seconds at the last waypoint of each selected operative's route, or where it
+  // stands without a move order (dropping any other order). One past WAIT_MAX clears the wait.
+  addWait = () => {
+    if (this.phase !== 'mission') return;
+    const units = this.orderable(), step = (w: number) => w + WAIT_STEP > WAIT_MAX ? 0 : w + WAIT_STEP;
+    if (!units.length) return;
+    let wait = 0;
+    for (const u of units) {
+      if (!this.planned(u)) { this.clearOrders(u); u.path = []; }
+      const leg = u.route.at(-1);
+      if (leg) wait = leg.wait = step(leg.wait); else wait = u.wait = step(u.wait);
+    }
+    this.message = wait ? `Holding ${Math.ceil(wait)} s at the last waypoint.` : 'Wait cleared.'; this.emit();
+  };
   ability(slot: number) {
     if (this.phase !== 'mission') return;
     const u = this.unit(this.squad[slot] ?? '');
@@ -450,25 +510,28 @@ export class Simulation {
   }
   // Extraction opens once every other objective is done.
   get extractReady() { return this.objectives.every(o => o.kind === 'extract' || o.done); }
-  // Pointer entry points for the scene.
-  groundClick(point: Point) { if (this.pending) this.aim(point, null); else this.move(point); }
+  // Pointer entry points for the scene. `additive` (Shift, or a long press on touch) appends a waypoint on the
+  // street and toggles an operative in the selection.
+  groundClick(point: Point, additive = false) { if (this.pending) this.aim(point, null); else this.move(point, additive); }
   unitClick(id: string, additive = false) {
     const u = this.unit(id); if (!u) return;
     if (this.pending) { if (u.faction === 'hostile') this.aim(u, id); else { this.cancelAbility(); this.select(id, additive); } return; }
     if (u.faction === 'hostile') this.attack(id);
     else if (u.faction === 'squad' && u.hp <= 0) this.revive(id);
     else if (u.faction === 'squad') this.select(id, additive);
-    else this.move(u); // the VIP stands on the street, so a click on it is a move order
+    else this.move(u, additive); // the VIP stands on the street, so a click on it is a move order
   }
 
   // ---- Combat rules ----
-  private raiseAlarm(at: Point, reason: string, seen?: Point) {
+  // `by` is the hostile that raised it and `culprit` the operative that gave the squad away, when there is one.
+  private raiseAlarm(at: Point, reason: string, seen?: Point, cause: { trigger?: AlarmTrigger; by?: Unit; culprit?: Unit } = {}) {
     if (!this.plan) return;
     // A fresh trigger during the alarm only restarts the stand-down countdown.
     this.contact(null);
     if (this.alarm) return;
-    this.alarm = true; this.detected = true; this.reinforceIn = this.reinforced ? REINFORCE_SECONDS : FIRST_WAVE_SECONDS; this.calmIn = CALM_SECONDS;
+    this.alarm = true; this.detected = true; this.reach('alarm'); this.reinforceIn = this.reinforced ? REINFORCE_SECONDS : FIRST_WAVE_SECONDS; this.calmIn = CALM_SECONDS;
     const known = seen ?? at; this.lastKnown = { x: known.x, z: known.z };
+    this.alarmCause ??= { x: known.x, z: known.z, trigger: cause.trigger ?? null, hostile: (cause.by?.kind as EnemyKind | undefined) ?? null, operative: cause.culprit?.name ?? null, near: this.landmarkNear(known), at: this.time };
     for (const u of this.units) {
       if (u.faction !== 'hostile' || u.hp <= 0) continue;
       u.detect = 1;
@@ -481,6 +544,12 @@ export class Simulation {
       }
     }
     this.message = `ALARM: ${reason}. Weapons free.`;
+  }
+  // The objective closest to a point, named for the debrief.
+  private landmarkNear(p: Point) {
+    const o = [...this.objectives].sort((a, b) => distance(a, p) - distance(b, p))[0];
+    if (!o) return 'the district';
+    return o.kind === 'charge' ? o.label.replace('Plant charge', 'Charge') : LANDMARK[o.kind];
   }
   // While alarmed, anything that gives the squad away restarts the countdown; a sighting or gunfire also updates where hunters search.
   private contact(seen: Point | null) {
@@ -501,16 +570,16 @@ export class Simulation {
     this.autoPaused.add(u.id); this.paused = true;
     this.message = `${u.name} is suspicious. Auto-paused.`;
   }
-  private damage(target: Unit, amount: number, from: Point | null) {
+  private damage(target: Unit, amount: number, from: Unit | null) {
     if (target.hp <= 0) return;
     const covered = from && this.plan?.world.coverBetween(from, target);
     if (target.faction === 'vip') { amount *= VIP_DAMAGE_TAKEN; if (from) this.vipThreat = { x: from.x, z: from.z }; }
     target.hp = Math.max(0, target.hp - amount * (covered ? COVER_FACTOR : 1));
-    if (target.faction === 'hostile') this.hitThisFrame.add(target);
+    if (target.faction === 'hostile') this.hitThisFrame.set(target, from);
     else {
       target.hurt = 1.5; target.revive = 0;
       // A downed operative drops its orders; once revived it stays where it fell.
-      if (target.hp <= 0) { target.path = []; this.clearOrders(target); }
+      if (target.hp <= 0) { target.path = []; this.clearOrders(target); if (target.faction === 'squad') { this.reach('downed'); this.message = `${target.name} is down.`; } }
     }
   }
   private shoot(from: Unit, to: Unit, amount: number, kind: Shot['kind'] = 'bullet') {
@@ -527,7 +596,7 @@ export class Simulation {
     if (c.ability === 'grenade') {
       hostiles.filter(u => distance(u, c.point) <= stats.radius).forEach(u => this.damage(u, power, null));
       this.blasts.push({ id: this.nextId++, kind: 'grenade', ...c.point, radius: stats.radius, ttl: .7 });
-      this.raiseAlarm(c.point, 'Grenade detonation');
+      this.raiseAlarm(c.point, 'Grenade detonation', undefined, { trigger: 'grenade', culprit: caster });
     } else if (c.ability === 'heal') {
       this.units.filter(u => u.faction !== 'hostile' && u.hp > 0 && distance(u, caster) <= stats.radius).forEach(u => { u.hp = Math.min(u.maxHp, u.hp + power); });
       this.blasts.push({ id: this.nextId++, kind: 'heal', x: caster.x, z: caster.z, radius: stats.radius, ttl: .8 });
@@ -549,7 +618,7 @@ export class Simulation {
     if (success) {
       const stealth = !this.detected;
       this.payout = missionPayout(this.contract, stealth);
-      this.campaign = applyPayout(this.campaign, this.contract, stealth); this.report(s => s.completed(stealth));
+      this.campaign = applyPayout(this.campaign, this.contract, stealth, Math.random); this.report(s => s.completed(stealth));
     }
     this.emit();
   }
@@ -568,6 +637,7 @@ export class Simulation {
       if (u.faction !== 'hostile') { u.visible = true; continue; }
       const was = u.visible;
       u.visible = u.marked > 0 || (!!world && eyes.some(e => distance(e, u) <= SIGHT_RANGE && world.sightClear(e, u)));
+      if (u.visible && u.hp > 0) this.reach('hostileSeen');
       if (u.kind === 'target' && u.visible && u.hp > 0 && this.targetArea) { this.targetArea.x = u.x; this.targetArea.z = u.z; }
       if (u.visible || u.hp <= 0) this.lastSeen.delete(u.id);
       else if (was) this.lastSeen.set(u.id, { x: u.x, z: u.z, heading: u.heading, at: this.time });
@@ -590,8 +660,8 @@ export class Simulation {
     else if (seen) {
       const was = u.detect;
       u.detect = Math.min(1, u.detect + dt / detectSeconds(u.kind as EnemyKind, distance(u, seen)));
-      if (u.detect >= 1) { this.raiseAlarm(u, `${stats.name} spotted the squad`, seen); return; }
-      if (was <= SUSPICIOUS && u.detect > SUSPICIOUS) this.suspicious(u);
+      if (u.detect >= 1) { this.raiseAlarm(u, `${stats.name} spotted the squad`, seen, { trigger: 'sighting', by: u, culprit: seen }); return; }
+      if (was <= SUSPICIOUS && u.detect > SUSPICIOUS) { this.reach('suspicious'); this.suspicious(u); }
     } else u.detect = Math.max(0, u.detect - DETECT_DRAIN * dt);
     if (!this.alarm && !(u.kind === 'target' && u.exit)) {
       // A suspicious guard stops and stares instead of walking on.
@@ -662,6 +732,7 @@ export class Simulation {
     const world = this.plan!.world, stats = CLASS_STATS[u.kind as ClassId];
     u.moving = false;
     u.cooldown -= dt; u.abilityCd = Math.max(0, u.abilityCd - dt); u.hurt = Math.max(0, u.hurt - dt);
+    if (u.ability && u.abilityCd <= 0) this.reach('abilityReady');
     if (u.reviveTarget) {
       const down = this.unit(u.reviveTarget);
       if (!down || down.hp > 0) { u.reviveTarget = null; u.revive = 0; }
@@ -683,10 +754,17 @@ export class Simulation {
     // Before the alarm the squad holds fire except at ordered targets.
     const target = ordered && canHit(ordered) ? ordered : this.alarm ? hostiles.filter(canHit).sort((a, b) => distance(u, a) - distance(u, b))[0] : undefined;
     if (u.path.length && !(ordered && canHit(ordered))) this.walk(u, SQUAD_SPEED, dt);
+    else if (!u.path.length) this.nextLeg(u, dt);
     if (!target || u.cooldown > 0) return;
     // Before the alarm an ordered operative waits for the rest of its volley (see fireVolleys).
     if (!this.alarm) { u.heading = headingTo(u, target); this.volleyReady.add(u); return; }
     this.fire(u, target);
+  }
+  // At the end of a leg an operative holds for its wait, then sets off on the next queued leg.
+  private nextLeg(u: Unit, dt: number) {
+    if (u.wait > 0 && (u.wait = Math.max(0, u.wait - dt)) > 0) return;
+    const leg = u.route.shift();
+    if (leg) { u.path = leg.path; u.wait = leg.wait; }
   }
   private fire(u: Unit, target: Unit) {
     u.heading = headingTo(u, target);
@@ -751,7 +829,7 @@ export class Simulation {
       if (!v.held && (this.alarm || v.detect > SUSPICIOUS)) continue;
       v.held += dt; v.moving = false; v.path = [];
       const witness = this.units.find(h => h !== v && h.faction === 'hostile' && h.hp > 0 && h.stunned <= 0 && !h.held && [v, ...crew].some(p => this.sees(h, p)));
-      if (witness && !this.alarm) this.raiseAlarm(witness, `${witness.name} saw the takedown`, crew[0]);
+      if (witness && !this.alarm) this.raiseAlarm(witness, `${witness.name} saw the takedown`, crew[0], { trigger: 'takedown', by: witness, culprit: crew[0] });
       if (v.held >= TAKEDOWN_SECONDS) {
         v.hp = 0; v.held = 0; crew.forEach(u => { u.takedownId = null; });
         this.message = `${crew.map(u => u.name).join(' and ')} took down ${v.kind === 'target' ? 'the target' : v.name}.`;
@@ -844,6 +922,7 @@ export class Simulation {
     const inZone = (s: Unit) => distance(s, extract) < 2;
     extract.progress = team.filter(s => s.hp > 0 && inZone(s)).length / team.length;
     if (!this.extractReady) return;
+    this.reach('extractOpen');
     const vipIn = !vip || distance(vip, extract) < 2.4;
     if (extract.progress === 1 && vipIn) { extract.done = true; this.finish(true); return; }
     const down = team.find(s => s.hp <= 0);
@@ -884,7 +963,7 @@ export class Simulation {
     this.fireVolleys();
     this.resolveTakedowns(dt);
     // A volley that kills its target stays quiet; any hostile left standing after being hit raises the alarm.
-    for (const u of this.hitThisFrame) if (u.hp > 0) { this.raiseAlarm(u, `${u.name} returned fire`); break; }
+    for (const [u, by] of this.hitThisFrame) if (u.hp > 0) { this.raiseAlarm(u, `${u.name} returned fire`, undefined, { trigger: 'gunfire', by: u, culprit: by ?? undefined }); break; }
     for (const u of this.units) if (u.faction === 'hostile' && u.hp <= 0) { u.path = []; u.moving = false; }
     const squad = this.livingSquad();
     const vip = this.unit('vip');

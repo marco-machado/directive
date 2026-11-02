@@ -1,7 +1,8 @@
 import { Component, useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import type { CSSProperties, ErrorInfo, FormEvent, ReactNode } from 'react';
+import type { CSSProperties, ErrorInfo, FormEvent, ReactNode, RefObject } from 'react';
 import { client, sim } from '../app.ts';
-import type { ContractType, Operative } from '../game/campaign.ts';
+import { MAX_TIER, nextUnlock, topTier } from '../game/campaign.ts';
+import type { Campaign, ContractType, Operative } from '../game/campaign.ts';
 import { ABILITY_STATS, CLASS_STATS } from '../game/classes.ts';
 import { formatSaveCode, normalizeSaveCode } from '../game/saveCode.ts';
 import { HACK_SECONDS, VIP_SECURE_SECONDS } from '../game/simulation.ts';
@@ -28,6 +29,37 @@ export const Credits = ({ value, className }: { value: number; className?: strin
 
 export const Pips = ({ value, max, label, className = '' }: { value: number; max: number; label: string; className?: string }) =>
   <span className={`pips ${className}`} role="img" aria-label={`${label} ${value} of ${max}`}>{Array.from({ length: max }, (_, i) => <i className={value > i ? 'on' : ''} key={i} />)}</span>;
+
+// Tier progression. Boards are dealt at each deployment from the completed count, so a tier unlocked by a
+// contract reaches the board dealt at the next deployment, not the one already on display. `short` trims the copy to one line for the board.
+export function Clearance({ campaign, justCompleted = false, short = false, className = '' }: { campaign: Campaign; justCompleted?: boolean; short?: boolean; className?: string }) {
+  const done = campaign.completed, top = topTier(done), next = nextUnlock(done);
+  const onBoard = Math.max(0, ...campaign.offers.map(o => o.tier)), unlocked = justCompleted && done > 0 && top > topTier(done - 1);
+  const left = next ? `${next.after} more contract${next.after === 1 ? '' : 's'}` : '';
+  return <section className={`clearance ${className}`} style={threat(top)} aria-label="Clearance">
+    <header><small>Clearance</small><strong>Tier {top}</strong><Pips value={top} max={MAX_TIER} label="Clearance tier" />{unlocked ? <b className="clearance-new">Unlocked</b> : null}</header>
+    {short ? <p>{top > onBoard ? `Tier ${top} joins the next board.` : next ? `Tier ${next.tier} after ${left}.` : 'Every tier is open.'}</p>
+      : <p>{top > onBoard ? `Tier ${top} offers join the board dealt at your next deployment.` : `Offers up to Tier ${top}.`}
+        {' '}{next ? `Tier ${next.tier} unlocks after ${left}.` : 'Every tier is open.'}</p>}
+    {next ? <span className="clearance-meter" role="progressbar" aria-label={`Progress to Tier ${next.tier}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(next.progress * 100)}><i style={{ width: `${next.progress * 100}%` }} /></span> : null}
+  </section>;
+}
+
+// Marks a scroller .can-up / .can-down for its edge fades where CSS scroll-state queries are missing.
+export function useScrollEdges(ref: RefObject<HTMLElement | null>) {
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || CSS.supports('container-type', 'scroll-state')) return;
+    const mark = () => {
+      el.classList.toggle('can-up', el.scrollTop > 0);
+      el.classList.toggle('can-down', el.scrollTop + el.clientHeight < el.scrollHeight - 1);
+    };
+    const resize = new ResizeObserver(mark), mutate = new MutationObserver(mark);
+    resize.observe(el); mutate.observe(el, { childList: true, subtree: true, attributeFilter: ['class'] });
+    el.addEventListener('scroll', mark, { passive: true }); mark();
+    return () => { resize.disconnect(); mutate.disconnect(); el.removeEventListener('scroll', mark); };
+  }, [ref]);
+}
 
 export const SaveWarning = () => <p className="warning"><Icon name="alert" />Server unreachable. Progress from this session is not saved.</p>;
 

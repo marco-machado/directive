@@ -48,7 +48,7 @@ export class PlayerCampaign extends DurableObject<Env> {
   }
   async completeMission(missionId: string, stealth: boolean): Promise<Result> {
     const ledger = await this.load(); if (!ledger) return unknown;
-    const next = completeMission(ledger, missionId, Date.now(), stealth);
+    const next = completeMission(ledger, missionId, Date.now(), stealth, random);
     return next ? this.save(next) : { ok: false, status: 409, error: 'Mission is not active or ended too soon.' };
   }
   buy(type: Upgrade) { return this.update(c => applyPurchase(c, type), 'Not enough credits or upgrade maxed.'); }

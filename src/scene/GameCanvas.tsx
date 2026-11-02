@@ -2,7 +2,7 @@ import { memo, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 import type { ComponentRef, RefObject } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
-import { MOUSE, NeutralToneMapping, Spherical, TOUCH, Vector3 } from 'three';
+import { MOUSE, NeutralToneMapping, Plane, Raycaster, Spherical, TOUCH, Vector2, Vector3 } from 'three';
 import type { MissionPlan } from '../game/mapgen.ts';
 import type { Bounds, Point } from '../game/world.ts';
 import type { Simulation } from '../game/simulation.ts';
@@ -12,7 +12,7 @@ import { Bloom, bloomSupported } from './bloom.tsx';
 import { City, GROUND } from './city.tsx';
 import { Diagnostics } from './diagnostics.tsx';
 import { dressDistrict } from './district.ts';
-import { dragged, trackDrags } from './drag.ts';
+import { dragged, trackDrags, trackLongPress } from './drag.ts';
 import { CoverPreview, Effects, Targeting } from './effects.tsx';
 import { cameraKick } from './kick.ts';
 import { focusPoint, followGroup, followStep, missionMinZoom, overviewZoom, smoothstep, tacticalZoom } from './framing.ts';
@@ -23,6 +23,7 @@ import type { Pointer } from './effects.tsx';
 import { Objectives } from './objectives.tsx';
 import { Pointers } from './pointers.tsx';
 import type { Insets } from './pointers.tsx';
+import { PlannedRoutes } from './routes.tsx';
 import { nearestClickable, Units } from './units.tsx';
 import type { Hitboxes } from './units.tsx';
 import { cameraOffset } from './view.ts';
@@ -33,6 +34,7 @@ const planKeys = new WeakMap<MissionPlan, number>();
 let nextPlanKey = 0;
 const planKey = (plan: MissionPlan) => { let key = planKeys.get(plan); if (key === undefined) { key = nextPlanKey++; planKeys.set(plan, key); } return key; };
 const extent = (b: Bounds) => ({ cx: (b.minX + b.maxX) / 2, cz: (b.minZ + b.maxZ) / 2, w: b.maxX - b.minX, d: b.maxZ - b.minZ });
+const STREET = new Plane(new Vector3(0, 1, 0), -.04); // the height of the clickable ground mesh
 
 // The projection is offset so the orbit target sits at the center of the HUD's free frame (the .view-frame
 // element), and the camera looks in from the squad's spawn corner (`start`), which puts the squad on the near
@@ -158,12 +160,22 @@ function World({ sim, reset, focus, overview, layout, attract, frame, labels, mi
     if (next !== cursor.current) gl.domElement.style.cursor = cursor.current = next;
   });
   // A click or tap that hits no unit, on the street or off the district, still picks one drawn near it.
-  const nearMiss = (e: MouseEvent) => {
-    const box = gl.domElement.getBoundingClientRect(), id = nearestClickable(sim, hitboxes, camera, box.width, box.height, e.clientX - box.left, e.clientY - box.top);
-    if (id) sim.unitClick(id, e.shiftKey);
+  const nearMiss = (x: number, y: number, additive: boolean) => {
+    const box = gl.domElement.getBoundingClientRect(), id = nearestClickable(sim, hitboxes, camera, box.width, box.height, x - box.left, y - box.top);
+    if (id) sim.unitClick(id, additive);
     return !!id;
   };
-  missed.current = e => { if (e.type === 'click' && !dragged()) nearMiss(e); };
+  missed.current = e => { if (e.type === 'click' && !dragged()) nearMiss(e.clientX, e.clientY, e.shiftKey); };
+  // A long press on touch acts as Shift+click where it was pressed: on a unit, or on the street the ground mesh covers.
+  const ray = useMemo(() => ({ caster: new Raycaster(), ndc: new Vector2(), hit: new Vector3() }), []);
+  useEffect(() => trackLongPress(gl.domElement, (x, y) => {
+    const plan = sim.plan;
+    if (nearMiss(x, y, true) || !plan) return;
+    const box = gl.domElement.getBoundingClientRect(), { cx, cz, w, d } = extent(plan.world.bounds);
+    ray.caster.setFromCamera(ray.ndc.set((x - box.left) / box.width * 2 - 1, 1 - (y - box.top) / box.height * 2), camera);
+    const hit = ray.caster.ray.intersectPlane(STREET, ray.hit);
+    if (hit && Math.abs(hit.x - cx) <= w / 2 + GROUND && Math.abs(hit.z - cz) <= d / 2 + GROUND) sim.groundClick(plan.world.clampToBounds({ x: hit.x, z: hit.z }), true);
+  }), [gl, camera]);
   return <>
     <NightLighting bounds={bounds} practicals={plan ? dressDistrict(plan).practicals : []} />
     <CameraRig sim={sim} reset={reset} focus={focus} overview={overview} bounds={bounds} start={plan?.spawn[0] ?? null} layout={layout} attract={attract} frame={frame} insets={insets} />
@@ -171,7 +183,7 @@ function World({ sim, reset, focus, overview, layout, attract, frame, labels, mi
       <City key={planKey(plan)} plan={plan} sim={sim} />
       {/* Covers the street drawn past the bounds too; a click out there acts on the nearest point inside them. */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[cx, .04, cz]} visible={false}
-        onClick={e => { if (!dragged()) { e.stopPropagation(); if (!nearMiss(e.nativeEvent)) sim.groundClick(plan.world.clampToBounds({ x: e.point.x, z: e.point.z })); } }}
+        onClick={e => { if (!dragged()) { e.stopPropagation(); if (!nearMiss(e.clientX, e.clientY, e.shiftKey)) sim.groundClick(plan.world.clampToBounds({ x: e.point.x, z: e.point.z }), e.shiftKey); } }}
         onPointerMove={e => { Object.assign(pointer.current, plan.world.clampToBounds({ x: e.point.x, z: e.point.z })); pointer.current.on = true; }}
         onPointerOut={() => { pointer.current.on = false; }}>
         <planeGeometry args={[w + 2 * GROUND, d + 2 * GROUND]} />
@@ -179,6 +191,7 @@ function World({ sim, reset, focus, overview, layout, attract, frame, labels, mi
       <Objectives sim={sim} objectives={state.objectives} labels={labels} />
       <Units sim={sim} units={state.units} selected={state.selected} squad={state.squad} live={state.phase === 'mission'} labels={labels} hitboxes={hitboxes} />
       <PatrolIntel sim={sim} />
+      <PlannedRoutes sim={sim} labels={labels} />
       <Effects sim={sim} />
       <LastSeenGhosts sim={sim} labels={labels} />
       <Pointers sim={sim} labels={labels} insets={insets} />

@@ -5,11 +5,12 @@ import { missionPayout } from '../game/campaign.ts';
 import type { Campaign } from '../game/campaign.ts';
 import { abilityCooldown, ABILITY_STATS, CLASS_STATS } from '../game/classes.ts';
 import type { ClassId } from '../game/classes.ts';
-import { SUSPICIOUS } from '../game/simulation.ts';
+import { SUSPICIOUS, WAIT_STEP } from '../game/simulation.ts';
 import type { Pending, Shield, Snapshot, Unit } from '../game/simulation.ts';
 import { clock, CONTRACTS, Credits, threat } from './common.tsx';
 import { Icon, Portrait } from './icons.tsx';
 import { play } from './audio.ts';
+import { TipDock } from './Tips.tsx';
 
 // In portrait the tracker collapses to a drawer under the top bar that shows only the current objective; the toggle exists only there.
 function Tracker({ state, open, onToggle }: { state: Snapshot; open: boolean; onToggle: () => void }) {
@@ -68,16 +69,30 @@ function SquadCard({ unit, slot, selected, campaign, pending, cover, onFocusSele
   </div>;
 }
 
-// The last few orders and reports, newest at the bottom. A restart (the clock running back) starts a fresh log.
+// Routine order confirmations stay out of the visible log; the sr-only status still announces them.
+const ROUTINE = ['Move order confirmed.', 'Waypoint added.', 'Holding position.', 'Wait cleared.'];
+const routineWait = /^Holding \d+ s at the last waypoint\.$/;
+const COMMS_LINES = 6;
+const danger = (text: string) => text.startsWith('ALARM') || text.endsWith(' is down.');
+// The last few reports, newest at the bottom; a report repeated back to back collapses into one line with a count.
+// A restart (the clock running back) starts a fresh log.
 function Comms({ state }: { state: Snapshot }) {
-  const [log, setLog] = useState<{ id: number; text: string; at: number }[]>([]), next = useRef(0), last = useRef({ text: '', at: 0 });
+  const [log, setLog] = useState<{ id: number; text: string; at: number; count: number }[]>([]), next = useRef(0), last = useRef({ text: '', at: 0 });
   useEffect(() => {
-    const restarted = state.time < last.current.at;
-    if (!restarted && last.current.text === state.message) { last.current.at = state.time; return; }
-    last.current = { text: state.message, at: state.time };
-    setLog(list => [...(restarted ? [] : list.slice(-3)), { id: next.current++, text: state.message, at: state.time }]);
+    const restarted = state.time < last.current.at, text = state.message;
+    if (!restarted && last.current.text === text) { last.current.at = state.time; return; }
+    last.current = { text, at: state.time };
+    const routine = ROUTINE.some(p => text.startsWith(p)) || routineWait.test(text);
+    setLog(list => {
+      const kept = restarted ? [] : list, prev = kept.at(-1);
+      if (routine) return kept;
+      if (prev?.text === text) return [...kept.slice(0, -1), { ...prev, at: state.time, count: prev.count + 1 }];
+      return [...kept.slice(1 - COMMS_LINES), { id: next.current++, text, at: state.time, count: 1 }];
+    });
   }, [state.message, state.time]);
-  return <ol className="comms" aria-label="Comms">{log.map(m => <li key={m.id} className={m.text.startsWith('ALARM') ? 'danger' : ''}><time>{clock(m.at)}</time><span>{m.text}</span></li>)}</ol>;
+  return <ol className="comms" aria-label="Comms">{log.map(m => <li key={m.id} className={danger(m.text) ? 'danger' : ''}>
+    <time>{clock(m.at)}</time><span>{m.text}{m.count > 1 ? <b className="comms-count"> ×{m.count}</b> : null}</span>
+  </li>)}</ol>;
 }
 
 function Targeting({ pending }: { pending: NonNullable<Pending> }) {
@@ -108,10 +123,10 @@ function Spotted({ state }: { state: Snapshot }) {
 export function Hud({ state, overview, onFocusSelection, onToggleOverview }: { state: Snapshot; overview: boolean; onFocusSelection: () => void; onToggleOverview: () => void }) {
   const [drawer, setDrawer] = useState(false);
   return <>
-    <aside id="mission-drawer" className={`hud-left${drawer ? ' open' : ''}`}><Tracker state={state} open={drawer} onToggle={() => setDrawer(v => !v)} /><Comms state={state} /></aside>
+    <aside id="mission-drawer" className={`hud-left${drawer ? ' open' : ''}`}><Tracker state={state} open={drawer} onToggle={() => setDrawer(v => !v)} /><TipDock milestones={state.milestones} /><Comms state={state} /></aside>
     <Spotted state={state} />
     {state.pending ? <Targeting pending={state.pending} /> : null}
-    {state.paused ? <div className="pause-banner"><Icon name="pause" /><span><strong>Tactical pause</strong><small>Orders queue while paused</small></span>
+    {state.paused ? <div className="pause-banner"><Icon name="pause" /><span><strong>Tactical pause</strong><small><kbd>Shift</kbd>+click or long-press: add a waypoint · <kbd>W</kbd>: wait there</small></span>
       <button className="btn small" onClick={sim.togglePause}><Icon name="play" />Resume <kbd>Space</kbd></button></div> : null}
     <p className="sr-only" role="status">{state.message}</p>
     <footer className="hud-bottom">
@@ -121,11 +136,12 @@ export function Hud({ state, overview, onFocusSelection, onToggleOverview }: { s
       })}</section>
       <div className="commands" role="group" aria-label="Orders">
         <button className="cmd" onClick={sim.hold} aria-keyshortcuts="S"><Icon name="hold" /><span>Hold</span><kbd>S</kbd></button>
+        <button className="cmd" onClick={sim.addWait} aria-keyshortcuts="W" aria-label={`Wait ${WAIT_STEP} s longer at the last waypoint`}><Icon name="clock" /><span>Wait</span><kbd>W</kbd></button>
         <button className="cmd" onClick={sim.selectAll} aria-keyshortcuts="A"><Icon name="squad" /><span>All</span><kbd>A</kbd></button>
         <button className="cmd" onClick={onFocusSelection} aria-keyshortcuts="F" aria-label="Focus view on the selection"><Icon name="recenter" /><span>View</span><kbd>F</kbd></button>
         <button className="cmd" onClick={onToggleOverview} aria-keyshortcuts="R" aria-pressed={overview} aria-label="District overview"><Icon name="overview" /><span>Overview</span><kbd>R</kbd></button>
       </div>
-      {state.campaign.completed ? null : <p className="controls-hint" aria-hidden="true">Click street: move · click hostile: takedown or volley · <kbd>1</kbd>–<kbd>4</kbd> select · <kbd>Shift</kbd>+<kbd>1</kbd>–<kbd>4</kbd> ability · <kbd>Space</kbd> pause</p>}
+      {state.campaign.completed ? null : <p className="controls-hint" aria-hidden="true">Click street: move · <kbd>Shift</kbd>+click: waypoint · click hostile: takedown or volley · <kbd>1</kbd>–<kbd>4</kbd> select · <kbd>Shift</kbd>+<kbd>1</kbd>–<kbd>4</kbd> ability · <kbd>Space</kbd> pause</p>}
     </footer>
   </>;
 }
