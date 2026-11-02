@@ -53,11 +53,27 @@ BODY_DIM.color.setScalar(DIM); GLOW_DIM.color.setScalar(DIM);
 // Each painted mesh has a lit material and a darkened one for a downed operative.
 type Paint = { mesh: Mesh; lit: Material; dim: Material };
 type Figure = { root: Object3D; body: SkinnedMesh; skeleton: Skeleton; paints: Paint[]; pose: (m: Motion) => void };
+// Imported textures are painted darker than the procedural palette, so at play scale a unit's suit sinks into the
+// street and its class color fades. A gamma lift on the texture brightens the dark tones most and barely moves
+// near-white parts (the med pack), which keeps them under the bloom threshold. The lift also grays the colors, so a
+// saturation boost after it restores the class colors. The night glow sees the result.
+const TEXTURE_LIFT = .65, TEXTURE_SATURATION = 1.7;
+const lifted = (m: MeshStandardMaterial) => {
+  const night = m.onBeforeCompile;
+  m.onBeforeCompile = (shader, renderer) => {
+    shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', `#include <map_fragment>
+diffuseColor.rgb = pow(diffuseColor.rgb, vec3(${TEXTURE_LIFT.toFixed(2)}));
+diffuseColor.rgb = max(mix(vec3(dot(diffuseColor.rgb, vec3(.2126, .7152, .0722))), diffuseColor.rgb, ${TEXTURE_SATURATION.toFixed(2)}), 0.);`);
+    night.call(m, shader, renderer);
+  };
+  m.customProgramCacheKey = () => 'night-glow-lift';
+  return m;
+};
 const textured = new Map<Texture, { lit: Material; dim: Material }>();
 function texturedPaint(map: Texture) {
   let p = textured.get(map);
   if (!p) {
-    const lit = nightGlow(Object.assign(new MeshStandardMaterial({ map, roughness: .72, metalness: .2 }), MARKS)), dim = nightGlow(lit.clone());
+    const lit = lifted(nightGlow(Object.assign(new MeshStandardMaterial({ map, roughness: .72, metalness: .2 }), MARKS))), dim = lifted(nightGlow(lit.clone()));
     dim.color.setScalar(DIM);
     textured.set(map, p = { lit, dim });
   }
@@ -66,8 +82,10 @@ function texturedPaint(map: Texture) {
 function figureOf(kind: UnitKind, template: GLTF | null): Figure {
   if (template) {
     const rig = importRig(kind, template), paints: Paint[] = [{ mesh: rig.body, ...(rig.map ? texturedPaint(rig.map) : { lit: BODY, dim: BODY_DIM }) }];
-    if (rig.gun) paints.push({ mesh: rig.gun.body, lit: BODY, dim: BODY_DIM });
-    if (rig.gun?.glow) paints.push({ mesh: rig.gun.glow, lit: GLOW, dim: GLOW_DIM });
+    for (const { body, glow } of rig.props) {
+      paints.push({ mesh: body, lit: BODY, dim: BODY_DIM });
+      if (glow) paints.push({ mesh: glow, lit: GLOW, dim: GLOW_DIM });
+    }
     return { root: rig.root, body: rig.body, skeleton: rig.skeleton, paints, pose: m => animateImported(rig, m) };
   }
   const rig = makeRig(kind, BODY, GLOW), paints: Paint[] = [{ mesh: rig.body, lit: BODY, dim: BODY_DIM }];

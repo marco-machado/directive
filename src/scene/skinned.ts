@@ -4,24 +4,29 @@ import type { GLTF } from 'three/addons/loaders/GLTFLoader.js';
 import { clone } from 'three/addons/utils/SkeletonUtils.js';
 import type { UnitKind } from '../game/simulation.ts';
 import { twoBone } from './ik.ts';
-import { ARMED, weaponModel } from './rigs.ts';
-import type { Motion } from './rigs.ts';
+import { ARMED, briefcaseModel, shieldModel, weaponModel } from './rigs.ts';
+import type { Motion, RigModel } from './rigs.ts';
 
 // Units built from an imported, auto-rigged model with a Mixamo-named skeleton. The model is scaled to a unit's
 // height, turned to face +z and stood on y = 0. The procedural rigs' animation layers drive it: the legs, spine
-// and head turn by deltas in model space, the rifle rides on the chest as the procedural gun bone does, and the
-// arms reach for its grips (or swing at the sides) by two-bone IK.
+// and head turn by deltas in model space, the rifle and the heavy's shield ride on the chest as the procedural gun
+// and shield bones do, and the arms reach for their grips (or swing at the sides) by two-bone IK. The target's
+// briefcase hangs from its right hand.
 
 const HEIGHT = 1.3;
 const JOINTS = ['Hips', 'Spine', 'Spine2', 'Head', 'LeftUpLeg', 'LeftLeg', 'RightUpLeg', 'RightLeg', 'LeftArm', 'LeftForeArm', 'LeftHand', 'RightArm', 'RightForeArm', 'RightHand'] as const;
 type JointName = typeof JOINTS[number];
 // A joint's rest pose: its local rotation and position, and its parent's rest rotation in model space.
 type Joint = { bone: Bone; q: Quaternion; p: Vector3; parent: Quaternion };
-type Gun = { pivot: Object3D; rest: Matrix4; body: Mesh; glow: Mesh | null; grip: Object3D; fore: Object3D };
+// A carried model hung off the upper spine; `rest` takes model space into the spine's, and the markers are wrist targets.
+type Held = { pivot: Object3D; rest: Matrix4 };
+type Prop = { body: Mesh; glow: Mesh | null };
 export type ImportedRig = {
   kind: UnitKind; root: Group; body: SkinnedMesh; skeleton: Skeleton; map: Texture | null; joints: Record<JointName, Joint>;
   // Which side (±x) the right hand is on, the shoulder height, and model up in the hips' parent space (for the bob).
-  side: number; shoulder: number; up: Vector3; gun: Gun | null;
+  side: number; shoulder: number; up: Vector3;
+  gun: (Held & { grip: Object3D; fore: Object3D }) | null; shield: (Held & { handle: Object3D }) | null; briefcase: Object3D | null;
+  props: Prop[];
 };
 
 const v = new Vector3(), w = new Vector3(), m4 = new Matrix4();
@@ -67,28 +72,42 @@ export function importRig(kind: UnitKind, gltf: GLTF): ImportedRig {
   })) as Record<JointName, Joint>;
   const shoulder = joints.RightArm.bone.getWorldPosition(v), side = Math.sign(shoulder.x) || -1;
   const up = new Vector3(0, 1, 0).applyMatrix3(new Matrix3().setFromMatrix4(m4.copy(joints.Hips.bone.parent!.matrixWorld).invert()));
-  let gun: Gun | null = null;
+  const props: Prop[] = [], spine = joints.Spine2.bone;
+  const dress = (parent: Object3D, model: RigModel, ...markers: Object3D[]) => {
+    const prop = { body: new Mesh(model.body), glow: model.glow ? new Mesh(model.glow) : null };
+    parent.add(prop.body, ...markers); if (prop.glow) parent.add(prop.glow);
+    props.push(prop);
+  };
+  const hold = (model: RigModel, ...markers: Object3D[]): Held => {
+    const pivot = new Object3D();
+    pivot.matrixAutoUpdate = false; spine.add(pivot); dress(pivot, model, ...markers);
+    return { pivot, rest: new Matrix4().copy(spine.matrixWorld).invert() };
+  };
+  const marker = (x: number, y: number, z: number) => { const o = new Object3D(); o.position.set(x, y, z); return o; };
+  let gun: ImportedRig['gun'] = null, shield: ImportedRig['shield'] = null, briefcase: Object3D | null = null;
   if (ARMED[kind]) {
-    // The rifle hangs off the upper spine, so it follows the torso; `rest` takes model space into the spine's.
-    const model = weaponModel(kind), pivot = new Object3D(), grip = new Object3D(), fore = new Object3D();
-    const body = new Mesh(model.body), glow = model.glow ? new Mesh(model.glow) : null;
     // Wrist targets: behind and below the pistol grip, and under the handguard.
-    grip.position.set(0, -.09, -.02); fore.position.set(0, -.08, model.body.boundingBox!.max.z * .42 - .06);
-    pivot.matrixAutoUpdate = false;
-    pivot.add(body, grip, fore); if (glow) pivot.add(glow);
-    joints.Spine2.bone.add(pivot);
-    gun = { pivot, rest: new Matrix4().copy(joints.Spine2.bone.matrixWorld).invert(), body, glow, grip, fore };
+    const model = weaponModel(kind), grip = marker(0, -.09, -.02), fore = marker(0, -.08, model.body.boundingBox!.max.z * .42 - .06);
+    gun = { ...hold(model, grip, fore), grip, fore };
   }
-  return { kind, root, body, skeleton: body.skeleton, map: (body.material as MeshStandardMaterial).map ?? null, joints, side, shoulder: shoulder.y, up, gun };
+  if (kind === 'heavy') { const handle = marker(0, -.05, -.05); shield = { ...hold(shieldModel(), handle), handle }; }
+  if (kind === 'target') { briefcase = new Object3D(); root.add(briefcase); dress(briefcase, briefcaseModel()); }
+  return { kind, root, body, skeleton: body.skeleton, map: (body.material as MeshStandardMaterial).map ?? null, joints, side, shoulder: shoulder.y, up, gun, shield, briefcase, props };
 }
 
-const delta = new Quaternion(), euler = new Euler(), gunAt = new Matrix4(), turnQ = new Quaternion(), ONE = new Vector3(1, 1, 1);
+const delta = new Quaternion(), euler = new Euler(), heldAt = new Matrix4(), heldQ = new Quaternion(), ONE = new Vector3(1, 1, 1);
 // Turns a joint by a rotation given in model space, about its own pivot, on top of its rest pose.
 function turn(j: Joint, x: number, y = 0, z = 0) {
   delta.setFromEuler(euler.set(x, y, z));
   j.bone.quaternion.copy(j.parent).invert().multiply(delta).multiply(j.parent).multiply(j.q);
 }
 const from = new Vector3(), to = new Vector3(), at = new Vector3(), swing = new Quaternion(), own = new Quaternion(), parent = new Quaternion();
+// Places a carried model in model space, as if the torso were at rest; it then follows the spine.
+function place(held: Held, x: number, y: number, z: number, rx: number, ry: number, rz: number) {
+  heldQ.setFromEuler(euler.set(rx, ry, rz));
+  held.pivot.matrix.multiplyMatrices(held.rest, heldAt.compose(v.set(x, y, z), heldQ, ONE));
+  held.pivot.matrixWorldNeedsUpdate = true;
+}
 // Rotates a bone about its pivot so the point `a` (world) moves to `b`.
 function point(bone: Bone, a: Vector3, b: Vector3) {
   bone.getWorldPosition(at);
@@ -107,7 +126,7 @@ function reach(arm: Joint, fore: Joint, wrist: Joint, target: Vector3, bendTo: V
 
 const right = new Vector3(), left = new Vector3(), slack = new Vector3(), bend = new Vector3(), rootQ = new Quaternion();
 export function animateImported(rig: ImportedRig, m: Motion) {
-  const { joints: j, side: s, gun } = rig;
+  const { joints: j, side: s, gun, shield, briefcase } = rig;
   for (const name of JOINTS) { j[name].bone.quaternion.copy(j[name].q); j[name].bone.position.copy(j[name].p); }
   // Walk: legs swing in opposition and the knees fold on the forward swing, with a bob twice per stride. Downed,
   // the body curls; dead, it sprawls (the fall itself is the whole model's, in units.tsx).
@@ -120,21 +139,26 @@ export function animateImported(rig: ImportedRig, m: Motion) {
   // Hit flinch snaps the torso back and twists it, each shot rocks it, and the head jerks or lolls.
   turn(j.Spine, -m.flinch * .32 - m.kick * .06 + .25 * slump, stride * .12, m.flinch * .16);
   turn(j.Head, -m.flinch * .35 + .45 * slump);
-  // The rifle at low ready across the body, raised to the shoulder while aiming; each shot kicks it back and up.
-  if (gun) {
-    const lift = m.aim, across = 1 - lift;
-    turnQ.setFromEuler(euler.set(.3 * across - m.kick * .3, -s * .6 * across, s * .2 * across));
-    gunAt.compose(v.set(s * .1, rig.shoulder - .18 + .14 * lift, .16 + .06 * lift - m.kick * .07), turnQ, ONE);
-    gun.pivot.matrix.multiplyMatrices(gun.rest, gunAt); gun.pivot.matrixWorldNeedsUpdate = true;
-  }
+  // The rifle at low ready across the body (straight ahead beside the heavy's shield), raised to the shoulder while
+  // aiming; each shot kicks it back and up. The shield comes forward and angles across while aiming, and a hit
+  // knocks it back.
+  const lift = m.aim, across = shield ? 0 : 1 - lift;
+  if (gun) place(gun, s * .1, rig.shoulder - .18 + .14 * lift, .16 + .06 * lift - m.kick * .07, .3 * (1 - lift) - m.kick * .3, -s * .6 * across, s * .2 * across);
+  if (shield) place(shield, -s * .22, rig.shoulder - .22, .3 + .06 * lift - m.flinch * .08, 0, s * .25 * lift, 0);
   rig.root.updateMatrixWorld(true);
   rig.root.getWorldQuaternion(rootQ);
   const world = (x: number, y: number, z: number, out: Vector3) => out.set(x, y, z).applyMatrix4(rig.root.matrixWorld);
-  // Hands: on the rifle's grips, or swinging at the sides against the legs; they go slack at the sides when down.
-  if (gun) { gun.grip.getWorldPosition(right); gun.fore.getWorldPosition(left); }
-  else { world(s * .3, rig.shoulder - .5, -stride * .25, right); world(-s * .3, rig.shoulder - .5, stride * .25, left); }
+  // Hands: on the rifle's grips and the shield's handle, or swinging at the sides against the legs (the briefcase
+  // hand less); they go slack at the sides when down.
+  if (gun) gun.grip.getWorldPosition(right);
+  else world(s * (briefcase ? .33 : .3), rig.shoulder - .5, -stride * (briefcase ? .12 : .25), right);
+  if (shield) shield.handle.getWorldPosition(left);
+  else if (gun) gun.fore.getWorldPosition(left);
+  else world(-s * .3, rig.shoulder - .5, stride * .25, left);
   if (slump) { right.lerp(world(s * .32, rig.shoulder - .5, .08, slack), slump); left.lerp(world(-s * .32, rig.shoulder - .5, .08, slack), slump); }
   // Elbows bend down, out and back.
   reach(j.RightArm, j.RightForeArm, j.RightHand, right, bend.set(s * .5, -1, -.3).applyQuaternion(rootQ));
   reach(j.LeftArm, j.LeftForeArm, j.LeftHand, left, bend.set(-s * .5, -1, -.3).applyQuaternion(rootQ));
+  // The briefcase's handle sits in the right palm, just below the wrist.
+  if (briefcase) briefcase.position.copy(rig.root.worldToLocal(j.RightHand.bone.getWorldPosition(v))).y -= .07;
 }

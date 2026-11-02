@@ -5,7 +5,10 @@ import type { UnitKind } from '../game/simulation.ts';
 
 // Imported unit models (auto-rigged GLBs under public/models). A kind without one, or whose file has not loaded
 // or failed to, keeps its procedural rig, so the game never waits on a download.
-const URLS: Partial<Record<UnitKind, string>> = { assault: '/models/assault.glb', support: '/models/support.glb' };
+const URLS: Partial<Record<UnitKind, string>> = {
+  assault: '/models/assault.glb', support: '/models/support.glb', recon: '/models/recon.glb', tech: '/models/tech.glb',
+  guard: '/models/guard.glb', heavy: '/models/heavy.glb', target: '/models/target.glb', vip: '/models/vip.glb',
+};
 const loaded = new Map<UnitKind, GLTF>(), listeners = new Set<() => void>();
 let started = false;
 

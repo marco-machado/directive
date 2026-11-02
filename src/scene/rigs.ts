@@ -204,12 +204,16 @@ function heavy() {
     k.lit('#4a3a3a', side, lathe([[.0, -.08], [.12, -.08], [.16, .0], [.15, .08], [0, .1]], 8), [x, .94, 0])
       .lit('#4a3a3a', side, bevelBox(.18, .12, .22), [x, .78, 0]);
   }
-  k.lit('#7d7470', 'shield', bevelBox(.48, .84, .06, .02), [-.24, .66, .38])
-    .lit('#3a3233', 'shield', bevelBox(.52, .06, .08, .02), [-.24, 1.07, .38])
-    .lit('#3a3233', 'shield', bevelBox(.52, .05, .08, .02), [-.24, .25, .38])
-    .glow('#ffb3a6', 'shield', bevelBox(.3, .05, .02, .006), [-.24, .96, .42])
-    .glow('#ff6d5c', 'shield', bevelBox(.05, .5, .02, .006), [-.24, .6, .42]);
-  return rifle(k).build();
+  return rifle(shield(k)).build();
+}
+// The riot shield on the shield bone, its handle at the bone: a warm gray face with dark rims, a lit viewport and stripe.
+function shield(k: Kit) {
+  const [x, y, z] = k.bones.find(b => b.name === 'shield')!.at, at = (dx: number, dy: number, dz: number): V3 => [x + dx, y + dy, z + dz];
+  return k.lit('#7d7470', 'shield', bevelBox(.48, .84, .06, .02), at(-.02, -.04, .08))
+    .lit('#3a3233', 'shield', bevelBox(.52, .06, .08, .02), at(-.02, .37, .08))
+    .lit('#3a3233', 'shield', bevelBox(.52, .05, .08, .02), at(-.02, -.45, .08))
+    .glow('#ffb3a6', 'shield', bevelBox(.3, .05, .02, .006), at(-.02, .26, .12))
+    .glow('#ff6d5c', 'shield', bevelBox(.05, .5, .02, .006), at(-.02, -.1, .12));
 }
 function target() {
   const gold = '#ffcf6b', trim = '#c99a45', k = humanoid('target', { suit: '#6e5040', vest: '#5a4034', legs: '#2a2421', boots: '#171312', skin: '#b0a18d', glove: '#2a1f1a', pads: '#5b4134' });
@@ -223,10 +227,12 @@ function target() {
     .lit('#4a342a', 'chest', bevelBox(.08, .24, .03, .01), [.08, .86, .19], [0, 0, .25])
     .lit('#2a211c', 'head', bevelBox(.25, .07, .26, .03), [0, 1.26, -.01])
     .glow(gold, 'head', bevelBox(.18, .035, .03, .006), [0, 1.15, .135])
-    .lit('#2c2420', 'armR', bevelBox(.09, .26, .36, .02), [.29, .33, 0])
-    .glow(gold, 'armR', bevelBox(.1, .035, .12, .006), [.29, .47, 0]);
-  return k.build();
+  return briefcase(k, 'armR', [.29, .47, 0]).build();
 }
+// A slim briefcase hanging from its handle at `at`, with a gold clasp along the top.
+const briefcase = (k: Kit, bone: string, [x, y, z]: V3) => k
+  .lit('#2c2420', bone, bevelBox(.09, .26, .36, .02), [x, y - .14, z])
+  .glow('#ffcf6b', bone, bevelBox(.1, .035, .12, .006), [x, y, z]);
 function vip() {
   const gold = '#ffe08a', k = humanoid('vip', { suit: '#2c363c', vest: '#e9e3d4', legs: '#1d2328', boots: '#111416', skin: '#c9bfae' });
   // A sharp suit: white shirt front between dark lapels, gold tie and pocket square, and a brimmed hat with a gold band.
@@ -295,13 +301,14 @@ export function rigModel(kind: UnitKind) {
   if (!m) { m = BUILDERS[kind](); models.set(kind, m); }
   return m;
 }
-// A unit's rifle on its own, the grip at the origin and the muzzle toward +z, for models that carry it in a hand.
-const weapons = new Map<UnitKind, RigModel>();
-export function weaponModel(kind: UnitKind) {
-  let m = weapons.get(kind);
-  if (!m) { m = rifle(new Kit(kind).bone('gun', null, [0, 0, 0])).build(); weapons.set(kind, m); }
-  return m;
-}
+// Carried things on their own, for models that hold them in a hand: a unit's rifle (the grip at the origin, the muzzle
+// toward +z), the heavy's shield (the handle at the origin, the face toward +z) and the target's briefcase (hanging
+// from its handle at the origin).
+const props = new Map<string, RigModel>();
+const prop = (key: string, build: () => RigModel) => { let m = props.get(key); if (!m) props.set(key, m = build()); return m; };
+export const weaponModel = (kind: UnitKind) => prop(`rifle:${kind}`, () => rifle(new Kit(kind).bone('gun', null, [0, 0, 0])).build());
+export const shieldModel = () => prop('shield', () => shield(new Kit('heavy').bone('shield', null, [0, 0, 0])).build());
+export const briefcaseModel = () => prop('briefcase', () => briefcase(new Kit('target').bone('case', null, [0, 0, 0]), 'case', [0, 0, 0]).build());
 
 // One unit's live rig: its bones, the lit body, the glow, and an optional extra skin (the silhouette) on the
 // same skeleton. The glow is a child of the body; an extra skin must sit at the body's world transform too.
