@@ -8,6 +8,7 @@
     "build": "vite build",
     "typecheck": "tsc --noEmit && tsc --noEmit -p worker",
     "test": "node --test --experimental-transform-types tests/*.test.ts",
+    "test:release": "npm run build && playwright test -c tests/release",
     "preview": "vite preview --host 0.0.0.0",
     "deploy": "vite build && wrangler deploy",
     "cf-typegen": "wrangler types --include-runtime=false worker/worker-configuration.d.ts",
@@ -23,6 +24,7 @@
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.64.0",
     "@cloudflare/workers-types": "5.20261015.1",
+    "@playwright/test": "1.64.1",
     "@types/node": "26.6.6",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
