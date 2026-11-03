@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo } from 'react';
-import { useFrame, useThree } from '@react-three/fiber';
+import { useFrame } from '@react-three/fiber';
 import { BufferGeometry, Float32BufferAttribute, Vector3 } from 'three';
 import type { MissionPlan } from '../game/mapgen.ts';
 import type { Simulation } from '../game/simulation.ts';
@@ -9,6 +9,7 @@ import { dressDistrict, GRID_Y } from './district.ts';
 import type { Part } from './district.ts';
 import { disposeMaterials, districtMaterials } from './materials.ts';
 import { BOX, InstancedParts, PLANE, ROUND } from './parts.tsx';
+import { useRenderer } from './renderer.ts';
 import type { Fades } from './parts.tsx';
 import { facadeAtlas, nightEnvironment, poolTexture, puddleTexture, signAtlas } from './textures.ts';
 import { markHiding, viewAlong } from './view.ts';
@@ -73,10 +74,10 @@ export const GROUND = 20; // meters of street drawn past the bounds; the horizon
 
 export const City = memo(function City({ plan, sim }: { plan: MissionPlan; sim: Simulation }) {
   const b = plan.world.bounds, w = b.maxX - b.minX, d = b.maxZ - b.minZ, cx = (b.minX + b.maxX) / 2, cz = (b.minZ + b.maxZ) / 2;
-  const gl = useThree(s => s.gl), district = dressDistrict(plan);
+  const gl = useRenderer(), district = dressDistrict(plan);
   // One facade atlas and one sign atlas per contract, shared by every building, the ground and the ring.
   const kit = useMemo(() => {
-    const textures = [facadeAtlas(district.seed, Math.min(8, gl.capabilities.getMaxAnisotropy())), signAtlas(district), poolTexture(), puddleTexture()] as const;
+    const textures = [facadeAtlas(district.seed, Math.min(8, gl.getMaxAnisotropy())), signAtlas(district), poolTexture(), puddleTexture()] as const;
     const materials = districtMaterials(...textures, nightEnvironment(gl));
     materials.bounds.value.set(b.minX, b.minZ, b.maxX, b.maxZ);
     return { textures, materials };

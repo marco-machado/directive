@@ -1,12 +1,14 @@
 import { defineConfig } from '@playwright/test';
+import type { Renderer } from './helpers.ts';
 
 // The release check: real input on the built game. `npm run test:release` builds first; the smoke runs on
 // `vite preview` (the production bundle and the Worker in workerd), the playthrough on the dev server, where it can
 // read the page's modules to aim clicks. Each server takes the first free port from its default up, and the specs
-// read the one it reported from PREVIEW_PORT and DEV_PORT.
+// read the one it reported from PREVIEW_PORT and DEV_PORT. The smoke runs once on the renderer's own choice (WebGPU
+// where the browser offers it) and once on its WebGL 2 fallback.
 const listening = (name: string) => new RegExp(`Local:\\s+(?:\\x1b\\[[\\d;]*m)*http://localhost:(?:\\x1b\\[[\\d;]*m)*(?<${name}>\\d+)`);
 
-export default defineConfig({
+export default defineConfig<{ renderer: Renderer }>({
   testDir: '.',
   outputDir: '../../test-results/release',
   reporter: [['list'], ['html', { outputFolder: '../../test-results/release-report', open: 'never' }]],
@@ -24,6 +26,7 @@ export default defineConfig({
   },
   projects: [
     { name: 'smoke', testMatch: 'smoke.spec.ts' },
+    { name: 'smoke-webgl', testMatch: 'smoke.spec.ts', use: { renderer: 'webgl' } },
     { name: 'playthrough', testMatch: 'playthrough.spec.ts' },
   ],
   webServer: [

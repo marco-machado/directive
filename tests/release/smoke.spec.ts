@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test';
-import { test, expect, VIEWPORTS, previewUrl, sleep, shot, note, gpu, frameTimes, expectLayoutFits } from './helpers.ts';
+import { test, expect, VIEWPORTS, previewUrl, sleep, shot, note, gpu, canvasBackend, expectedBackend, home, frameTimes, expectLayoutFits } from './helpers.ts';
 
 // The production build on each supported viewport, through real mouse, keyboard and touch input: title, contract
 // board, deploy, a move order, pause, the mission menu and its dialogs, restart, and (on touch) a long-press waypoint.
@@ -16,19 +16,21 @@ for (const [name, device] of Object.entries(supported)) {
   test.describe(name, () => {
     test.use(device);
 
-    test('title to mission and back through every menu', async ({ page }, testInfo) => {
+    test('title to mission and back through every menu', async ({ page, renderer }, testInfo) => {
       const touch = 'hasTouch' in device && device.hasTouch;
       const press = (selector: string) => touch ? page.locator(selector).tap() : page.locator(selector).click();
       // The top bar's pause button names the state on every layout; the pause banner and badge each show only on some.
       const paused = page.locator('.topbar button[aria-label="Resume"]');
       const togglePause = () => touch ? press('.topbar :is(button[aria-label="Pause"], button[aria-label="Resume"])') : page.keyboard.press('Space');
 
-      await page.goto('/');
+      await page.goto(home(renderer));
       await expect(page.locator('canvas')).toBeAttached({ timeout: 15_000 });
-      note(testInfo, 'GPU', await gpu(page));
+      const offered = await gpu(page);
+      note(testInfo, 'GPU', offered);
 
       await test.step('title', async () => {
         await expect(page.locator('.title-menu .menu-item.primary')).toBeEnabled({ timeout: 15_000 });
+        expect(await canvasBackend(page), 'renderer backend').toBe(expectedBackend(renderer, offered));
         await sleep(1000);
         await shot(page, testInfo, '1-title');
         await expectLayoutFits(page, testInfo, 'the title');
@@ -142,8 +144,8 @@ for (const [name, device] of Object.entries(supported)) {
 test.describe('phone', () => {
   test.use(phone);
 
-  test('shows the too-small notice', async ({ page }, testInfo) => {
-    await page.goto('/');
+  test('shows the too-small notice', async ({ page, renderer }, testInfo) => {
+    await page.goto(home(renderer));
     await expect(page.locator('canvas')).toBeAttached({ timeout: 15_000 });
     const notice = page.locator('dialog[open].too-small');
     await expect(notice).toBeVisible();

@@ -51,16 +51,18 @@ export function Box({ position, size, color, emissive, castShadow }: { position:
 export type Fades = { level: Float32Array; version: number };
 
 // One draw call for many parts: each instance scales the shared geometry to its part, takes its color (pushed
-// past 1 by `glow`), its fade level from its building (see materials.ts) and its Part.data as `instanceData`.
+// past 1 by `glow`), its fade level from its building (see materials.ts), its Part.data as `instanceData` and its
+// size as `instanceSize`, the scale its matrix applies.
 const NO_FADES: Fades = { level: new Float32Array(0), version: 0 };
 export function InstancedParts({ parts, geometry: base, material, fades = NO_FADES, castShadow, receiveShadow, renderOrder }: { parts: readonly Part[]; geometry: BufferGeometry; material: Material; fades?: Fades; castShadow?: boolean; receiveShadow?: boolean; renderOrder?: number }) {
   const ref = useRef<InstancedMesh>(null), seen = useRef(-1);
   // Its own geometry, to carry the per-instance attributes.
   const geometry = useMemo(() => {
-    const geometry = base.clone(), values = new Float32Array(parts.length * 4);
-    parts.forEach((p, i) => { if (p.data) values.set(p.data, i * 4); });
+    const geometry = base.clone(), values = new Float32Array(parts.length * 4), sizes = new Float32Array(parts.length * 3);
+    parts.forEach((p, i) => { if (p.data) values.set(p.data, i * 4); sizes.set([p.w, p.h, p.d], i * 3); });
     geometry.setAttribute('instanceFade', new InstancedBufferAttribute(new Float32Array(parts.length), 1));
     geometry.setAttribute('instanceData', new InstancedBufferAttribute(values, 4));
+    geometry.setAttribute('instanceSize', new InstancedBufferAttribute(sizes, 3));
     return geometry;
   }, [parts, base]);
   useEffect(() => () => geometry.dispose(), [geometry]);
