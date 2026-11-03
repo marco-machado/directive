@@ -24,6 +24,7 @@ import { Objectives } from './objectives.tsx';
 import { Pointers } from './pointers.tsx';
 import type { Insets } from './pointers.tsx';
 import { PlannedRoutes } from './routes.tsx';
+import { createRenderer, useRenderer } from './renderer.ts';
 import { nearestClickable, Units } from './units.tsx';
 import type { Hitboxes } from './units.tsx';
 import { cameraOffset } from './view.ts';
@@ -203,7 +204,7 @@ function World({ sim, reset, focus, overview, layout, attract, frame, labels, mi
 }
 
 function PostEffects() {
-  const gl = useThree(s => s.gl);
+  const gl = useRenderer();
   return bloomSupported(gl) ? <Bloom /> : null;
 }
 
@@ -212,10 +213,11 @@ export const GameCanvas = memo(function GameCanvas(props: Props) {
   // and R3F swaps the default parent once events connect, which blanked the first label.
   const labels = useRef<HTMLDivElement>(null!), missed = useRef<(e: MouseEvent) => void>(() => {});
   const { quality } = useSyncExternalStore(gameOptions.subscribe, gameOptions.get);
-  // The stencil buffer keeps unit silhouettes off the units' own visible pixels (units.tsx). Neutral tone mapping
-  // keeps hues true, so the HUD-colored overlays look the same with or without the bloom pass, which tone maps
-  // everything at the end, including the materials that opt out of it.
-  return <><Canvas shadows="percentage" orthographic camera={{ position: [29, 34, 32], zoom: 24, near: .1, far: 150 }} dpr={[1, 1.5]} gl={{ antialias: true, alpha: false, stencil: true, toneMapping: NeutralToneMapping }} onPointerMissed={e => missed.current(e)} fallback={<div className="render-error">WebGL is unavailable. Enable hardware acceleration or try a WebGL-capable browser.</div>}>
+  // Neutral tone mapping keeps hues true for the HUD-colored overlays. The renderer applies it to the whole frame at
+  // the end, with or without the bloom pass, so materials marked toneMapped: false are tone mapped too and the
+  // overlays look the same either way. It is set once the canvas exists: R3F resets the tone mapping of a renderer
+  // from a factory to ACES.
+  return <><Canvas shadows="percentage" orthographic camera={{ position: [29, 34, 32], zoom: 24, near: .1, far: 150 }} dpr={[1, 1.5]} gl={createRenderer} onCreated={({ gl }) => { gl.toneMapping = NeutralToneMapping; }} onPointerMissed={e => missed.current(e)} fallback={<div className="render-error">WebGPU and WebGL 2 are unavailable. Enable hardware acceleration or try a current browser.</div>}>
     <World {...props} labels={labels} missed={missed} />
     {quality === 'high' ? <PostEffects /> : null}
     {import.meta.env.DEV ? <Diagnostics /> : null}

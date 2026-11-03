@@ -16,11 +16,30 @@ export const VIEWPORTS = {
   phone: { viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, hasTouch: true, isMobile: true },
 } satisfies Record<string, Device>;
 
+// The renderer backend a project asks for: `auto` lets the game probe WebGPU, `webgl` forces its WebGL 2 fallback.
+export type Renderer = 'auto' | 'webgl';
+export const home = (renderer: Renderer) => renderer === 'webgl' ? '/?renderer=webgl' : '/';
+
 // Every console error or warning, uncaught page error, failed request and HTTP status >= 400 the page produces.
 // Requests a test drops on purpose (see goOffline) are kept out, along with the browser's console line for each.
 export type Errors = { console: string[]; page: string[]; network: string[]; blocked: Set<string> };
 
-export const test = base.extend<{ errors: Errors }>({
+export const test = base.extend<{ errors: Errors; renderer: Renderer; contexts: void }>({
+  renderer: ['auto', { option: true }],
+  // Records the kind of context each canvas hands out, so canvasBackend can read the game's backend without asking
+  // the canvas, which would create a context of its own if the renderer has none yet.
+  contexts: [async ({ page }, use) => {
+    await page.addInitScript(() => {
+      const contexts = new WeakMap<HTMLCanvasElement, string>(), get = HTMLCanvasElement.prototype.getContext as (this: HTMLCanvasElement, type: string, options?: unknown) => RenderingContext | null;
+      (window as unknown as { canvasContexts: typeof contexts }).canvasContexts = contexts;
+      HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement, type: string, options?: unknown) {
+        const context = get.call(this, type, options);
+        if (context && !contexts.has(this)) contexts.set(this, type);
+        return context;
+      } as typeof HTMLCanvasElement.prototype.getContext;
+    });
+    await use();
+  }, { auto: true }],
   errors: [async ({ page }, use) => {
     const log: Errors = { console: [], page: [], network: [], blocked: new Set() };
     page.on('console', m => {
@@ -49,10 +68,19 @@ export async function shot(page: Page, testInfo: TestInfo, name: string) {
 export const note = (testInfo: TestInfo, type: string, value: unknown) =>
   testInfo.annotations.push({ type, description: typeof value === 'string' ? value : JSON.stringify(value) });
 
-export const gpu = (page: Page) => page.evaluate(() => {
+// What the browser offers: its WebGPU adapter (null without one) and its WebGL 2 renderer.
+export const gpu = (page: Page) => page.evaluate(async () => {
+  const adapter = await navigator.gpu?.requestAdapter().catch(() => null) ?? null;
   const gl = document.createElement('canvas').getContext('webgl2'), info = gl?.getExtension('WEBGL_debug_renderer_info');
-  return info ? String(gl!.getParameter(info.UNMASKED_RENDERER_WEBGL)) : 'unknown';
+  return { webgpu: adapter && `${adapter.info.vendor} ${adapter.info.architecture}`, webgl: info ? String(gl!.getParameter(info.UNMASKED_RENDERER_WEBGL)) : 'unknown' };
 });
+// The backend the game's canvas runs on, once the renderer has taken its context (the title can be ready first).
+export async function canvasBackend(page: Page) {
+  const kind = () => page.evaluate(() => (window as unknown as { canvasContexts: WeakMap<Element, string> }).canvasContexts.get(document.querySelector('canvas')!) ?? null);
+  await expect.poll(kind, { message: 'the renderer takes a canvas context', timeout: 15_000 }).not.toBeNull();
+  return await kind() === 'webgpu' ? 'webgpu' : 'webgl2';
+}
+export const expectedBackend = (renderer: Renderer, offered: Awaited<ReturnType<typeof gpu>>) => renderer === 'auto' && offered.webgpu ? 'webgpu' : 'webgl2';
 
 // rAF deltas over `ms` of real time.
 export const frameTimes = (page: Page, ms: number) => page.evaluate(ms => new Promise<Record<string, number>>(resolve => {

@@ -2,8 +2,12 @@ import { useEffect, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import {
   AdditiveBlending, BoxGeometry, BufferAttribute, CanvasTexture, Color, DoubleSide, DynamicDrawUsage, Euler, Group, InstancedBufferAttribute, InstancedBufferGeometry,
-  InstancedMesh, Matrix4, Mesh, MeshBasicMaterial, MeshStandardMaterial, NormalBlending, Quaternion, ShaderMaterial, Vector2, Vector3,
+  InstancedMesh, Matrix4, Mesh, MeshBasicMaterial, MeshStandardMaterial, NormalBlending, Quaternion, Vector2, Vector3,
 } from 'three';
+import type { Texture } from 'three';
+import { NodeMaterial } from 'three/webgpu';
+import type { Node } from 'three/webgpu';
+import { abs, attribute, cameraProjectionMatrix, cameraViewMatrix, cos, Discard, Fn, length, max, mix, positionGeometry, select, sin, smoothstep, texture, uniform, vec2, vec3, vec4 } from 'three/tsl';
 import type { Blast, Faction, Shot, Simulation, Unit, UnitKind } from '../game/simulation.ts';
 import { play } from '../ui/audio.ts';
 import type { Cue } from '../ui/audio.ts';
@@ -117,77 +121,55 @@ const set4 = (array: Float32Array, i: number, a: number, b: number, c: number, d
 const set3 = (array: Float32Array, i: number, a: number, b: number, c: number) => { array[3 * i] = a; array[3 * i + 1] = b; array[3 * i + 2] = c; };
 const set2 = (array: Float32Array, i: number, a: number, b: number) => { array[2 * i] = a; array[2 * i + 1] = b; };
 
+// Effects draw in three's node materials with their own vertex and fragment stages. Their inputs are
+// per-instance attributes (Quads), read straight in either stage.
+const position = positionGeometry, color = attribute('aColor', 'vec4'), center = attribute('aCenter', 'vec3'), sizeRot = attribute('aSizeRot', 'vec2');
+const resolution = uniform(new Vector2(1, 1));
+const viewProjection = cameraProjectionMatrix.mul(cameraViewMatrix);
+// Turns p by angle a (radians) in its own plane.
+const turn = (p: Node<'vec2'>, a: Node<'float'>) => vec2(cos(a).mul(p.x).sub(sin(a).mul(p.y)), sin(a).mul(p.x).add(cos(a).mul(p.y)));
+const quadUv = position.xy.mul(.5).add(.5);
+
 // Beams: a quad from aStart to aEnd that always faces the camera and is aShape.x CSS pixels wide, so a tracer
 // never thins below its width at any zoom. aShape.y is the alpha at the start end, for a streak that fades
 // toward its tail.
-const BEAM_VERTEX = /* glsl */ `
-attribute vec3 aStart; attribute vec3 aEnd; attribute vec4 aColor; attribute vec2 aShape;
-uniform vec2 uResolution;
-varying vec2 vUv; varying vec4 vColor; varying float vTail;
-void main() {
-  vec4 a = projectionMatrix * viewMatrix * vec4(aStart, 1.), b = projectionMatrix * viewMatrix * vec4(aEnd, 1.);
-  vec2 d = (b.xy / b.w - a.xy / a.w) * uResolution;
-  float len = length(d);
-  d = len > 1e-5 ? d / len : vec2(1., 0.);
-  float along = position.x * .5 + .5;
-  vec4 p = mix(a, b, along);
-  p.xy += vec2(-d.y, d.x) * position.y * aShape.x / uResolution * p.w;
-  gl_Position = p;
-  vUv = vec2(along, position.y); vColor = aColor; vTail = aShape.y;
-}`;
-const BEAM_FRAGMENT = /* glsl */ `
-uniform sampler2D map;
-varying vec2 vUv; varying vec4 vColor; varying float vTail;
-void main() {
-  float across = texture2D(map, vec2(.5, vUv.y * .5 + .5)).a;
-  gl_FragColor = vec4(mix(vColor.rgb, vec3(1.), across * across * .6), across * mix(vTail, 1., vUv.x) * vColor.a);
-  #include <colorspace_fragment>
-}`;
+const shape = attribute('aShape', 'vec2'), along = position.x.mul(.5).add(.5);
+const BEAM_VERTEX = Fn(() => {
+  const a = viewProjection.mul(vec4(attribute('aStart', 'vec3'), 1)).toVar(), b = viewProjection.mul(vec4(attribute('aEnd', 'vec3'), 1)).toVar();
+  const d = b.xy.div(b.w).sub(a.xy.div(a.w)).mul(resolution).toVar(), len = length(d);
+  d.assign(select(len.greaterThan(1e-5), d.div(len), vec2(1, 0)));
+  const p = mix(a, b, along).toVar();
+  return vec4(p.xy.add(vec2(d.y.negate(), d.x).mul(position.y).mul(shape.x).div(resolution).mul(p.w)), p.zw);
+})();
+const beamFragment = (map: Texture) => {
+  const across = texture(map, vec2(.5, position.y.mul(.5).add(.5))).a;
+  return vec4(mix(color.rgb, vec3(1), across.mul(across).mul(.6)), across.mul(mix(shape.y, 1, along)).mul(color.a));
+};
 // Billboards: a camera-facing square of half-size aSizeRot.x (m), turned aSizeRot.y in the view plane.
-const BILLBOARD_VERTEX = /* glsl */ `
-attribute vec3 aCenter; attribute vec2 aSizeRot; attribute vec4 aColor;
-varying vec2 vUv; varying vec4 vColor;
-void main() {
-  vec4 mv = viewMatrix * vec4(aCenter, 1.);
-  float c = cos(aSizeRot.y), s = sin(aSizeRot.y);
-  mv.xy += mat2(c, s, -s, c) * position.xy * aSizeRot.x;
-  gl_Position = projectionMatrix * mv;
-  vUv = position.xy * .5 + .5; vColor = aColor;
-}`;
+const BILLBOARD_VERTEX = Fn(() => {
+  const mv = cameraViewMatrix.mul(vec4(center, 1));
+  return cameraProjectionMatrix.mul(vec4(mv.xy.add(turn(position.xy, sizeRot.y).mul(sizeRot.x)), mv.zw));
+})();
 // Ground quads: flat on the street at aCenter, the same size and turn.
-const GROUND_VERTEX = /* glsl */ `
-attribute vec3 aCenter; attribute vec2 aSizeRot; attribute vec4 aColor; attribute vec3 aRing;
-varying vec2 vUv; varying vec2 vP; varying vec4 vColor; varying vec3 vRing;
-void main() {
-  float c = cos(aSizeRot.y), s = sin(aSizeRot.y);
-  vec2 p = mat2(c, s, -s, c) * position.xy * aSizeRot.x;
-  gl_Position = projectionMatrix * viewMatrix * vec4(aCenter + vec3(p.x, 0., p.y), 1.);
-  vUv = position.xy * .5 + .5; vP = position.xy; vColor = aColor; vRing = aRing;
-}`;
-const TEXTURED_FRAGMENT = /* glsl */ `
-uniform sampler2D map;
-varying vec2 vUv; varying vec4 vColor;
-void main() {
-  gl_FragColor = vec4(vColor.rgb, texture2D(map, vUv).a * vColor.a);
-  #include <colorspace_fragment>
-}`;
+const GROUND_VERTEX = Fn(() => {
+  const p = turn(position.xy, sizeRot.y).mul(sizeRot.x);
+  return viewProjection.mul(vec4(center.add(vec3(p.x, 0, p.y)), 1));
+})();
+const texturedFragment = (map: Texture) => vec4(color.rgb, texture(map, quadUv).a.mul(color.a));
 // A blast ring: aRing = (ring radius, ring width, fill), all as shares of the quad's half-size.
-const RING_FRAGMENT = /* glsl */ `
-varying vec2 vP; varying vec4 vColor; varying vec3 vRing;
-void main() {
-  float r = length(vP);
-  if (r > 1.) discard;
-  float ring = smoothstep(vRing.y, 0., abs(r - vRing.x));
-  float fill = vRing.z * (1. - smoothstep(vRing.x - .05, vRing.x + .02, r)) * (.35 + .65 * r / max(vRing.x, .01));
-  gl_FragColor = vec4(vColor.rgb, (ring + fill) * vColor.a);
-  #include <colorspace_fragment>
-}`;
+const RING_FRAGMENT = Fn(() => {
+  const ringShape = attribute('aRing', 'vec3'), r = length(position.xy);
+  Discard(r.greaterThan(1));
+  const ring = smoothstep(0, ringShape.y, abs(r.sub(ringShape.x))).oneMinus();
+  const fill = ringShape.z.mul(smoothstep(ringShape.x.sub(.05), ringShape.x.add(.02), r).oneMinus()).mul(r.div(max(ringShape.x, .01)).mul(.65).add(.35));
+  return vec4(color.rgb, ring.add(fill).mul(color.a));
+})();
 
-const resolution = { value: new Vector2(1, 1) };
-const shader = (vertexShader: string, fragmentShader: string, additive: boolean, map?: CanvasTexture) => new ShaderMaterial({
-  vertexShader, fragmentShader, uniforms: { map: { value: map ?? null }, uResolution: resolution },
-  transparent: true, depthWrite: false, side: DoubleSide, blending: additive ? AdditiveBlending : NormalBlending,
-});
+const effect = (vertexNode: Node<'vec4'>, fragmentNode: Node<'vec4'>, additive: boolean) => {
+  const material = new NodeMaterial();
+  Object.assign(material, { vertexNode, fragmentNode, transparent: true, depthWrite: false, side: DoubleSide, blending: additive ? AdditiveBlending : NormalBlending });
+  return material;
+};
 
 // Pooled effect records. Each pool is preallocated and hands out its oldest record, so nothing is allocated per shot.
 type Tracer = { on: boolean; t0: number; ax: number; ay: number; az: number; bx: number; by: number; bz: number; len: number; snipe: boolean; hit: boolean; color: Color; fx: number; fz: number };
@@ -218,7 +200,7 @@ class CombatFx {
   private rings = new Quads(24, { aCenter: 3, aSizeRot: 2, aColor: 4, aRing: 3 });
   private decals = new Quads(192, { aCenter: 3, aSizeRot: 2, aColor: 4, aRing: 3 });
   private sparkMesh: InstancedMesh; private debrisMesh: InstancedMesh;
-  private materials: (ShaderMaterial | MeshBasicMaterial | MeshStandardMaterial)[];
+  private materials: (NodeMaterial | MeshBasicMaterial | MeshStandardMaterial)[];
   private geometries: BoxGeometry[];
 
   private tracers = new Pool<Tracer>(64, () => ({ on: false, t0: 0, ax: 0, ay: 0, az: 0, bx: 0, by: 0, bz: 0, len: 1, snipe: false, hit: false, color: new Color(), fx: 0, fz: 0 }));
@@ -236,9 +218,9 @@ class CombatFx {
   private hp = new Map<string, number>();
 
   constructor() {
-    const beamMat = shader(BEAM_VERTEX, BEAM_FRAGMENT, true, PROFILE), flashMat = shader(BILLBOARD_VERTEX, TEXTURED_FRAGMENT, true, STAR);
-    const smokeMat = shader(BILLBOARD_VERTEX, TEXTURED_FRAGMENT, false, PUFF), ringMat = shader(GROUND_VERTEX, RING_FRAGMENT, true);
-    const decalMat = shader(GROUND_VERTEX, TEXTURED_FRAGMENT, false, BURN);
+    const beamMat = effect(BEAM_VERTEX, beamFragment(PROFILE), true), flashMat = effect(BILLBOARD_VERTEX, texturedFragment(STAR), true);
+    const smokeMat = effect(BILLBOARD_VERTEX, texturedFragment(PUFF), false), ringMat = effect(GROUND_VERTEX, RING_FRAGMENT, true);
+    const decalMat = effect(GROUND_VERTEX, texturedFragment(BURN), false);
     decalMat.polygonOffset = true; decalMat.polygonOffsetFactor = -2; decalMat.polygonOffsetUnits = -2;
     const sparkGeo = new BoxGeometry(), debrisGeo = new BoxGeometry();
     const sparkMat = new MeshBasicMaterial({ toneMapped: false, transparent: true, depthWrite: false, blending: AdditiveBlending });

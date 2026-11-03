@@ -3,10 +3,13 @@ import type { RefObject } from 'react';
 import { useFrame } from '@react-three/fiber';
 import type { ThreeEvent } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
-import { AlwaysStencilFunc, BufferAttribute, CanvasTexture, CircleGeometry, GreaterDepth, MeshBasicMaterial, MeshStandardMaterial, NotEqualStencilFunc, PlaneGeometry, ReplaceStencilOp, RingGeometry, Shape, ShapeGeometry, SRGBColorSpace, Color, Vector2, Vector3 } from 'three';
+import { AlwaysStencilFunc, BufferAttribute, CanvasTexture, CircleGeometry, GreaterDepth, MeshBasicMaterial, NotEqualStencilFunc, PlaneGeometry, ReplaceStencilOp, RingGeometry, Shape, ShapeGeometry, SRGBColorSpace, Color, Vector2, Vector3 } from 'three';
 import type { BufferGeometry, Camera, Group, Material, Mesh, Object3D, Skeleton, SkinnedMesh, Texture } from 'three';
 import type { GLTF } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { MeshStandardNodeMaterial } from 'three/webgpu';
+import type { Node } from 'three/webgpu';
+import { abs, diffuseColor, dot, materialColor, materialEmissive, max, mix, normalView, positionViewDirection, pow, uniform, vec3 } from 'three/tsl';
 import { REVIVE_SECONDS, SUSPICIOUS, TAKEDOWN_SECONDS } from '../game/simulation.ts';
 import type { Faction, Simulation, Unit, UnitKind } from '../game/simulation.ts';
 import { dragged } from './drag.ts';
@@ -37,18 +40,18 @@ const dim = (color: string) => `#${new Color(color).multiplyScalar(DIM).getHexSt
 // where it ends up visible. At night the body also glows faintly in its own colors, so units
 // read on dark streets whichever way the moon catches them.
 const NIGHT_GLOW = .4;
-const nightGlow = (m: MeshStandardMaterial) => {
-  m.onBeforeCompile = shader => { shader.fragmentShader = shader.fragmentShader.replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>\ntotalEmissiveRadiance += diffuseColor.rgb * ${NIGHT_GLOW.toFixed(2)};`); };
-  m.customProgramCacheKey = () => 'night-glow';
+const nightGlow = (m: MeshStandardNodeMaterial) => {
+  m.emissiveNode = materialEmissive.add(diffuseColor.rgb.mul(NIGHT_GLOW));
   return m;
 };
 const MARKS = { stencilWrite: true, stencilRef: 1, stencilFunc: AlwaysStencilFunc, stencilZPass: ReplaceStencilOp };
-const BODY = nightGlow(Object.assign(new MeshStandardMaterial({ vertexColors: true, roughness: .72, metalness: .2 }), MARKS));
+const BODY = nightGlow(Object.assign(new MeshStandardNodeMaterial({ vertexColors: true, roughness: .72, metalness: .2 }), MARKS));
 // Visors, lamps and lenses are authored past 1, like the district's neon, so the bloom pass picks them out.
 const GLOW_GAIN = 1.8;
 const GLOW = Object.assign(new MeshBasicMaterial({ vertexColors: true, toneMapped: false }), MARKS);
 GLOW.color.setScalar(GLOW_GAIN);
-const BODY_DIM = nightGlow(BODY.clone()), GLOW_DIM = GLOW.clone();
+// Clones keep their nodes, so the dimmed body glows too.
+const BODY_DIM = BODY.clone(), GLOW_DIM = GLOW.clone();
 BODY_DIM.color.setScalar(DIM); GLOW_DIM.color.setScalar(DIM);
 // What the scene draws and poses for one unit: its procedural rig, or its imported model once that has loaded.
 // Each painted mesh has a lit material and a darkened one for a downed operative; each skin gets a silhouette.
@@ -59,22 +62,16 @@ type Figure = { root: Object3D; skins: SkinnedMesh[]; skeleton: Skeleton; paints
 // near-white parts (the med pack), which keeps them under the bloom threshold. The lift also grays the colors, so a
 // saturation boost after it restores the class colors. The night glow sees the result.
 const TEXTURE_LIFT = .65, TEXTURE_SATURATION = 1.7;
-const lifted = (m: MeshStandardMaterial) => {
-  const night = m.onBeforeCompile;
-  m.onBeforeCompile = (shader, renderer) => {
-    shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', `#include <map_fragment>
-diffuseColor.rgb = pow(diffuseColor.rgb, vec3(${TEXTURE_LIFT.toFixed(2)}));
-diffuseColor.rgb = max(mix(vec3(dot(diffuseColor.rgb, vec3(.2126, .7152, .0722))), diffuseColor.rgb, ${TEXTURE_SATURATION.toFixed(2)}), 0.);`);
-    night.call(m, shader, renderer);
-  };
-  m.customProgramCacheKey = () => 'night-glow-lift';
+const lifted = (m: MeshStandardNodeMaterial) => {
+  const painted = pow(vec3(materialColor), vec3(TEXTURE_LIFT));
+  m.colorNode = max(mix(vec3(dot(painted, vec3(.2126, .7152, .0722))), painted, TEXTURE_SATURATION), 0);
   return m;
 };
 const textured = new Map<Texture, { lit: Material; dim: Material }>();
 function texturedPaint(map: Texture) {
   let p = textured.get(map);
   if (!p) {
-    const lit = lifted(nightGlow(Object.assign(new MeshStandardMaterial({ map, roughness: .72, metalness: .2 }), MARKS))), dim = lifted(nightGlow(lit.clone()));
+    const lit = lifted(nightGlow(Object.assign(new MeshStandardNodeMaterial({ map, roughness: .72, metalness: .2 }), MARKS))), dim = lit.clone();
     dim.color.setScalar(DIM);
     textured.set(map, p = { lit, dim });
   }
@@ -112,28 +109,26 @@ function silhouette(color: string) {
 }
 
 // Combat looks for the lit pass: a hit turns the model white for HIT_FLASH_SECONDS, an EMP stun adds a pulsing
-// blue rim, and a dead hostile dims, then fades. They swap materials on the model's meshes rather than adding
-// any, so they cost no draw calls. Flash and rim materials are shared; a death clones the unit's own, to fade it.
+// blue rim, and a dead hostile dims, drops its night glow and texture lift, then fades. They swap materials on the
+// model's meshes rather than adding any, so they cost no draw calls. Flash and rim materials are shared; a death
+// clones the unit's own, to fade it.
 const HIT_FLASH_SECONDS = .1, COLLAPSE_SECONDS = .4, FADE_AFTER = 1.5, FADE_SECONDS = .6;
 type Look = 'normal' | 'flash' | 'stun' | 'dead';
-type Tinted = MeshStandardMaterial | MeshBasicMaterial;
+type Tinted = MeshStandardNodeMaterial | MeshBasicMaterial;
 const variants = new WeakSet<Material>();
 const HIT_FLASH = Object.assign(new MeshBasicMaterial({ color: '#fff3e2', toneMapped: false }), MARKS);
 variants.add(HIT_FLASH);
-const stunPulse = { value: 1 }, stunned = new Map<Material, Material>();
-// The rim needs a lit material's normals; the glow keeps its own look.
+const stunPulse = uniform(1), stunned = new Map<Material, Material>();
+const STUN_RIM = vec3(.3, .7, 1).mul(pow(abs(dot(positionViewDirection, normalView)).oneMinus(), 1.5).mul(1.6).add(.12)).mul(stunPulse);
+// The rim needs a lit material's normals; the glow keeps its own look. It adds to the light the unit gives off,
+// on top of its night glow.
 function stunVariant(base: Material) {
-  if (!(base as MeshStandardMaterial).isMeshStandardMaterial) return base;
+  if (!(base as MeshStandardNodeMaterial).isMeshStandardNodeMaterial) return base;
   let m = stunned.get(base);
   if (!m) {
-    m = base.clone();
-    m.onBeforeCompile = shader => {
-      shader.uniforms.uStun = stunPulse;
-      shader.fragmentShader = shader.fragmentShader.replace('#include <common>', '#include <common>\nuniform float uStun;').replace('#include <opaque_fragment>',
-        'outgoingLight += vec3(.3, .7, 1.) * (pow(1. - abs(dot(geometryViewDir, normal)), 1.5) * 1.6 + .12) * uStun;\n#include <opaque_fragment>');
-    };
-    m.customProgramCacheKey = () => 'stun-rim';
-    stunned.set(base, m); variants.add(m);
+    const rim = (base as MeshStandardNodeMaterial).clone();
+    rim.emissiveNode = (rim.emissiveNode as Node<'vec3'> | null ?? materialEmissive).add(STUN_RIM);
+    stunned.set(base, m = rim); variants.add(m);
   }
   return m;
 }
@@ -141,7 +136,8 @@ function deadVariant(cache: Map<Material, Tinted>, base: Material) {
   let m = cache.get(base);
   if (!m) {
     m = (base as Tinted).clone();
-    m.color.multiplyScalar(.42); if ('emissive' in m) m.emissive.multiplyScalar(.12); m.transparent = true;
+    m.color.multiplyScalar(.42); m.transparent = true;
+    if ('emissive' in m) { m.emissive.multiplyScalar(.12); m.colorNode = m.emissiveNode = null; }
     cache.set(base, m); variants.add(m);
   }
   return m;

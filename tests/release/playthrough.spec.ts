@@ -1,7 +1,7 @@
 import type { JSHandle, Page } from '@playwright/test';
 import type { Simulation } from '../../src/game/simulation.ts';
 import type { RootState } from '@react-three/fiber';
-import { test, expect, VIEWPORTS, devUrl, sleep, shot, note, frameTimes, goOffline, goOnline, expectLayoutFits } from './helpers.ts';
+import { test, expect, VIEWPORTS, devUrl, sleep, shot, note, gpu, canvasBackend, expectedBackend, home, frameTimes, goOffline, goOnline, expectLayoutFits } from './helpers.ts';
 
 // A campaign on the dev server, through the mouse and keyboard: lose a contract, retry and win contract 01, buy an
 // upgrade, lose the Worker and get it back, then deploy again. The page's own modules are read only to aim clicks at
@@ -73,7 +73,7 @@ async function orderSquad(page: Page, game: JSHandle<Game>, x: number, z: number
 // A new campaign's board holds contract 01 and two of assassination, sabotage and escort. A loud squad loses an
 // assassination every time (the target escapes within about 20 s), so new campaigns are started until one is offered.
 // Contract 01 stays first on the board until a contract is completed, so the retry after the loss is contract 01.
-test('lose a contract, retry and win contract 01, buy, drop the Worker, deploy again', async ({ page, errors }, testInfo) => {
+test('lose a contract, retry and win contract 01, buy, drop the Worker, deploy again', async ({ page, errors, renderer }, testInfo) => {
   const report: Record<string, unknown> = {};
   const offers = page.locator('.offer');
   try {
@@ -81,8 +81,13 @@ test('lose a contract, retry and win contract 01, buy, drop the Worker, deploy a
       const boards: string[][] = [];
       report.boards = boards;
       for (;;) {
-        await page.goto('/');
+        await page.goto(home(renderer));
         await page.locator('.title-menu .menu-item.primary:not([disabled])').click({ timeout: 20_000 });
+        if (!boards.length) {
+          const offered = await gpu(page);
+          note(testInfo, 'GPU', offered);
+          expect(await canvasBackend(page), 'renderer backend').toBe(expectedBackend(renderer, offered));
+        }
         await boardReady(page);
         const types = (await offers.allInnerTexts()).map(t => t.split('\n')[0]);
         boards.push(types);
