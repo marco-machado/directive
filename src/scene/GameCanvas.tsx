@@ -15,7 +15,7 @@ import { dressDistrict } from './district.ts';
 import { dragged, trackDrags, trackLongPress } from './drag.ts';
 import { CoverPreview, Effects, Targeting } from './effects.tsx';
 import { cameraKick } from './kick.ts';
-import { focusPoint, followGroup, followStep, missionMinZoom, overviewZoom, smoothstep, tacticalZoom } from './framing.ts';
+import { focusPoint, followGroup, followStep, MAX_POLAR, MIN_POLAR, MISSION_MIN_ZOOM, overviewZoom, smoothstep, tacticalZoom } from './framing.ts';
 import { AttackHint } from './hint.tsx';
 import { LastSeenGhosts, PatrolIntel } from './intel.tsx';
 import { NightLighting } from './lighting.tsx';
@@ -61,10 +61,10 @@ function CameraRig({ sim, reset, focus, overview, bounds, start, layout, attract
     const k = -c.target.y / camera.getWorldDirection(look).y;
     c.target.addScaledVector(look, k); camera.position.addScaledVector(look, k);
   };
-  const floor = (polar: number) => mission ? missionMinZoom(polar) : 4, ceiling = () => Math.max(65, tacticalZoom(free.current.w) * 1.5);
+  const floor = () => mission ? MISSION_MIN_ZOOM : 4, ceiling = () => Math.max(65, tacticalZoom(free.current.w) * 1.5);
   // Every spawn corner mirrors the same offset, so the presets share one tilt.
   const orbit = () => { const o = cameraOffset(bounds, start); return new Spherical().setFromVector3(new Vector3(o.x, o.y, o.z)); };
-  const fit = (zoom: number) => Math.max(floor(orbit().phi), Math.min(ceiling(), zoom));
+  const fit = (zoom: number) => Math.max(floor(), Math.min(ceiling(), zoom));
   const squad = () => focusPoint(sim.units, sim.selected, sim.squad);
   const preset = (): Pose => {
     const { cx, cz } = extent(bounds), at = mission && !overview ? squad() : null;
@@ -97,7 +97,7 @@ function CameraRig({ sim, reset, focus, overview, bounds, start, layout, attract
   }, [focus]);
   // Positional sound is panned and faded by where its source sits in this view.
   useEffect(() => { setAudioCamera(camera); return () => setAudioCamera(null); }, [camera]);
-  // After the controls' own update (priority -1): step a glide, then hold the zoom limits for the current tilt.
+  // After the controls' own update (priority -1): step a glide, then hold the zoom limits.
   useFrame((_, dt) => {
     const c = ref.current, g = glide.current;
     if (!c) return;
@@ -124,7 +124,7 @@ function CameraRig({ sim, reset, focus, overview, bounds, start, layout, attract
       }
     }
     f.at.copy(c.target);
-    c.minZoom = floor(c.getPolarAngle()); c.maxZoom = ceiling();
+    c.minZoom = floor(); c.maxZoom = ceiling();
     // A blast kicks the view by nudging the projection's offset, which leaves the orbit untouched.
     const kick = mission ? cameraKick(sim.time) : null, v = view.current;
     if (kick || v.kicked) {
@@ -135,7 +135,7 @@ function CameraRig({ sim, reset, focus, overview, bounds, start, layout, attract
     if (zoom !== camera.zoom) { camera.zoom = zoom; camera.updateProjectionMatrix(); }
   });
   return <OrbitControls ref={ref} makeDefault autoRotate={attract} autoRotateSpeed={.35} enableDamping dampingFactor={.12} onStart={() => { glide.current = null; ground(); }}
-    rotateSpeed={.7} minPolarAngle={Math.PI / 6} maxPolarAngle={Math.PI * 13 / 36}
+    rotateSpeed={.7} minPolarAngle={MIN_POLAR} maxPolarAngle={MAX_POLAR}
     mouseButtons={{ MIDDLE: MOUSE.PAN, RIGHT: MOUSE.ROTATE }} touches={{ ONE: TOUCH.ROTATE, TWO: TOUCH.DOLLY_PAN }} />;
 }
 

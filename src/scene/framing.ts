@@ -9,7 +9,11 @@ export const MIN_OPERATIVE_PX = 24;
 // polar angle p (0 looks straight down), an orthographic view draws it h·sin p + d·cos p tall.
 const BODY_HEIGHT = 1.25, BODY_DEPTH = .25;
 export const operativePx = (zoom: number, polar: number) => zoom * (BODY_HEIGHT * Math.sin(polar) + BODY_DEPTH * Math.cos(polar));
-export const missionMinZoom = (polar: number) => MIN_OPERATIVE_PX / operativePx(1, polar);
+// The orbit's tilt range: from 30° off vertical (steepest) to 65° (lowest).
+export const MIN_POLAR = Math.PI / 6, MAX_POLAR = Math.PI * 13 / 36;
+// The mission zoom floor. The drawn height rises with tilt across that range, so the steepest tilt is the binding
+// case; one floor for every tilt means tilting the view never changes its zoom.
+export const MISSION_MIN_ZOOM = MIN_OPERATIVE_PX / operativePx(1, MIN_POLAR);
 export const tacticalZoom = (frameWidth: number) => frameWidth / TACTICAL_SPAN;
 // The whole district with a margin: the briefing preview, the title's attract mode and the R overview.
 export const overviewZoom = (frameWidth: number, frameHeight: number, b: Bounds) =>
