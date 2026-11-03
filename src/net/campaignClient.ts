@@ -5,6 +5,7 @@ import type { CampaignSync, Simulation } from '../game/simulation.ts';
 
 const CODE_KEY = 'ndPlayer';
 const LEGACY_KEY = 'ndSave';
+const PICK_KEY = 'ndSquad'; // { code, squad }: the last squad picked on the briefing, for that save code
 // A request the server never answers would hold the sync queue, and the Load form with it.
 const REQUEST_TIMEOUT_MS = 10_000;
 const RESYNC_MS = 5_000;
@@ -102,6 +103,14 @@ export class CampaignClient implements CampaignSync {
   bought(type: Upgrade) { this.change(`upgrades/${type}`, 'POST'); }
   recruited(id: string) { this.change(`recruits/${id}`, 'POST'); }
   dismissed(id: string) { this.change(`roster/${id}`, 'DELETE'); }
+  picked(squad: string[]) { if (this.code) storage.set(PICK_KEY, JSON.stringify({ code: this.code, squad })); }
+  // The squad last picked with this save code, or none.
+  savedPick(): string[] {
+    try {
+      const saved = JSON.parse(storage.get(PICK_KEY) ?? 'null') as { code?: unknown; squad?: unknown } | null;
+      return saved?.code === this.code && Array.isArray(saved.squad) ? saved.squad.filter((id): id is string => typeof id === 'string') : [];
+    } catch { return []; }
+  }
   private change(path: string, method: string) {
     const code = this.code; if (!code) return;
     this.enqueue(async () => (await api<{ campaign: Campaign }>(`campaign/${code}/${path}`, method)).campaign);

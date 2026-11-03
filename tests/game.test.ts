@@ -16,6 +16,7 @@ const recorder = () => {
   const sync: CampaignSync = {
     deployed: (id, squad) => events.push(`deployed:${id}:${squad.join(',')}`), completed: s => events.push(`completed:${s}`),
     bought: (t: Upgrade) => events.push(`bought:${t}`), recruited: id => events.push(`recruited:${id}`), dismissed: id => events.push(`dismissed:${id}`),
+    picked: squad => events.push(`picked:${squad.join(',')}`),
   };
   return { events, sync };
 };
@@ -619,9 +620,23 @@ test('headquarters trades report to the server and respect the roster', () => {
   assert.equal(sim.campaign.cash, 400);
   assert.ok(sim.dismiss('vex')); assert.ok(!sim.squadPick.includes('vex'));
   assert.deepEqual(events, ['bought:tech', `recruited:${recruit.id}`, 'dismissed:vex']);
-  sim.toggleSquad(recruit.id); sim.deploy();
+  sim.toggleSquad(recruit.id); assert.equal(events.at(-1), `picked:rook,${recruit.id}`);
+  sim.deploy();
   assert.deepEqual(sim.squad, ['rook', recruit.id]);
   assert.equal(sim.buy('weapon'), false);
+});
+
+test('a restored squad pick keeps only rostered operatives and rebuilds the briefing', () => {
+  const sim = new Simulation({ ...campaignWith('heist'), cash: 1000 });
+  const recruit = sim.campaign.recruits[0];
+  assert.ok(sim.recruit(recruit.id));
+  sim.restoreSquadPick([recruit.id, 'gone', recruit.id]);
+  assert.deepEqual(sim.squadPick, [recruit.id]);
+  assert.deepEqual(sim.units.filter(u => u.faction === 'squad').map(u => u.id), [recruit.id]);
+  sim.restoreSquadPick(['gone']);
+  assert.deepEqual(sim.squadPick, [recruit.id]);
+  sim.deploy(); sim.restoreSquadPick(['vex']);
+  assert.deepEqual(sim.squad, [recruit.id]);
 });
 
 test('a server campaign replaces local state and rebuilds the briefing', () => {
