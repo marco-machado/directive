@@ -1,19 +1,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { focusPoint, FOLLOW_SECONDS, followGroup, followStep, MIN_OPERATIVE_PX, missionMinZoom, operativePx, overviewZoom, rectDistance, TACTICAL_SPAN, tacticalZoom } from '../src/scene/framing.ts';
+import { focusPoint, FOLLOW_SECONDS, followGroup, followStep, MAX_POLAR, MIN_OPERATIVE_PX, MIN_POLAR, MISSION_MIN_ZOOM, operativePx, overviewZoom, rectDistance, TACTICAL_SPAN, tacticalZoom } from '../src/scene/framing.ts';
 import { mapSize } from '../src/game/mapgen.ts';
 
-const DEFAULT_POLAR = Math.atan2(Math.hypot(29, 32), 34), MIN_POLAR = Math.PI / 6, MAX_POLAR = Math.PI * 13 / 36;
+const DEFAULT_POLAR = Math.atan2(Math.hypot(29, 32), 34);
 
 test('the tactical view fits 22 m of street across the free frame', () => {
   for (const width of [444, 700, 1076]) assert.equal(width / tacticalZoom(width), TACTICAL_SPAN);
 });
 
 test('the mission zoom floor keeps an operative at least 24 px tall at every allowed tilt', () => {
-  for (let polar = MIN_POLAR; polar <= MAX_POLAR; polar += .01) assert.ok(operativePx(missionMinZoom(polar), polar) >= MIN_OPERATIVE_PX - 1e-9);
-  // Steeper views foreshorten the body, so they need more zoom.
-  assert.ok(missionMinZoom(MIN_POLAR) > missionMinZoom(DEFAULT_POLAR));
-  assert.ok(missionMinZoom(DEFAULT_POLAR) > missionMinZoom(MAX_POLAR));
+  for (let polar = MIN_POLAR; polar <= MAX_POLAR + 1e-9; polar += .01) assert.ok(operativePx(MISSION_MIN_ZOOM, polar) >= MIN_OPERATIVE_PX - 1e-9);
+  assert.ok(operativePx(MISSION_MIN_ZOOM, MAX_POLAR) >= MIN_OPERATIVE_PX);
+  // The steepest tilt is the binding one, so the floor is exactly 24 px there.
+  assert.ok(Math.abs(operativePx(MISSION_MIN_ZOOM, MIN_POLAR) - MIN_OPERATIVE_PX) < 1e-9);
 });
 
 test('a tier-5 overview would draw operatives under the floor on a tablet, so the floor has to clamp it', () => {
