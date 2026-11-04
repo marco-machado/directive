@@ -34,7 +34,7 @@ Imports use explicit `.ts` extensions (`allowImportingTsExtensions`, `verbatimMo
 
 ## Architecture
 
-A React Three Fiber squad-stealth game served by one Cloudflare Worker. The README has the full game rules and the API route table; keep it in sync when behavior changes.
+A React Three Fiber real-time squad tactics game served by one Cloudflare Worker. Its design pillar is engagement control, not stealth or combat; the README's Design section defines the terms (genre, pillar, core system, engagement, player fantasy), so use them as written. The README also has the full game rules and the API route table; keep it in sync when behavior changes.
 
 **Simulation is the single source of game state.** `src/game/simulation.ts` holds a `Simulation` class that is plain TypeScript with no React or Three.js dependency, so the tests drive it directly (`sim.update(1/60)` in a loop; see the `arena()` helper in `tests/game.test.ts` for an open, building-free map). One shared instance lives in `src/app.ts`. React DOM reads it through `useSyncExternalStore(sim.subscribe, sim.getSnapshot)`; snapshots are emitted at about 10 Hz, not every frame. The R3F scene advances it with `useFrame((_, dt) => sim.update(dt), -1)` in `src/scene/GameCanvas.tsx` and mutates Three.js objects per frame from `sim` directly rather than through React state. Tunable rules are exported constants at the top of `simulation.ts`, and tests import them instead of hard-coding numbers.
 

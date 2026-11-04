@@ -1,8 +1,24 @@
 # Neon Directive
 
-A React Three Fiber squad-combat game served by one Cloudflare Worker. Campaign progress lives in a per-player Durable Object, addressed by a shareable save code.
+**Neon Directive** is a real-time squad tactics game about controlling engagements in a hostile corporate city.
+
+Every contract can be finished unseen, fought through, or anything in between. Players use positioning, sightlines, coordinated attacks, and tactical withdrawal to decide when an engagement starts, how it unfolds, and how to recover when it goes wrong.
+
+**Core promise:** Choose when the fight starts, how it unfolds, and when to disappear.
+
+It is built with React Three Fiber and served by one Cloudflare Worker. Campaign progress lives in a per-player Durable Object, addressed by a shareable save code.
 
 It renders with three.js's `WebGPURenderer`: on WebGPU where the browser offers an adapter, otherwise on the renderer's WebGL 2 backend, so it needs a browser with WebGPU or WebGL 2 and hardware acceleration. Add `?renderer=webgl` to the URL to force the WebGL 2 backend.
+
+## Design
+
+Use these terms in docs, UI copy and design notes.
+
+- **Genre:** Real-time squad tactics, not squad-stealth or squad-combat.
+- **Design pillar:** Engagement control. Players decide when an engagement starts, how it unfolds, and how it ends.
+- **Core system:** Detection and the alarm. Sightlines, detection meters, and the alarm decide whether an engagement stays quiet or goes loud, and the stand-down is how a loud one ends.
+- **Engagement:** Any encounter with hostile forces, from first contact (a sighting, a takedown, or a shot) until the squad is out of sight again.
+- **Player fantasy:** Outsmart and outmaneuver hostile forces, whether unseen, under fire, or slipping back out of sight.
 
 ## Run
 
