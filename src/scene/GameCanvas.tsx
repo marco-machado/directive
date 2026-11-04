@@ -96,7 +96,8 @@ function CameraRig({ sim, reset, focus, overview, bounds, start, layout, attract
     if (toggled.current === overview) return;
     toggled.current = overview;
     if (!mission) return;
-    if (overview) { settle(); before.current = { pose: current(), following: follow.current.on }; follow.current.on = true; glideTo(preset()); return; }
+    // Mid-glide (say, still returning from the last overview), save where the camera was heading, not where it is.
+    if (overview) { settle(); before.current = { pose: glide.current?.to ?? current(), following: follow.current.on }; follow.current.on = true; glideTo(preset()); return; }
     // Back to the player's zoom and orbit; a view that was following picks the selection up where it is now.
     const back = before.current; before.current = null;
     if (!back) { follow.current.on = true; glideTo(preset()); return; }
