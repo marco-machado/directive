@@ -42,8 +42,8 @@ function App() {
   const active = state.phase === 'mission';
   const screen: Screen = onTitle ? 'title' : active ? 'mission' : state.phase === 'headquarters' ? 'debrief' : tab === 'hq' ? 'hq' : 'select';
   const resetCamera = () => { setOverview(false); setCameraReset(n => n + 1); };
-  // From the overview, focus returns to the tactical view, which centers on the selection.
-  const focusSelection = () => { if (overview) setOverview(false); else setFocus(n => n + 1); };
+  // From the overview, focus returns to the player's view, centered on the selection.
+  const focusSelection = () => { setOverview(false); setFocus(n => n + 1); };
   const toggleOverview = () => setOverview(v => !v);
   // Every mission opens on the tactical view.
   useEffect(() => { if (!active) setOverview(false); }, [active]);
