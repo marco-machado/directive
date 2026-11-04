@@ -41,7 +41,7 @@ const STREET = new Plane(new Vector3(0, 1, 0), -.04); // the height of the click
 // element), and the camera looks in from the squad's spawn corner (`start`), which puts the squad on the near
 // side of the view. Missions open on the tactical view: the selection centered, about 22 m of street across the
 // frame. The overview fits the whole district; the briefing preview and the title's attract mode always use it,
-// and the overview prop swaps it in during a mission. Focus glides the target to the selection. Middle-drag pans,
+// and the overview prop swaps it in during a mission; leaving it glides back to the view the player had. Focus glides the target to the selection. Middle-drag pans,
 // right-drag orbits, the wheel zooms; the left button only selects and gives orders. The tactical view follows the selection. A pan stops that until the followed operatives
 // start moving again, focus brings the view back, or the overview is toggled.
 type Pose = { target: Vector3; offset: Spherical; zoom: number };
@@ -87,13 +87,29 @@ function CameraRig({ sim, reset, focus, overview, bounds, start, layout, attract
     camera.setViewOffset(size.width, size.height, view.current.x, view.current.y, size.width, size.height);
     place(preset()); ref.current?.update(); follow.current.on = true;
   }, [camera, gl, reset, size.width, size.height, bounds, start, layout, frame, insets]);
+  // The view the player left for the overview, and whether it was following the selection. A reset or a new
+  // screen drops it, so those still land on the preset.
+  const before = useRef<{ pose: Pose; following: boolean } | null>(null);
+  useEffect(() => { before.current = null; }, [reset, layout, bounds, start]);
   const toggled = useRef(overview), focused = useRef(focus);
-  useEffect(() => { if (toggled.current !== overview) { toggled.current = overview; follow.current.on = true; if (mission) glideTo(preset()); } }, [overview]);
+  useEffect(() => {
+    if (toggled.current === overview) return;
+    toggled.current = overview;
+    if (!mission) return;
+    if (overview) { settle(); before.current = { pose: current(), following: follow.current.on }; follow.current.on = true; glideTo(preset()); return; }
+    // Back to the player's zoom and orbit; a view that was following picks the selection up where it is now.
+    const back = before.current; before.current = null;
+    if (!back) { follow.current.on = true; glideTo(preset()); return; }
+    const at = back.following ? squad() : null;
+    follow.current.on = back.following;
+    glideTo(at ? { ...back.pose, target: new Vector3(at.x, 0, at.z) } : back.pose);
+  }, [overview]);
   useEffect(() => {
     if (focused.current === focus) return;
     focused.current = focus; follow.current.on = true;
+    // Mid-glide, keep the zoom and orbit the camera is heading for.
     const at = squad();
-    if (at) glideTo({ ...current(), target: new Vector3(at.x, 0, at.z) });
+    if (at) glideTo({ ...(glide.current?.to ?? current()), target: new Vector3(at.x, 0, at.z) });
   }, [focus]);
   // Positional sound is panned and faded by where its source sits in this view.
   useEffect(() => { setAudioCamera(camera); return () => setAudioCamera(null); }, [camera]);
