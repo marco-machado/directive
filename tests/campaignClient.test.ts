@@ -251,3 +251,25 @@ test('a resync drops the old mission id, so winning the next mission cannot clai
   await settle();
   assert.ok(!calls.some(c => c.includes('/missions/A/complete')));
 });
+
+test('the squad pick is kept in this browser per save code', t => {
+  const stored = new Map<string, string>();
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: {
+    getItem: (k: string) => stored.get(k) ?? null, setItem: (k: string, v: string) => stored.set(k, v), removeItem: (k: string) => stored.delete(k),
+  } });
+  t.after(() => { if (original) Object.defineProperty(globalThis, 'localStorage', original); else delete (globalThis as { localStorage?: unknown }).localStorage; });
+  const sim = { setSyncing: () => {} } as unknown as Simulation;
+  const client = new CampaignClient();
+  client.attach(sim, 'AAAA');
+  client.picked(['vex', 'rook']);
+  assert.deepEqual(new CampaignClient().savedPick(), []);
+  const reloaded = new CampaignClient();
+  reloaded.attach(sim, 'AAAA');
+  assert.deepEqual(reloaded.savedPick(), ['vex', 'rook']);
+  reloaded.attach(sim, 'BBBB');
+  assert.deepEqual(reloaded.savedPick(), []);
+  stored.set('ndSquad', '{not json');
+  reloaded.attach(sim, 'AAAA');
+  assert.deepEqual(reloaded.savedPick(), []);
+});

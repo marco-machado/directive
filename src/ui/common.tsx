@@ -92,7 +92,7 @@ export function LoadSaveCode({ onLoaded, busy, setBusy, syncing }: { onLoaded: (
     setBusy(true); setError('');
     try {
       const campaign = await fetchCampaign(code);
-      rememberSaveCode(code); client.attach(sim, code); sim.applyCampaign(campaign); sim.setSaveUnavailable(false);
+      rememberSaveCode(code); client.attach(sim, code); sim.applyCampaign(campaign); sim.restoreSquadPick(client.savedPick()); sim.setSaveUnavailable(false);
       setValue(''); onLoaded(code);
     } catch (err) { setError(err instanceof ApiError && err.status === 404 ? 'No campaign uses that code.' : 'Server unreachable. Try again.'); }
     finally { setBusy(false); }
