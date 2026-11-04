@@ -1,10 +1,14 @@
 import { useSyncExternalStore } from 'react';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import type { GLTF } from 'three/addons/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import type { UnitKind } from '../game/simulation.ts';
 
 // Imported unit models (auto-rigged GLBs under public/models) and the props they carry. A kind or prop without a
 // file, or whose file has not loaded or failed to, keeps its procedural one, so the game never waits on a download.
+// The files are meshopt-compressed (EXT_meshopt_compression) with every attribute but POSITION quantized. Quantized
+// positions would break the fitting in skinned.ts: a character's bounds would miss the scale moved into its skin, and
+// a machine part, stored as normalized integers, could not be moved up onto its bone. Compress new files the same way.
 const UNITS: Partial<Record<UnitKind, string>> = {
   assault: '/models/assault.glb', support: '/models/support.glb', recon: '/models/recon.glb', tech: '/models/tech.glb',
   guard: '/models/guard.glb', heavy: '/models/heavy.glb', target: '/models/target.glb', vip: '/models/vip.glb',
@@ -44,7 +48,7 @@ let started = false;
 
 function load() {
   started = true;
-  const loader = new GLTFLoader();
+  const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
   const parts = Object.values(MACHINES).flatMap(m => [m.base, m.head]).filter(p => !!p);
   for (const url of [...Object.values(UNITS), ...[...Object.values(WEAPONS), SHIELD, BRIEFCASE, ...parts].map(p => p.url)]) {
     loader.loadAsync(url).then(gltf => { loaded.set(url, gltf); listeners.forEach(l => l()); }, err => console.warn(`Model ${url} failed to load; keeping the procedural one.`, err));

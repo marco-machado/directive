@@ -1,5 +1,7 @@
-import { BackSide, BoxGeometry, CanvasTexture, Color, Float32BufferAttribute, LinearMipmapLinearFilter, Mesh, MeshBasicMaterial, NoColorSpace, PlaneGeometry, PMREMGenerator, RepeatWrapping, Scene, SphereGeometry, SRGBColorSpace } from 'three';
-import type { Texture, WebGLRenderer } from 'three';
+import { BackSide, BoxGeometry, CanvasTexture, Color, Float32BufferAttribute, LinearMipmapLinearFilter, Mesh, MeshBasicMaterial, NoColorSpace, PlaneGeometry, RepeatWrapping, Scene, SphereGeometry, SRGBColorSpace } from 'three';
+import type { Texture } from 'three';
+import { PMREMGenerator } from 'three/webgpu';
+import type { WebGPURenderer } from 'three/webgpu';
 import { between, mulberry32, pick } from '../game/rng.ts';
 import type { Rng } from '../game/rng.ts';
 import { ATLAS_CELLS, BLADE_CELLS, BOARD_CELLS, glyphStrokes } from './district.ts';
@@ -214,8 +216,8 @@ export function puddleTexture(): CanvasTexture {
 
 // Reflections for wet and glossy surfaces: a sky that glows with the city's haze toward the horizon and neon panels
 // at every height the camera's reflections can reach, prefiltered once per renderer.
-const environments = new WeakMap<WebGLRenderer, Texture>();
-export function nightEnvironment(gl: WebGLRenderer): Texture {
+const environments = new WeakMap<WebGPURenderer, Texture>();
+export function nightEnvironment(gl: WebGPURenderer): Texture {
   let texture = environments.get(gl);
   if (texture) return texture;
   const scene = new Scene(), box = new BoxGeometry(), plane = new PlaneGeometry(), sky = new SphereGeometry(30, 16, 8), rng = mulberry32(0xe17);

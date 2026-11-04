@@ -15,7 +15,7 @@ import { dressDistrict } from './district.ts';
 import { dragged, trackDrags, trackLongPress } from './drag.ts';
 import { CoverPreview, Effects, Targeting } from './effects.tsx';
 import { cameraKick } from './kick.ts';
-import { focusPoint, followGroup, followStep, missionMinZoom, overviewZoom, smoothstep, tacticalZoom } from './framing.ts';
+import { focusPoint, followGroup, followStep, MAX_POLAR, MIN_POLAR, MISSION_MIN_ZOOM, overviewZoom, smoothstep, tacticalZoom } from './framing.ts';
 import { AttackHint } from './hint.tsx';
 import { LastSeenGhosts, PatrolIntel } from './intel.tsx';
 import { NightLighting } from './lighting.tsx';
@@ -24,6 +24,7 @@ import { Objectives } from './objectives.tsx';
 import { Pointers } from './pointers.tsx';
 import type { Insets } from './pointers.tsx';
 import { PlannedRoutes } from './routes.tsx';
+import { createRenderer, useRenderer } from './renderer.ts';
 import { nearestClickable, Units } from './units.tsx';
 import type { Hitboxes } from './units.tsx';
 import { cameraOffset } from './view.ts';
@@ -40,7 +41,7 @@ const STREET = new Plane(new Vector3(0, 1, 0), -.04); // the height of the click
 // element), and the camera looks in from the squad's spawn corner (`start`), which puts the squad on the near
 // side of the view. Missions open on the tactical view: the selection centered, about 22 m of street across the
 // frame. The overview fits the whole district; the briefing preview and the title's attract mode always use it,
-// and the overview prop swaps it in during a mission. Focus glides the target to the selection. Middle-drag pans,
+// and the overview prop swaps it in during a mission; leaving it glides back to the view the player had. Focus glides the target to the selection. Middle-drag pans,
 // right-drag orbits, the wheel zooms; the left button only selects and gives orders. The tactical view follows the selection. A pan stops that until the followed operatives
 // start moving again, focus brings the view back, or the overview is toggled.
 type Pose = { target: Vector3; offset: Spherical; zoom: number };
@@ -60,10 +61,10 @@ function CameraRig({ sim, reset, focus, overview, bounds, start, layout, attract
     const k = -c.target.y / camera.getWorldDirection(look).y;
     c.target.addScaledVector(look, k); camera.position.addScaledVector(look, k);
   };
-  const floor = (polar: number) => mission ? missionMinZoom(polar) : 4, ceiling = () => Math.max(65, tacticalZoom(free.current.w) * 1.5);
+  const floor = () => mission ? MISSION_MIN_ZOOM : 4, ceiling = () => Math.max(65, tacticalZoom(free.current.w) * 1.5);
   // Every spawn corner mirrors the same offset, so the presets share one tilt.
   const orbit = () => { const o = cameraOffset(bounds, start); return new Spherical().setFromVector3(new Vector3(o.x, o.y, o.z)); };
-  const fit = (zoom: number) => Math.max(floor(orbit().phi), Math.min(ceiling(), zoom));
+  const fit = (zoom: number) => Math.max(floor(), Math.min(ceiling(), zoom));
   const squad = () => focusPoint(sim.units, sim.selected, sim.squad);
   const preset = (): Pose => {
     const { cx, cz } = extent(bounds), at = mission && !overview ? squad() : null;
@@ -86,17 +87,34 @@ function CameraRig({ sim, reset, focus, overview, bounds, start, layout, attract
     camera.setViewOffset(size.width, size.height, view.current.x, view.current.y, size.width, size.height);
     place(preset()); ref.current?.update(); follow.current.on = true;
   }, [camera, gl, reset, size.width, size.height, bounds, start, layout, frame, insets]);
+  // The view the player left for the overview, and whether it was following the selection. A reset or a new
+  // screen drops it, so those still land on the preset.
+  const before = useRef<{ pose: Pose; following: boolean } | null>(null);
+  useEffect(() => { before.current = null; }, [reset, layout, bounds, start]);
   const toggled = useRef(overview), focused = useRef(focus);
-  useEffect(() => { if (toggled.current !== overview) { toggled.current = overview; follow.current.on = true; if (mission) glideTo(preset()); } }, [overview]);
+  useEffect(() => {
+    if (toggled.current === overview) return;
+    toggled.current = overview;
+    if (!mission) return;
+    // Mid-glide (say, still returning from the last overview), save where the camera was heading, not where it is.
+    if (overview) { settle(); before.current = { pose: glide.current?.to ?? current(), following: follow.current.on }; follow.current.on = true; glideTo(preset()); return; }
+    // Back to the player's zoom and orbit; a view that was following picks the selection up where it is now.
+    const back = before.current; before.current = null;
+    if (!back) { follow.current.on = true; glideTo(preset()); return; }
+    const at = back.following ? squad() : null;
+    follow.current.on = back.following;
+    glideTo(at ? { ...back.pose, target: new Vector3(at.x, 0, at.z) } : back.pose);
+  }, [overview]);
   useEffect(() => {
     if (focused.current === focus) return;
     focused.current = focus; follow.current.on = true;
+    // Mid-glide, keep the zoom and orbit the camera is heading for.
     const at = squad();
-    if (at) glideTo({ ...current(), target: new Vector3(at.x, 0, at.z) });
+    if (at) glideTo({ ...(glide.current?.to ?? current()), target: new Vector3(at.x, 0, at.z) });
   }, [focus]);
   // Positional sound is panned and faded by where its source sits in this view.
   useEffect(() => { setAudioCamera(camera); return () => setAudioCamera(null); }, [camera]);
-  // After the controls' own update (priority -1): step a glide, then hold the zoom limits for the current tilt.
+  // After the controls' own update (priority -1): step a glide, then hold the zoom limits.
   useFrame((_, dt) => {
     const c = ref.current, g = glide.current;
     if (!c) return;
@@ -123,7 +141,7 @@ function CameraRig({ sim, reset, focus, overview, bounds, start, layout, attract
       }
     }
     f.at.copy(c.target);
-    c.minZoom = floor(c.getPolarAngle()); c.maxZoom = ceiling();
+    c.minZoom = floor(); c.maxZoom = ceiling();
     // A blast kicks the view by nudging the projection's offset, which leaves the orbit untouched.
     const kick = mission ? cameraKick(sim.time) : null, v = view.current;
     if (kick || v.kicked) {
@@ -134,7 +152,7 @@ function CameraRig({ sim, reset, focus, overview, bounds, start, layout, attract
     if (zoom !== camera.zoom) { camera.zoom = zoom; camera.updateProjectionMatrix(); }
   });
   return <OrbitControls ref={ref} makeDefault autoRotate={attract} autoRotateSpeed={.35} enableDamping dampingFactor={.12} onStart={() => { glide.current = null; ground(); }}
-    rotateSpeed={.7} minPolarAngle={Math.PI / 6} maxPolarAngle={Math.PI * 13 / 36}
+    rotateSpeed={.7} minPolarAngle={MIN_POLAR} maxPolarAngle={MAX_POLAR}
     mouseButtons={{ MIDDLE: MOUSE.PAN, RIGHT: MOUSE.ROTATE }} touches={{ ONE: TOUCH.ROTATE, TWO: TOUCH.DOLLY_PAN }} />;
 }
 
@@ -203,7 +221,7 @@ function World({ sim, reset, focus, overview, layout, attract, frame, labels, mi
 }
 
 function PostEffects() {
-  const gl = useThree(s => s.gl);
+  const gl = useRenderer();
   return bloomSupported(gl) ? <Bloom /> : null;
 }
 
@@ -212,10 +230,11 @@ export const GameCanvas = memo(function GameCanvas(props: Props) {
   // and R3F swaps the default parent once events connect, which blanked the first label.
   const labels = useRef<HTMLDivElement>(null!), missed = useRef<(e: MouseEvent) => void>(() => {});
   const { quality } = useSyncExternalStore(gameOptions.subscribe, gameOptions.get);
-  // The stencil buffer keeps unit silhouettes off the units' own visible pixels (units.tsx). Neutral tone mapping
-  // keeps hues true, so the HUD-colored overlays look the same with or without the bloom pass, which tone maps
-  // everything at the end, including the materials that opt out of it.
-  return <><Canvas shadows="percentage" orthographic camera={{ position: [29, 34, 32], zoom: 24, near: .1, far: 150 }} dpr={[1, 1.5]} gl={{ antialias: true, alpha: false, stencil: true, toneMapping: NeutralToneMapping }} onPointerMissed={e => missed.current(e)} fallback={<div className="render-error">WebGL is unavailable. Enable hardware acceleration or try a WebGL-capable browser.</div>}>
+  // Neutral tone mapping keeps hues true for the HUD-colored overlays. The renderer applies it to the whole frame at
+  // the end, with or without the bloom pass, so materials marked toneMapped: false are tone mapped too and the
+  // overlays look the same either way. It is set once the canvas exists: R3F resets the tone mapping of a renderer
+  // from a factory to ACES.
+  return <><Canvas shadows="percentage" orthographic camera={{ position: [29, 34, 32], zoom: 24, near: .1, far: 150 }} dpr={[1, 1.5]} gl={createRenderer} onCreated={({ gl }) => { gl.toneMapping = NeutralToneMapping; }} onPointerMissed={e => missed.current(e)} fallback={<div className="render-error">WebGPU and WebGL 2 are unavailable. Enable hardware acceleration or try a current browser.</div>}>
     <World {...props} labels={labels} missed={missed} />
     {quality === 'high' ? <PostEffects /> : null}
     {import.meta.env.DEV ? <Diagnostics /> : null}

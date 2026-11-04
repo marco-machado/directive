@@ -5,6 +5,7 @@ dist/
 .wrangler/
 .dev.vars*
 .idea/
+test-results/
 
 # Local release-QA captures and the driver that made them (see artifacts/final-evidence.md).
 artifacts/release-qa/

@@ -55,6 +55,7 @@ export type Snapshot = {
 export type CampaignSync = {
   deployed(contractId: string, squad: string[]): void; completed(stealth: boolean): void;
   bought(type: Upgrade): void; recruited(id: string): void; dismissed(id: string): void;
+  picked(squad: string[]): void; // the briefing's squad pick, which stays in this browser
 };
 
 export type HostileStats = { name: string; hp: number; damage: number; range: number; fireCooldown: number; speed: number; alertSpeed: number; vision: number; fov: number };
@@ -234,6 +235,16 @@ export class Simulation {
     if (this.phase === 'mission' || !this.campaign.roster.some(o => o.id === id)) return;
     if (this.squadPick.includes(id)) { if (this.squadPick.length > 1) this.squadPick = this.squadPick.filter(s => s !== id); }
     else if (this.squadPick.length < SQUAD_MAX) this.squadPick = [...this.squadPick, id];
+    this.report(s => s.picked([...this.squadPick]));
+    if (this.phase === 'briefing') this.resetUnits();
+    this.emit();
+  }
+  // Brings back a pick saved before a reload, keeping only operatives still on the roster.
+  restoreSquadPick(ids: readonly string[]) {
+    if (this.phase === 'mission') return;
+    const pick = [...new Set(ids)].filter(id => this.campaign.roster.some(o => o.id === id)).slice(0, SQUAD_MAX);
+    if (!pick.length) return;
+    this.squadPick = pick;
     if (this.phase === 'briefing') this.resetUnits();
     this.emit();
   }
