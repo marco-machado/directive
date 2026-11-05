@@ -29,7 +29,7 @@ export function useCallouts(state: Snapshot) {
       if (!o.done || p.objectives[i]?.done || o.kind === 'extract') return;
       add('objective', { title: 'Objective complete', detail: o.label }, 'objective');
     });
-    if (state.reinforced > p.reinforced) add('danger', { title: 'Reinforcements', detail: `${state.reinforced} / ${state.reinforceCap} entering` }, 'reinforce');
+    if (state.reinforced > p.reinforced) add('danger', { title: 'Reinforcements', detail: Number.isFinite(state.reinforceCap) ? `${state.reinforced} / ${state.reinforceCap} entering` : `${state.reinforced} entering` }, 'reinforce');
     for (const u of state.units) {
       const before = u.faction === 'squad' ? p.units.find(v => v.id === u.id) : undefined;
       if (!before) continue;

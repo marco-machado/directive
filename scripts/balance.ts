@@ -4,9 +4,10 @@
 // - tactical: routes around vision cones and clears blockers quietly, going loud only when it must (scripts/tactical.ts).
 // Run: node --experimental-transform-types scripts/balance.ts [--seeds 12] [--bot both|no-tactics|tactical]
 //      [--roster starters|four|four+max] [--tiers 1,3] [--types heist,escort] [--quiet-only] [--loadout suppressed/light]
-// With --loadouts it instead plays the fully upgraded four with every loadout (tiers 4 and 5 unless --tiers says).
+// With --loadouts it instead plays the fully upgraded four with every loadout (tiers 4 and 5 unless --tiers says), and with
+// --cm 0,1,2,3 it plays the fully upgraded four at those Countermeasures levels (tier 5 unless --tiers says).
 import { Simulation } from '../src/game/simulation.ts';
-import { ARMOR_MODES, BADGES, CONTRACT_TYPES, contractPayout, freshCampaign, isLoadout, MAX_LEVEL, MAX_TIER, WEAPON_MODES } from '../src/game/campaign.ts';
+import { ARMOR_MODES, BADGES, CONTRACT_TYPES, contractPayout, freshCampaign, isLoadout, MAX_COUNTERMEASURES, MAX_LEVEL, MAX_TIER, WEAPON_MODES } from '../src/game/campaign.ts';
 import type { Badge, Campaign, ContractType, Loadout } from '../src/game/campaign.ts';
 import { mulberry32 } from '../src/game/rng.ts';
 import { noTactics } from './bots.ts';
@@ -42,9 +43,10 @@ const TARGETS = [
 
 type Run = { win: boolean; alarm: boolean; time: number; hpLost: number; reason: string; badges: Badge[] };
 
-function play(bot: Bot, type: ContractType, tier: number, seed: number, extra: Partial<Campaign>): Run {
+function play(bot: Bot, type: ContractType, tier: number, seed: number, extra: Partial<Campaign>, countermeasures = 0): Run {
   const contract = { id: 'c', type, tier, seed, payout: contractPayout(tier), district: 'GLASS DISTRICT', sector: 1 };
   const sim = new Simulation({ ...freshCampaign(mulberry32(1)), ...extra, offers: [contract] });
+  sim.chooseCountermeasures(countermeasures);
   sim.deploy();
   const think = bot(sim, { quietOnly: QUIET_ONLY });
   let wait = 0;
@@ -134,7 +136,22 @@ function loadouts() {
   for (const t of TARGETS.filter(t => t.roster === 'four+max')) { const b = best.get(`${t.bot}|${t.tier}|won`); if (b) checkTarget(t, b.v, ` with ${b.loadout}`); }
 }
 
+// The fully upgraded four (with every Countermeasures level open) at each level asked for: wins / quiet wins per bot.
+function countermeasures(levels: number[]) {
+  const tiers = option('tiers') ? TIERS : [5], roster = ROSTERS.find(r => r.name === 'four+max')!, extra = withLoadout({ ...roster.extra, countermeasures: MAX_COUNTERMEASURES - 1 });
+  console.log(`Countermeasures: ${BOT_NAMES.join(' and ')} bots with the fully upgraded four, ${SEEDS} seeds per cell; mean over ${typesLabel} of contracts won / won without an alarm.\n`);
+  console.log(`level  bot          ${tiers.map(t => `T${t}`.padStart(10)).join('')}`);
+  for (const level of levels) for (const name of BOT_NAMES) {
+    const row = tiers.map(tier => {
+      const runs = TYPES.map(type => seeds.map(seed => play(BOTS[name], type, tier, seed, extra, level)));
+      return `${Math.round(average(runs.map(rs => 100 * rs.filter(r => r.win).length / rs.length)))}%/${Math.round(average(runs.map(rs => 100 * rs.filter(r => r.win && !r.alarm).length / rs.length)))}%`;
+    });
+    console.log(`${String(level).padEnd(6)} ${name.padEnd(12)} ${row.map(v => v.padStart(10)).join('')}`);
+  }
+}
+
 const started = performance.now();
-if (process.argv.includes('--loadouts')) loadouts(); else report();
+if (option('cm')) countermeasures(option('cm')!.split(',').map(Number));
+else if (process.argv.includes('--loadouts')) loadouts(); else report();
 // Run time goes to stderr, so the saved results stay identical between runs.
 console.error(`${((performance.now() - started) / 1000).toFixed(0)} s`);

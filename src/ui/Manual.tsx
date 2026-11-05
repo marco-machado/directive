@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { STEALTH_BONUS } from '../game/campaign.ts';
 import { CALM_SECONDS, CALM_STEP, EXTENDED_RANGE, FIRST_WAVE_SECONDS, HEAVY_HP, LIGHT_CONCEALMENT, PIERCING_BONUS, REINFORCE_CAP, REINFORCE_SECONDS, REPEAT_REINFORCEMENTS, ROUTE_MAX, SUPPRESSOR_STEP, WAIT_MAX, WAIT_STEP } from '../game/simulation.ts';
-import { Dialog, SaveCode } from './common.tsx';
+import { CM_LEVEL, countermeasuresEffect, Dialog, SaveCode } from './common.tsx';
 import { Icon } from './icons.tsx';
 import type { IconName } from './icons.tsx';
 import { tipStore } from './tipStore.ts';
@@ -38,6 +38,7 @@ const RULES: [IconName, string][] = [
   ['alert', `The first reinforcements arrive ${FIRST_WAVE_SECONDS} s after the alarm, entering near extraction, then more every ${REINFORCE_SECONDS} s. Stay out of every hostile's sight and range for ${CALM_SECONDS} s and it stands down.`],
   ['heavy', `The first alarm brings up to ${REINFORCE_CAP} reinforcements. Each later alarm in the same mission brings ${REPEAT_REINFORCEMENTS} more with heavies leading its waves, one more heavy each time until whole waves are heavies, and takes ${CALM_STEP} s longer to stand down.`],
   ['check', `Extract without ever raising the alarm for +${Math.round(STEALTH_BONUS * 100)}% payout. A stood-down alarm still voids the bonus.`],
+  ['lock', `With every upgrade maxed, Countermeasures open: an opt-in ladder picked on the briefing. ${[1, 2, 3].map(l => `${CM_LEVEL[l]}: ${countermeasuresEffect(l)}`).join(' ')} Win the highest open level with a badge to open the next. It pays no extra credits.`],
   ['clock', 'A won contract earns badges: Ghost (no alarm), Untouched (nobody went down), Swift (extracted within par, shown on the board), Bloodless (no kills but the target) and Purge (every hostile the district started with down). Each counts half a contract toward the next tier.'],
 ];
 

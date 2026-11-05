@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Simulation, parseCampaign, CALM_SECONDS, EXTENDED_RANGE, HEAVY_HP, LIGHT_CONCEALMENT, PIERCING_BONUS, SUPPRESSOR_STEP, CALM_STEP, escalation, FIRST_WAVE_SECONDS, waveSize, REPEAT_REINFORCEMENTS, VIP_DAMAGE_TAKEN, VIP_SECURE_SECONDS, CAMERA_DETECT, COVER_FACTOR, DETECT_DRAIN, detectSeconds, GHOST_SECONDS, HACK_SECONDS, LOOK_ANGLE, LOOK_EVERY, LOOK_PAUSE, QUEUE_SPACING, REINFORCE_CAP, ROUTE_MAX, SUSPICIOUS, REINFORCE_SECONDS, REVIVE_SECONDS, SIGHT_RANGE, TAKEDOWN_REACH, TAKEDOWN_SECONDS, tierDamage, tierHp, WAIT_MAX, WAIT_STEP } from '../src/game/simulation.ts';
+import { Simulation, parseCampaign, CALM_SECONDS, COUNTERMEASURES, EXTENDED_RANGE, HEAVY_HP, LIGHT_CONCEALMENT, PIERCING_BONUS, SUPPRESSOR_STEP, CALM_STEP, escalation, FIRST_WAVE_SECONDS, waveSize, REPEAT_REINFORCEMENTS, VIP_DAMAGE_TAKEN, VIP_SECURE_SECONDS, CAMERA_DETECT, COVER_FACTOR, DETECT_DRAIN, detectSeconds, GHOST_SECONDS, HACK_SECONDS, LOOK_ANGLE, LOOK_EVERY, LOOK_PAUSE, QUEUE_SPACING, REINFORCE_CAP, ROUTE_MAX, SUSPICIOUS, REINFORCE_SECONDS, REVIVE_SECONDS, SIGHT_RANGE, TAKEDOWN_REACH, TAKEDOWN_SECONDS, tierDamage, tierHp, WAIT_MAX, WAIT_STEP } from '../src/game/simulation.ts';
 import type { CampaignSync, Unit, Upgrade } from '../src/game/simulation.ts';
 import { CAMPAIGN_VERSION, contractPayout, FIRST_CONTRACT, freshCampaign, MAX_LEVEL, MAX_TIER, parSeconds } from '../src/game/campaign.ts';
 import type { ArmorMode, Campaign, ContractType, MissionReport, WeaponMode } from '../src/game/campaign.ts';
@@ -27,8 +27,9 @@ const step = (sim: Simulation, seconds: number, until?: () => boolean) => {
 };
 
 // An open, building-free arena so each rule can be checked in isolation.
-function arena(type: ContractType = 'heist', extra: Partial<Campaign> = {}, sync?: CampaignSync) {
+function arena(type: ContractType = 'heist', extra: Partial<Campaign> = {}, sync?: CampaignSync, countermeasures = 0) {
   const sim = new Simulation(campaignWith(type, extra), sync);
+  sim.chooseCountermeasures(countermeasures);
   sim.deploy();
   const world = new World({ minX: -20, maxX: 20, minZ: -20, maxZ: 20 }, [], []);
   sim.plan = { ...sim.plan!, world, extract: { x: -18, z: -18 }, exits: [{ x: 19, z: 0 }] };
@@ -663,8 +664,8 @@ test('the sync flag reaches the snapshot and notifies only when it changes', () 
 // ---- Alarm stand-down ----
 const internals = (sim: Simulation) => sim as unknown as { raiseAlarm(p: Point, r: string): void; reinforced: number; lastKnown: Point | null; autoPaused: Set<string> };
 // An alarm with no reinforcement waves left, so only the units a test places can keep contact.
-function alarmed(type: ContractType = 'heist', extra: Partial<Campaign> = {}, sync?: CampaignSync) {
-  const a = arena(type, extra, sync);
+function alarmed(type: ContractType = 'heist', extra: Partial<Campaign> = {}, sync?: CampaignSync, countermeasures = 0) {
+  const a = arena(type, extra, sync, countermeasures);
   internals(a.sim).reinforced = REINFORCE_CAP;
   return { ...a, raise: (at: Point = { x: 0, z: 0 }) => internals(a.sim).raiseAlarm(at, 'test') };
 }
@@ -1455,4 +1456,45 @@ test('a restart clears the downs a run had counted', () => {
   step(sim, .2); assert.equal(sim.getSnapshot().downs, 1);
   sim.restart();
   assert.equal(sim.getSnapshot().downs, 0); assert.deepEqual(sim.getSnapshot().badges, []);
+});
+
+// ---- Countermeasures ----
+const MAXED: Partial<Campaign> = { weapon: MAX_LEVEL, armor: MAX_LEVEL, abilities: { assault: MAX_LEVEL, support: MAX_LEVEL, recon: MAX_LEVEL, tech: MAX_LEVEL } };
+const within = (t: number, want: number) => assert.ok(Math.abs(t - want) <= 1 / 60 + 1e-9, `${t} vs ${want}`);
+
+test('Countermeasures quicken detection, then lengthen the stand-down, then lift the reinforcement cap', () => {
+  const open = { ...MAXED, countermeasures: 2 };
+  const seen = (level: number) => {
+    const { sim, hostile } = arena('heist', open, undefined, level);
+    hostile('guard', 3, 0, -Math.PI / 2, 40).lookEvery = 1e9;
+    step(sim, 20, () => sim.alarm); return sim.time;
+  };
+  within(seen(0), detectSeconds('guard', 2));
+  within(seen(1), detectSeconds('guard', 2) * COUNTERMEASURES[1].detect);
+  const two = alarmed('heist', open, undefined, 2);
+  two.raise(); step(two.sim, .2);
+  assert.equal(two.sim.getSnapshot().calmFor, CALM_SECONDS + COUNTERMEASURES[2].calm);
+  const three = arena('heist', open, undefined, 3);
+  three.squad.forEach(u => { u.hp = u.maxHp = 1e6; });
+  (three.sim as unknown as { raiseAlarm(p: Point, r: string): void }).raiseAlarm({ x: 0, z: 0 }, 'test');
+  step(three.sim, FIRST_WAVE_SECONDS + REINFORCE_SECONDS * 5);
+  assert.ok(three.sim.getSnapshot().reinforced > REINFORCE_CAP, String(three.sim.getSnapshot().reinforced));
+  assert.equal(three.sim.getSnapshot().reinforceCap, Infinity);
+});
+
+test('the board refuses a locked Countermeasures level, reports the pick on deploy, and a restart keeps it', () => {
+  const levels: number[] = [];
+  const sync = { ...recorder().sync, deployed: (_: string, __: string[], countermeasures: number) => { levels.push(countermeasures); } };
+  const sim = new Simulation(campaignWith('heist', MAXED), sync);
+  assert.equal(sim.getSnapshot().countermeasuresOpen, 1);
+  sim.chooseCountermeasures(2); assert.equal(sim.countermeasures, 0);
+  sim.chooseCountermeasures(1); assert.equal(sim.countermeasures, 1);
+  sim.deploy(); sim.restart();
+  assert.deepEqual(levels, [1, 1]);
+  sim.chooseCountermeasures(0); assert.equal(sim.countermeasures, 1); // fixed for the mission
+  // A campaign that no longer opens the level drops the pick back to what it opens.
+  const plain = new Simulation(campaignWith('heist', MAXED));
+  plain.chooseCountermeasures(1);
+  plain.applyCampaign({ ...plain.campaign, armor: 2 });
+  assert.equal(plain.countermeasures, 0);
 });
