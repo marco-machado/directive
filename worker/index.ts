@@ -1,4 +1,4 @@
-import { isUpgrade } from '../src/game/campaign.ts';
+import { isLoadout, isUpgrade } from '../src/game/campaign.ts';
 import { normalizeSaveCode } from '../src/game/saveCode.ts';
 import type { Result } from './player.ts';
 export { PlayerCampaign } from './player.ts';
@@ -75,6 +75,12 @@ export default {
     if (rest.length === 2 && rest[0] === 'upgrades' && method === 'POST') {
       if (!isUpgrade(rest[1])) return json({ error: 'Unknown upgrade.' }, 400);
       return reply(await player.buy(rest[1]));
+    }
+    // POST /loadout  { weapon, armor }
+    if (rest.length === 1 && rest[0] === 'loadout' && method === 'POST') {
+      const { weapon, armor } = body(text), loadout = { weapon, armor };
+      if (!isLoadout(loadout)) return json({ error: 'Unknown loadout.' }, 400);
+      return reply(await player.equip(loadout));
     }
     if (rest.length === 2 && rest[0] === 'recruits' && method === 'POST') {
       if (!isId(rest[1])) return json({ error: 'Unknown recruit.' }, 400);

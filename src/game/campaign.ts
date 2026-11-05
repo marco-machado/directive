@@ -9,8 +9,19 @@ export type ContractType = 'assassination' | 'heist' | 'sabotage' | 'escort';
 export type Contract = { id: string; type: ContractType; tier: number; seed: number; payout: number; district: string; sector: number; patrols?: number };
 export type Gear = 'weapon' | 'armor';
 export type Upgrade = Gear | ClassId;
+// How the squad's gear levels are spent, switched freely at headquarters: weapons that pierce (damage), are suppressed
+// (a hostile that survives a hit turns suspicious instead of raising the alarm) or extended (range); plating that is
+// heavy (health) or light (hostiles take longer to notice the squad).
+export type WeaponMode = 'piercing' | 'suppressed' | 'extended';
+export type ArmorMode = 'heavy' | 'light';
+export type Loadout = { weapon: WeaponMode; armor: ArmorMode };
+export const WEAPON_MODES: readonly WeaponMode[] = ['piercing', 'suppressed', 'extended'];
+export const ARMOR_MODES: readonly ArmorMode[] = ['heavy', 'light'];
+export const DEFAULT_LOADOUT: Loadout = { weapon: 'piercing', armor: 'heavy' };
+// The campaign's shape; the Durable Object upgrades a ledger saved in an older one when it reads it (upgradeLedger).
+export const CAMPAIGN_VERSION = 4;
 export type Campaign = {
-  version: 3; cash: number; weapon: number; armor: number; completed: number;
+  version: typeof CAMPAIGN_VERSION; cash: number; weapon: number; armor: number; completed: number; loadout: Loadout;
   abilities: Record<ClassId, number>; roster: Operative[]; recruits: Operative[]; offers: Contract[];
 };
 export type ActiveMission = { id: string; startedAt: number; contract: Contract } | null;
@@ -33,18 +44,22 @@ export const MIN_MISSION_MS = 15_000;
 export const upgradeCost = (type: Upgrade) => type === 'weapon' || type === 'armor' ? GEAR_COST[type] : ABILITY_UPGRADE_COST;
 export const upgradeLevel = (c: Campaign, type: Upgrade) => type === 'weapon' || type === 'armor' ? c[type] : c.abilities[type];
 export const isUpgrade = (v: unknown): v is Upgrade => v === 'weapon' || v === 'armor' || isClass(v);
+export const isLoadout = (v: unknown): v is Loadout => {
+  const l = v as Partial<Loadout> | null;
+  return !!l && typeof l === 'object' && WEAPON_MODES.includes(l.weapon!) && ARMOR_MODES.includes(l.armor!);
+};
 export const isContractType = (v: unknown): v is ContractType => CONTRACT_TYPES.includes(v as ContractType);
 
 export const contractPayout = (tier: number) => 500 + (tier - 1) * 250;
 export const baseTier = (completed: number) => Math.min(MAX_TIER, 1 + Math.floor(completed / 2));
 // How hard a tier is for this campaign's squad. Four operatives count for about one tier and the six
-// weapon and armor levels for about two more (see scripts/balance.ts); ability levels of the classes on the
+// weapon and armor levels for a little over one more (see scripts/balance.ts); ability levels of the classes on the
 // roster add a little. The margin is how many tiers the contract sits above what the squad handles easily.
 export type Threat = 'low' | 'moderate' | 'high' | 'extreme';
 export function squadRating(c: Campaign) {
   const size = Math.min(SQUAD_MAX, c.roster.length), classes = new Set(c.roster.map(o => o.cls));
   const abilities = [...classes].reduce((sum, cls) => sum + c.abilities[cls], 0);
-  return (size - 2) * .5 + (c.weapon + c.armor) / 3 + abilities * .05;
+  return (size - 2) * .5 + (c.weapon + c.armor) / 5 + abilities * .05;
 }
 export function threatFor(c: Campaign, tier: number): Threat {
   const margin = tier - 1 - squadRating(c);
@@ -102,7 +117,7 @@ function dealRecruits(c: Campaign, rng: Rng): Operative[] {
 export const dealBoard = (c: Campaign, rng: Rng): Campaign => ({ ...c, offers: dealOffers(c.completed, rng), recruits: dealRecruits(c, rng) });
 
 export function freshCampaign(rng: Rng = Math.random): Campaign {
-  return dealBoard({ version: 3, cash: 0, weapon: 0, armor: 0, completed: 0, abilities: { assault: 0, support: 0, recon: 0, tech: 0 }, roster: STARTERS.map(o => ({ ...o })), recruits: [], offers: [] }, rng);
+  return dealBoard({ version: CAMPAIGN_VERSION, cash: 0, weapon: 0, armor: 0, completed: 0, loadout: { ...DEFAULT_LOADOUT }, abilities: { assault: 0, support: 0, recon: 0, tech: 0 }, roster: STARTERS.map(o => ({ ...o })), recruits: [], offers: [] }, rng);
 }
 
 export function parseCampaign(text: string | null): Campaign {
@@ -128,20 +143,33 @@ function clampContract(c: any): Contract | null {
   const contract: Contract = { id, type: c.type, tier, seed: n(c.seed, 2 ** 31), payout: contractPayout(tier), district, sector: Math.max(1, n(c.sector, 99)) };
   return c.patrols === undefined ? contract : { ...contract, patrols: n(c.patrols, 3 + MAX_TIER) };
 }
-// Accepts v1 (`mission`), v2 and v3 saves.
+// Accepts v1 (`mission`) to v4 saves.
 export function clampCampaign(data: any, rng: Rng = Math.random): Campaign {
   if (!data || typeof data !== 'object') return freshCampaign(rng);
   const abilities = Object.fromEntries(CLASSES.map(k => [k, n(data.abilities?.[k], MAX_LEVEL)])) as Record<ClassId, number>;
   const roster = clampOperatives(data.roster, ROSTER_CAP);
   const offers = Array.isArray(data.offers) ? data.offers.map(clampContract).filter((c: Contract | null): c is Contract => !!c).slice(0, OFFER_COUNT) : [];
+  const loadout: Loadout = {
+    weapon: WEAPON_MODES.includes(data.loadout?.weapon) ? data.loadout.weapon : DEFAULT_LOADOUT.weapon,
+    armor: ARMOR_MODES.includes(data.loadout?.armor) ? data.loadout.armor : DEFAULT_LOADOUT.armor,
+  };
   const campaign: Campaign = {
-    version: 3, cash: n(data.cash, 1e8), weapon: n(data.weapon, MAX_LEVEL), armor: n(data.armor, MAX_LEVEL),
+    version: CAMPAIGN_VERSION, cash: n(data.cash, 1e8), weapon: n(data.weapon, MAX_LEVEL), armor: n(data.armor, MAX_LEVEL), loadout,
     completed: n(data.completed ?? ((data.mission || 1) - 1), 1e6), abilities,
     roster: roster.length ? roster : STARTERS.map(o => ({ ...o })), recruits: clampOperatives(data.recruits, RECRUIT_OFFERS), offers,
   };
   return offers.length ? campaign : dealBoard(campaign, rng);
 }
 
+// A ledger saved in an older campaign shape, brought up to date. A mission in flight keeps its claim on the payout.
+export function upgradeLedger(ledger: Ledger, rng: Rng): Ledger {
+  const m = ledger.activeMission as any, contract = m && clampContract(m.contract);
+  const keep = contract && typeof m.id === 'string' && Number.isFinite(m.startedAt);
+  return { campaign: clampCampaign(ledger.campaign, rng), activeMission: keep ? { id: m.id, startedAt: m.startedAt, contract } : null };
+}
+
+// Switching how the gear is spent is free.
+export const applyLoadout = (c: Campaign, l: Loadout): Campaign => ({ ...c, loadout: { weapon: l.weapon, armor: l.armor } });
 export function applyPurchase(c: Campaign, type: Upgrade): Campaign | null {
   const cost = upgradeCost(type);
   if (upgradeLevel(c, type) >= MAX_LEVEL || c.cash < cost) return null;

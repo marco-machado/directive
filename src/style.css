@@ -285,6 +285,10 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .upgrade-stat .icon { width: 12px; height: 12px; color: var(--faint) }
 .upgrade-stat b { color: var(--mint) }
 .upgrade .pips { grid-area: pips }
+.upgrade.has-modes { grid-template-areas: "icon copy copy" "icon modes modes" "icon pips buy" }
+.upgrade-modes { grid-area: modes; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 6px }
+.upgrade-modes .btn { min-height: 30px; padding: 0 4px; font-size: 10px; letter-spacing: .04em }
+.upgrade-modes .btn[aria-pressed=true] { --edge: var(--mint); --fill: rgb(18 52 48); color: var(--mint) }
 .upgrade.maxed { border-color: rgb(94 242 192 / .3) }
 .btn.buy { --edge: rgb(255 215 122 / .45); min-width: 92px; min-height: 38px; padding: 0 12px; font-size: 14px; letter-spacing: .04em; color: var(--gold) }
 .btn.buy:hover:not(:disabled) { --edge: var(--gold); --fill: rgb(48 40 16 / .95) }

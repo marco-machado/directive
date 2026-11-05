@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyDismiss, applyPurchase, applyRecruit, baseTier, clampCampaign, completeMission, contractPayout, dealBoard, FIRST_CONTRACT, freshCampaign, MAX_TIER, MIN_MISSION_MS, nextUnlock, OPENING_CONTRACTS, RECRUIT_COST, ROSTER_CAP, SILENT_CLASSES, squadRating, startMission, threatFor, topTier } from '../src/game/campaign.ts';
+import { applyDismiss, applyLoadout, applyPurchase, applyRecruit, baseTier, CAMPAIGN_VERSION, clampCampaign, completeMission, contractPayout, dealBoard, DEFAULT_LOADOUT, FIRST_CONTRACT, freshCampaign, isLoadout, MAX_TIER, MIN_MISSION_MS, nextUnlock, OPENING_CONTRACTS, RECRUIT_COST, ROSTER_CAP, SILENT_CLASSES, squadRating, startMission, threatFor, topTier, upgradeLedger } from '../src/game/campaign.ts';
 import type { Ledger } from '../src/game/campaign.ts';
 import { mulberry32 } from '../src/game/rng.ts';
 import { formatSaveCode, generateSaveCode, normalizeSaveCode } from '../src/game/saveCode.ts';
@@ -32,7 +32,8 @@ test('the threat read weighs the tier against roster size and upgrades', () => {
   const four = { ...starters, roster: (['assault', 'support', 'recon', 'tech'] as const).map((cls, i) => ({ id: `o${i}`, name: `OP${i}`, cls })) };
   assert.deepEqual([2, 3, 4, 5].map(t => threatFor(four, t)), ['low', 'moderate', 'high', 'extreme']);
   const maxed = { ...four, weapon: 3, armor: 3, abilities: { assault: 3, support: 3, recon: 3, tech: 3 } };
-  assert.equal(threatFor(maxed, 5), 'low');
+  // Gear and abilities take a tier off, but no upgrade makes the top tier easy.
+  assert.deepEqual([4, 5].map(t => threatFor(maxed, t)), ['low', 'moderate']);
   // Abilities count only for classes on the roster.
   assert.equal(squadRating({ ...starters, abilities: { ...starters.abilities, recon: 3, tech: 3 } }), squadRating(starters));
 });
@@ -113,7 +114,7 @@ test('imports are clamped and imported contracts never pay above their tier', ()
   const c = clampCampaign({ cash: 1e12, weapon: 9, armor: -2, mission: 3, offers: [{ id: 'x', type: 'heist', tier: 99, payout: 1e9, seed: 1, district: 'X', sector: 1 }] }, rng);
   assert.equal(c.cash, 1e8); assert.equal(c.weapon, 3); assert.equal(c.armor, 0); assert.equal(c.completed, 2);
   assert.equal(c.offers[0].tier, 5); assert.equal(c.offers[0].payout, 1500);
-  assert.equal(clampCampaign('nope', rng).version, 3);
+  assert.equal(clampCampaign('nope', rng).version, CAMPAIGN_VERSION);
   assert.equal(clampCampaign({ roster: [{ id: '<script>', name: 'x', cls: 'god' }] }, rng).roster.length, 2);
 });
 
@@ -142,4 +143,23 @@ test('contract 01 is the same hand-checked heist until a contract is completed',
   // Saved boards keep the patrol cap through the clamp, within bounds.
   assert.equal(clampCampaign({ offers: [{ ...FIRST_CONTRACT, id: 'a' }] }, rng).offers[0].patrols, 1);
   assert.equal(clampCampaign({ offers: [{ ...FIRST_CONTRACT, id: 'a', patrols: 99 }] }, rng).offers[0].patrols, 8);
+});
+
+test('loadouts switch for free and are clamped on import', () => {
+  const c = freshCampaign(rng);
+  assert.deepEqual(c.loadout, DEFAULT_LOADOUT);
+  assert.deepEqual(applyLoadout(c, { weapon: 'extended', armor: 'light' }), { ...c, loadout: { weapon: 'extended', armor: 'light' } });
+  assert.equal(isLoadout({ weapon: 'laser', armor: 'heavy' }), false);
+  assert.equal(isLoadout({ weapon: 'suppressed', armor: 'light' }), true);
+  assert.deepEqual(clampCampaign({ ...c, loadout: { weapon: 'laser', armor: 'light' } }, rng).loadout, { weapon: 'piercing', armor: 'light' });
+});
+
+test('upgrading an older ledger keeps the mission in flight and its payout claim', () => {
+  const c = freshCampaign(rng), offer = c.offers[0];
+  const old = { campaign: { ...c, version: 3, loadout: undefined }, activeMission: { id: 'm1', startedAt: 5, contract: offer } } as unknown as Ledger;
+  const up = upgradeLedger(old, rng);
+  assert.equal(up.campaign.version, CAMPAIGN_VERSION); assert.deepEqual(up.campaign.loadout, DEFAULT_LOADOUT);
+  assert.deepEqual(up.activeMission, { id: 'm1', startedAt: 5, contract: offer });
+  assert.ok(completeMission(up, 'm1', 5 + MIN_MISSION_MS, true, rng));
+  assert.equal(upgradeLedger({ ...old, activeMission: { id: 7 } } as unknown as Ledger, rng).activeMission, null);
 });

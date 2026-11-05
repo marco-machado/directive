@@ -95,49 +95,49 @@ escort            5   75%   17%   83%    80   13%  1× The squad was wiped out.;
 
 ## four+max · no-tactics
 type           tier   win quiet alarm  time    hp  fails
-assassination     1  100%   25%   75%    15    2%  
-assassination     2  100%   25%   75%    17    4%  
-assassination     3  100%   17%   83%    20    5%  
-assassination     4  100%    8%   92%    21    9%  
-assassination     5   92%    0%  100%    26   18%  1× The target escaped.
-heist             1  100%    0%  100%    30    4%  
-heist             2  100%    0%  100%    32    5%  
-heist             3  100%    0%  100%    34    8%  
-heist             4  100%    0%  100%    36   15%  
-heist             5  100%    0%  100%    40   26%  
-sabotage          1  100%    0%  100%    28    3%  
-sabotage          2  100%    0%  100%    31    5%  
-sabotage          3  100%    0%  100%    33    7%  
-sabotage          4  100%    0%  100%    34   14%  
-sabotage          5  100%    0%  100%    37   23%  
-escort            1  100%    0%  100%    23    4%  
-escort            2  100%    0%  100%    25    5%  
-escort            3  100%    0%  100%    23    7%  
-escort            4  100%    0%  100%    25   16%  
-escort            5  100%    0%  100%    29   24%  
+assassination     1  100%   25%   75%    15    3%  
+assassination     2  100%   25%   75%    17    6%  
+assassination     3  100%   17%   83%    20   14%  
+assassination     4   92%    8%   92%    22   20%  1× The squad was wiped out.
+assassination     5   58%    0%  100%    28   40%  3× The squad was wiped out.; 2× The target escaped.
+heist             1  100%    0%  100%    30   10%  
+heist             2  100%    0%  100%    32   12%  
+heist             3  100%    0%  100%    34   21%  
+heist             4   75%    0%  100%    35   34%  3× The squad was wiped out.
+heist             5   42%    0%  100%    44   47%  7× The squad was wiped out.
+sabotage          1  100%    0%  100%    28    7%  
+sabotage          2  100%    0%  100%    31   11%  
+sabotage          3  100%    0%  100%    33   17%  
+sabotage          4   83%    0%  100%    34   33%  2× The squad was wiped out.
+sabotage          5   58%    0%  100%    37   46%  5× The squad was wiped out.
+escort            1  100%    0%  100%    23    8%  
+escort            2  100%    0%  100%    25   13%  
+escort            3  100%    0%  100%    23   17%  
+escort            4   83%    0%  100%    25   30%  2× The squad was wiped out.
+escort            5   50%    0%  100%    29   47%  4× The squad was wiped out.; 2× The VIP was killed.
 
 ## four+max · tactical
 type           tier   win quiet alarm  time    hp  fails
 assassination     1  100%  100%    0%    20    0%  
-assassination     2  100%   92%    8%    35    0%  
+assassination     2  100%   92%    8%    35    1%  
 assassination     3  100%   92%    8%    26    1%  
-assassination     4  100%   75%   25%    48    1%  
-assassination     5  100%   67%   33%    54    2%  
+assassination     4  100%   75%   25%    65    3%  
+assassination     5  100%   50%   50%    68    5%  
 heist             1  100%  100%    0%    33    0%  
 heist             2  100%  100%    0%    40    0%  
-heist             3  100%   83%   17%    51    1%  
+heist             3  100%   83%   17%    52    2%  
 heist             4  100%  100%    0%    62    0%  
-heist             5  100%   17%   83%    96    6%  
+heist             5  100%   25%   75%    95    7%  
 sabotage          1  100%  100%    0%    37    0%  
 sabotage          2  100%  100%    0%    49    0%  
-sabotage          3  100%   92%    8%    57    0%  
-sabotage          4  100%   92%    8%    65    0%  
-sabotage          5  100%   50%   50%    95    4%  
+sabotage          3  100%   83%   17%    60    1%  
+sabotage          4  100%   67%   33%    79    2%  
+sabotage          5  100%   50%   50%   102    4%  
 escort            1  100%  100%    0%    32    0%  
 escort            2  100%  100%    0%    57    0%  
-escort            3  100%   92%    8%    42    0%  
-escort            4  100%   67%   33%    71    1%  
-escort            5  100%   50%   50%    63    5%  
+escort            3  100%   92%    8%    42    1%  
+escort            4  100%   67%   33%    69    2%  
+escort            5  100%   42%   58%    55    6%  
 
 ## Mean win rate over the four contract types
 roster      bot             T1   T2   T3   T4   T5
@@ -145,11 +145,42 @@ starters    no-tactics     83%  69%  44%   8%   0%
 starters    tactical      100%  94%  94%  29%   0%
 four        no-tactics    100%  96%  85%  35%   4%
 four        tactical      100%  98% 100%  92%  90%
-four+max    no-tactics    100% 100% 100% 100%  98%
+four+max    no-tactics    100% 100% 100%  83%  52%
 four+max    tactical      100% 100% 100% 100% 100%
 
-## Targets
-FAIL  no-tactics  four+max  tier 5: 98% (target 40–60%)
+## Targets (default loadout; --loadouts checks each bot's best one for the fully upgraded four)
+PASS  no-tactics  four+max  tier 5: 52% (target 40–60%)
 PASS  tactical    four+max  tier 5: 100% (target 85% or more)
 PASS  no-tactics  starters  tier 1: 83% (target 78–88%)
 PASS  tactical    starters  tier 1: 100% (target 90% or more)
+
+
+Loadouts: no-tactics and tactical bots with the fully upgraded four, 12 seeds per cell; mean over the four contract types of contracts won / won without an alarm.
+
+loadout              bot                  T4        T5
+piercing/heavy       no-tactics       83%/2%    52%/0%
+piercing/heavy       tactical       100%/77%  100%/42%
+piercing/light       no-tactics       75%/2%    17%/0%
+piercing/light       tactical       100%/85%  100%/44%
+suppressed/heavy     no-tactics       69%/0%     8%/0%
+suppressed/heavy     tactical       100%/79%   96%/29%
+suppressed/light     no-tactics       50%/0%     2%/0%
+suppressed/light     tactical       100%/85%   96%/29%
+extended/heavy       no-tactics       79%/0%    35%/0%
+extended/heavy       tactical       100%/73%   94%/25%
+extended/light       no-tactics       63%/0%     6%/0%
+extended/light       tactical       100%/77%   96%/31%
+
+## Best loadout
+no-tactics   T4 wins :  83% with piercing/heavy
+no-tactics   T4 quiet:   2% with piercing/heavy
+no-tactics   T5 wins :  52% with piercing/heavy
+no-tactics   T5 quiet:   0% with piercing/heavy
+tactical     T4 wins : 100% with piercing/heavy
+tactical     T4 quiet:  85% with suppressed/light
+tactical     T5 wins : 100% with piercing/heavy
+tactical     T5 quiet:  44% with piercing/light
+
+## Targets (each bot's best loadout for winning)
+PASS  no-tactics  four+max  tier 5: 52% with piercing/heavy (target 40–60%)
+PASS  tactical    four+max  tier 5: 100% with piercing/heavy (target 85% or more)

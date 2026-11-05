@@ -3,8 +3,8 @@
 // loud when the alarm sounds or when it has made no progress for STALL seconds. It knows only what bots.ts's
 // Knowledge holds and acts only through Orders.
 import { abilityPower, ABILITY_STATS, CLASS_STATS } from '../src/game/classes.ts';
-import { COVER_FACTOR, HOSTILE_STATS, posted, ROUTE_MAX, TAKEDOWN_REACH, watchedBy } from '../src/game/simulation.ts';
-import type { Objective } from '../src/game/simulation.ts';
+import { COVER_FACTOR, gearRange, HOSTILE_STATS, posted, ROUTE_MAX, TAKEDOWN_REACH, watchedBy } from '../src/game/simulation.ts';
+import type { AttackPreview, Objective } from '../src/game/simulation.ts';
 import { distance } from '../src/game/world.ts';
 import type { Point, World } from '../src/game/world.ts';
 import { observer } from './bots.ts';
@@ -34,6 +34,8 @@ function samples(from: Point, route: Point[], step = .4): Point[] {
   }
   return out;
 }
+// A volley that kills, or with suppressed rifles one that only turns the hostile suspicious when a second finishes it.
+const quietVolley = (p: AttackPreview | null) => p?.outcome === 'kill' || (p?.outcome === 'suspicious' && p.damage * 2 >= p.hp);
 const pathLength = (from: Point, path: Point[]) => path.reduce((sum, p, i) => sum + distance(i ? path[i - 1] : from, p), 0);
 
 // Any two points: a route that makes watchedBy draw one cone instead of a posted guard's whole look-around.
@@ -201,13 +203,15 @@ class Tactician {
     if (!h.visible) return false;
     this.o.selectAll();
     const p = this.o.attackPreview(h.id);
-    if (p?.outcome !== 'kill' || !this.living.every(op => this.canHit(op, h))) return false;
+    if (!quietVolley(p) || !this.living.every(op => this.canHit(op, h))) return false;
     this.o.attack(h.id); this.job = null;
     return true;
   }
+  // Rifle range, with extended barrels' reach.
+  private range(op: Op) { return CLASS_STATS[op.cls].range + gearRange(this.k.campaign); }
   private canHit(op: Op, h: Point) {
     const w = this.k.world;
-    return distance(op, h) <= CLASS_STATS[op.cls].range - .2 && w.sightClear(op, h) && !w.coverBetween(op, h);
+    return distance(op, h) <= this.range(op) - .2 && w.sightClear(op, h) && !w.coverBetween(op, h);
   }
   private snipe(h: Seen): boolean {
     const k = this.k, recon = this.living.find(op => op.ability === 'snipe' && op.abilityCd <= 0);
@@ -227,7 +231,7 @@ class Tactician {
     if (!h.visible) { this.approach(h); return; }
     this.o.selectAll();
     const p = this.o.attackPreview(h.id);
-    if (p?.outcome === 'kill') { this.job = { kind: 'volley', target: h.id, spot: h, at: -Infinity }; this.continueJob(); return; }
+    if (quietVolley(p)) { this.job = { kind: 'volley', target: h.id, spot: h, at: -Infinity }; this.continueJob(); return; }
     const tech = this.living.find(op => op.ability === 'emp' && op.abilityCd <= 0);
     if (p?.outcome === 'takedown') {
       const spots = this.strikeSpots(h);
@@ -275,7 +279,7 @@ class Tactician {
     const h = k.hostiles.find(s => s.id === job.target);
     if (!h || h.hp <= 0) { this.job = null; return false; }
     if (job.kind === 'volley') {
-      const shooters = this.living, range = Math.min(...shooters.map(op => CLASS_STATS[op.cls].range));
+      const shooters = this.living, range = Math.min(...shooters.map(op => this.range(op)));
       if (k.time - job.at > REPLAN || distance(job.spot, h) > range - .5) {
         const spot = this.spotNear(h, range - .6, range - 2, shooters);
         if (!spot) { this.job = null; return false; }
@@ -283,7 +287,7 @@ class Tactician {
       }
       if (shooters.every(op => this.canHit(op, h))) {
         this.o.selectAll();
-        if (this.o.attackPreview(h.id)?.outcome === 'kill') { this.o.attack(h.id); this.job = null; return true; }
+        if (quietVolley(this.o.attackPreview(h.id))) { this.o.attack(h.id); this.job = null; return true; }
       }
       for (const op of shooters) if (!this.onCourse(op, job.spot, .5) && distance(op, job.spot) > .5) this.send(op, k.world.findPath(op, job.spot, this.danger('plan')));
       return true;
@@ -332,7 +336,7 @@ class Tactician {
     this.abilities();
     if (k.alarm && this.withdraw()) return;
     const visible = k.hostiles.filter(h => h.visible && h.hp > 0);
-    const near = visible.filter(h => this.living.some(op => distance(op, h) <= CLASS_STATS[op.cls].range + 3) && (HOSTILE_STATS[h.kind].damage > 0 || h.kind === 'target'));
+    const near = visible.filter(h => this.living.some(op => distance(op, h) <= this.range(op) + 3) && (HOSTILE_STATS[h.kind].damage > 0 || h.kind === 'target'));
     const target = near.find(h => h.kind === 'target') ?? [...near].sort((a, b) => a.hp - b.hp)[0] ?? (goal.target?.visible ? goal.target : undefined);
     if (target && k.alarm) {
       if (this.fightTarget !== target.id || this.living.every(op => op.targetId !== target.id)) { this.o.selectAll(); this.o.attack(target.id); this.fightTarget = target.id; this.fightGoal = ''; }

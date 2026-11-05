@@ -1,5 +1,5 @@
 import { MIN_MISSION_MS, parseCampaign } from '../game/campaign.ts';
-import type { Campaign, Upgrade } from '../game/campaign.ts';
+import type { Campaign, Loadout, Upgrade } from '../game/campaign.ts';
 import { generateSaveCode, normalizeSaveCode } from '../game/saveCode.ts';
 import type { CampaignSync, Simulation } from '../game/simulation.ts';
 
@@ -101,6 +101,7 @@ export class CampaignClient implements CampaignSync {
     });
   }
   bought(type: Upgrade) { this.change(`upgrades/${type}`, 'POST'); }
+  equipped(loadout: Loadout) { this.change('loadout', 'POST', loadout); }
   recruited(id: string) { this.change(`recruits/${id}`, 'POST'); }
   dismissed(id: string) { this.change(`roster/${id}`, 'DELETE'); }
   picked(squad: string[]) { if (this.code) storage.set(PICK_KEY, JSON.stringify({ code: this.code, squad })); }
@@ -111,9 +112,9 @@ export class CampaignClient implements CampaignSync {
       return saved?.code === this.code && Array.isArray(saved.squad) ? saved.squad.filter((id): id is string => typeof id === 'string') : [];
     } catch { return []; }
   }
-  private change(path: string, method: string) {
+  private change(path: string, method: string, body?: unknown) {
     const code = this.code; if (!code) return;
-    this.enqueue(async () => (await api<{ campaign: Campaign }>(`campaign/${code}/${path}`, method)).campaign);
+    this.enqueue(async () => (await api<{ campaign: Campaign }>(`campaign/${code}/${path}`, method, body)).campaign);
   }
 
   private enqueue(task: () => Promise<Campaign | null>) {

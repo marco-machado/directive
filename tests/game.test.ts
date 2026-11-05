@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Simulation, parseCampaign, CALM_SECONDS, CALM_STEP, escalation, FIRST_WAVE_SECONDS, waveSize, REPEAT_REINFORCEMENTS, VIP_DAMAGE_TAKEN, VIP_SECURE_SECONDS, CAMERA_DETECT, COVER_FACTOR, DETECT_DRAIN, detectSeconds, GHOST_SECONDS, HACK_SECONDS, LOOK_ANGLE, LOOK_EVERY, LOOK_PAUSE, QUEUE_SPACING, REINFORCE_CAP, ROUTE_MAX, SUSPICIOUS, REINFORCE_SECONDS, REVIVE_SECONDS, SIGHT_RANGE, TAKEDOWN_REACH, TAKEDOWN_SECONDS, tierDamage, tierHp, WAIT_MAX, WAIT_STEP } from '../src/game/simulation.ts';
+import { Simulation, parseCampaign, CALM_SECONDS, EXTENDED_RANGE, HEAVY_HP, LIGHT_CONCEALMENT, PIERCING_BONUS, SUPPRESSOR_STEP, CALM_STEP, escalation, FIRST_WAVE_SECONDS, waveSize, REPEAT_REINFORCEMENTS, VIP_DAMAGE_TAKEN, VIP_SECURE_SECONDS, CAMERA_DETECT, COVER_FACTOR, DETECT_DRAIN, detectSeconds, GHOST_SECONDS, HACK_SECONDS, LOOK_ANGLE, LOOK_EVERY, LOOK_PAUSE, QUEUE_SPACING, REINFORCE_CAP, ROUTE_MAX, SUSPICIOUS, REINFORCE_SECONDS, REVIVE_SECONDS, SIGHT_RANGE, TAKEDOWN_REACH, TAKEDOWN_SECONDS, tierDamage, tierHp, WAIT_MAX, WAIT_STEP } from '../src/game/simulation.ts';
 import type { CampaignSync, Unit, Upgrade } from '../src/game/simulation.ts';
-import { contractPayout, FIRST_CONTRACT, freshCampaign, MAX_TIER } from '../src/game/campaign.ts';
-import type { Campaign, ContractType } from '../src/game/campaign.ts';
+import { CAMPAIGN_VERSION, contractPayout, FIRST_CONTRACT, freshCampaign, MAX_LEVEL, MAX_TIER } from '../src/game/campaign.ts';
+import type { ArmorMode, Campaign, ContractType, WeaponMode } from '../src/game/campaign.ts';
 import { abilityCooldown, CLASS_STATS } from '../src/game/classes.ts';
 import { mapSize, planMission, TARGET_AREA_OFFSET, TARGET_AREA_RADIUS } from '../src/game/mapgen.ts';
 import type { EnemyKind } from '../src/game/mapgen.ts';
@@ -15,7 +15,7 @@ const recorder = () => {
   const events: string[] = [];
   const sync: CampaignSync = {
     deployed: (id, squad) => events.push(`deployed:${id}:${squad.join(',')}`), completed: s => events.push(`completed:${s}`),
-    bought: (t: Upgrade) => events.push(`bought:${t}`), recruited: id => events.push(`recruited:${id}`), dismissed: id => events.push(`dismissed:${id}`),
+    bought: (t: Upgrade) => events.push(`bought:${t}`), equipped: l => events.push(`equipped:${l.weapon}/${l.armor}`), recruited: id => events.push(`recruited:${id}`), dismissed: id => events.push(`dismissed:${id}`),
     picked: squad => events.push(`picked:${squad.join(',')}`),
   };
   return { events, sync };
@@ -45,7 +45,7 @@ function arena(type: ContractType = 'heist', extra: Partial<Campaign> = {}, sync
 
 test('migrates v1 and v2 saves and clamps corrupt values', () => {
   const v1 = parseCampaign('{"cash":500,"weapon":2,"armor":1,"mission":4}');
-  assert.equal(v1.version, 3); assert.equal(v1.cash, 500); assert.equal(v1.completed, 3);
+  assert.equal(v1.version, CAMPAIGN_VERSION); assert.equal(v1.cash, 500); assert.equal(v1.completed, 3);
   assert.deepEqual(v1.roster.map(o => [o.name, o.cls]), [['VEX', 'assault'], ['ROOK', 'support']]);
   assert.equal(v1.offers.length, 3); assert.equal(v1.recruits.length, 2);
   assert.equal(parseCampaign('{"cash":-99,"weapon":900}').weapon, 3);
@@ -645,7 +645,7 @@ test('a server campaign replaces local state and rebuilds the briefing', () => {
   sim.applyCampaign(server);
   assert.equal(sim.getSnapshot().campaign.cash, 750);
   assert.equal(sim.contract?.id, server.offers[0].id);
-  assert.equal(sim.units.find(u => u.id === 'vex')!.maxHp, CLASS_STATS.assault.hp + 80);
+  assert.equal(sim.units.find(u => u.id === 'vex')!.maxHp, CLASS_STATS.assault.hp + 2 * HEAVY_HP);
 });
 
 test('the sync flag reaches the snapshot and notifies only when it changes', () => {
@@ -1318,4 +1318,87 @@ test('a deploy waits while a save is in flight, so it only ever names an offer t
   sim.setSyncing(false);
   sim.deploy();
   assert.equal(sim.phase, 'mission'); assert.equal(events.length, 1);
+});
+
+// ---- Gear loadouts ----
+const geared = (weapon: WeaponMode, armor: ArmorMode, level = MAX_LEVEL): Partial<Campaign> => ({ weapon: level, armor: level, loadout: { weapon, armor } });
+
+test('piercing rounds add damage a level; suppressed and extended rifles trade it away', () => {
+  const base = CLASS_STATS.assault.damage + CLASS_STATS.support.damage;
+  for (const [mode, bonus] of [['piercing', MAX_LEVEL * PIERCING_BONUS], ['suppressed', 0], ['extended', 0]] as const) {
+    const { sim, hostile } = arena('heist', geared(mode, 'heavy'));
+    assert.equal(sim.attackPreview(hostile('guard', 3, 0, Math.PI / 2, 1e4).id)!.damage, base + 2 * bonus, mode);
+  }
+  const { sim, hostile } = arena('heist', geared('piercing', 'heavy', 0));
+  assert.equal(sim.attackPreview(hostile('guard', 3, 0, Math.PI / 2, 1e4).id)!.damage, base);
+});
+
+test('extended barrels let the squad fire from farther away', () => {
+  const far = CLASS_STATS.assault.range + MAX_LEVEL * EXTENDED_RANGE - .2;
+  for (const [mode, hits] of [['extended', true], ['piercing', false]] as const) {
+    const { sim, squad, hostile } = arena('heist', geared(mode, 'heavy'));
+    squad[1].x = -15; squad[1].z = 15;
+    const guard = hostile('guard', far, 0, Math.PI / 2, 1e6); // out of its own range, its back to VEX
+    (sim as unknown as { raiseAlarm(p: Point, r: string): void }).raiseAlarm(guard, 'test');
+    step(sim, .5);
+    assert.equal(guard.hp < 1e6, hits, mode);
+  }
+});
+
+test('heavy plating adds health a level; light plating trades it away', () => {
+  const vex = (armor: ArmorMode) => arena('heist', geared('piercing', armor)).squad[0].maxHp;
+  assert.equal(vex('heavy'), CLASS_STATS.assault.hp + MAX_LEVEL * HEAVY_HP);
+  assert.equal(vex('light'), CLASS_STATS.assault.hp);
+});
+
+test('light plating makes hostiles slower to notice the squad, but not the VIP', () => {
+  const squadSeen = (armor: ArmorMode) => {
+    const { sim, hostile } = arena('heist', geared('piercing', armor));
+    hostile('guard', 3, 0, -Math.PI / 2, 40).lookEvery = 1e9;
+    step(sim, 20, () => sim.alarm); return sim.time;
+  };
+  const close = (t: number, want: number) => assert.ok(Math.abs(t - want) <= 1 / 60 + 1e-9, `${t} vs ${want}`);
+  close(squadSeen('heavy'), detectSeconds('guard', 2));
+  close(squadSeen('light'), detectSeconds('guard', 2) * (1 + MAX_LEVEL * LIGHT_CONCEALMENT));
+  // Only the VIP is in the guard's sight: VEX stands just past its vision, ROOK far away.
+  const vipSeen = (armor: ArmorMode) => {
+    const { sim, squad, hostile } = arena('escort', geared('piercing', armor));
+    const vip = sim.units.find(u => u.faction === 'vip')!;
+    squad[0].x = 0; squad[0].z = 0; squad[1].x = 15; squad[1].z = 15; vip.x = -1.5; vip.z = 0;
+    step(sim, VIP_SECURE_SECONDS + .1); assert.equal(sim.objectives[0].done, true);
+    const start = sim.time;
+    hostile('guard', -7.5, 0, Math.PI / 2, 40).lookEvery = 1e9;
+    step(sim, 20, () => sim.alarm); return sim.time - start;
+  };
+  assert.equal(vipSeen('light'), vipSeen('heavy'));
+});
+
+test('suppressed rifles leave a hostile that survives a hit suspicious, until hits tip it into the alarm', () => {
+  const { sim, hostile } = arena('heist', geared('suppressed', 'heavy'));
+  const heavy = hostile('heavy', 4, 0, Math.PI / 2, 180); // its back to the squad
+  heavy.lookEvery = 1e9;
+  sim.select('vex'); // a heavy needs two for a takedown, so one operative fires instead
+  assert.equal(sim.attackPreview(heavy.id)!.outcome, 'suspicious');
+  assert.match(sim.attackHint(heavy.id)!, /turns suspicious/);
+  sim.attack(heavy.id); step(sim, 1, () => heavy.hp < 180);
+  assert.ok(heavy.hp < 180); assert.equal(sim.alarm, false);
+  assert.ok(Math.abs(heavy.detect - (1 - MAX_LEVEL * SUPPRESSOR_STEP)) < .02, String(heavy.detect));
+  step(sim, 6, () => sim.alarm);
+  assert.equal(sim.alarm, true); assert.ok(heavy.hp > 0);
+  // Without suppressor levels, the first hit raises the alarm as before.
+  const plain = arena('heist', geared('suppressed', 'heavy', 0));
+  const other = plain.hostile('heavy', 4, 0, Math.PI / 2, 180);
+  plain.sim.select('vex'); assert.equal(plain.sim.attackPreview(other.id)!.outcome, 'alert');
+  plain.sim.attack(other.id); step(plain.sim, 1, () => other.hp < 180);
+  assert.equal(plain.sim.alarm, true);
+});
+
+test('switching the loadout is free, reported to the server, and refused mid-mission', () => {
+  const { events, sync } = recorder();
+  const sim = new Simulation(campaignWith('heist'), sync), cash = sim.campaign.cash;
+  assert.ok(sim.equip({ weapon: 'suppressed', armor: 'light' }));
+  assert.deepEqual(sim.campaign.loadout, { weapon: 'suppressed', armor: 'light' }); assert.equal(sim.campaign.cash, cash);
+  assert.equal(events.at(-1), 'equipped:suppressed/light');
+  sim.deploy();
+  assert.equal(sim.equip({ weapon: 'piercing', armor: 'heavy' }), false);
 });

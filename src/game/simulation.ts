@@ -1,7 +1,7 @@
 import { abilityCooldown, abilityPower, ABILITY_STATS, CLASS_STATS, effectScale, EMP_CAMERA_SECONDS, MARK_RADIUS, MARK_SECONDS } from './classes.ts';
 import type { AbilityId, ClassId } from './classes.ts';
-import { applyDismiss, applyPayout, applyPurchase, applyRecruit, dealBoard, freshCampaign, missionPayout, SQUAD_MAX } from './campaign.ts';
-import type { Campaign, Contract, Upgrade } from './campaign.ts';
+import { applyDismiss, applyLoadout, applyPayout, applyPurchase, applyRecruit, dealBoard, freshCampaign, missionPayout, SQUAD_MAX } from './campaign.ts';
+import type { Campaign, Contract, Loadout, Upgrade } from './campaign.ts';
 import { planMission } from './mapgen.ts';
 import type { Area, EnemyKind, MissionPlan } from './mapgen.ts';
 import { mulberry32 } from './rng.ts';
@@ -56,7 +56,7 @@ export type Snapshot = {
 // Reports campaign events to the server; the server answers through applyCampaign.
 export type CampaignSync = {
   deployed(contractId: string, squad: string[]): void; completed(stealth: boolean): void;
-  bought(type: Upgrade): void; recruited(id: string): void; dismissed(id: string): void;
+  bought(type: Upgrade): void; equipped(loadout: Loadout): void; recruited(id: string): void; dismissed(id: string): void;
   picked(squad: string[]): void; // the briefing's squad pick, which stays in this browser
 };
 
@@ -111,7 +111,17 @@ export const REVIVE_HP = .4;
 export const HACK_SECONDS = 12;
 export const PLANT_SECONDS = 3;
 export const COVER_FACTOR = .5;
-export const WEAPON_BONUS = 12, ARMOR_BONUS = 40;
+// What each gear level buys, by how the squad spends it (Campaign.loadout). At level 0 every mode is plain issue.
+export const PIERCING_BONUS = 4;       // damage a weapon level adds with piercing rounds
+export const SUPPRESSOR_STEP = .2;     // with suppressors, a hostile that survives a rifle hit gains 1 − this × level detection, not the alarm
+export const EXTENDED_RANGE = .6;      // m of rifle range a weapon level adds with extended barrels
+export const HEAVY_HP = 12;            // health an armor level adds with heavy plating
+export const LIGHT_CONCEALMENT = .15;  // with light weave, hostiles take 1 + this × level times as long to notice an operative
+export const gearDamage = (c: Campaign) => c.loadout.weapon === 'piercing' ? c.weapon * PIERCING_BONUS : 0;
+export const gearRange = (c: Campaign) => c.loadout.weapon === 'extended' ? c.weapon * EXTENDED_RANGE : 0;
+export const suppressedAlert = (c: Campaign) => c.loadout.weapon === 'suppressed' ? 1 - SUPPRESSOR_STEP * c.weapon : 1;
+export const gearHp = (c: Campaign) => c.loadout.armor === 'heavy' ? c.armor * HEAVY_HP : 0;
+export const concealment = (c: Campaign) => c.loadout.armor === 'light' ? 1 + LIGHT_CONCEALMENT * c.armor : 1;
 export const QUEUE_SPACING = .9;    // gap between operatives, side by side or in single file
 export const ROUTE_MAX = 8;         // waypoints an operative's route can hold, the one it is walking to included
 export const WAIT_STEP = 2;         // each wait order adds this many seconds at the last waypoint
@@ -167,7 +177,8 @@ export function watchedBy(world: World, v: Pick<Unit, 'x' | 'z' | 'kind' | 'head
 }
 // What an attack order would do with the current selection: a takedown by the listed operatives, a volley that kills
 // silently, one that leaves the hostile alive and raises the alarm, or (during the alarm) just a volley.
-export type AttackPreview = { outcome: 'takedown' | 'kill' | 'alert' | 'volley'; takedown: string[]; damage: number; hp: number; short: number };
+// With suppressed rifles, a volley that leaves the hostile alive can turn it suspicious instead of raising the alarm.
+export type AttackPreview = { outcome: 'takedown' | 'kill' | 'suspicious' | 'alert' | 'volley'; takedown: string[]; damage: number; hp: number; short: number };
 
 export class Simulation {
   campaign: Campaign;
@@ -214,7 +225,7 @@ export class Simulation {
   private lastKnown: Point | null = null;
   private holdup = '';
   private casts: { unitId: string; ability: AbilityId; point: Point; targetId: string | null }[] = [];
-  private hitThisFrame = new Map<Unit, Unit | null>(); // hostiles hit this frame, and by whom
+  private hitThisFrame = new Map<Unit, { by: Unit | null; rifle: boolean }>(); // hostiles hit this frame, by whom, and whether only by the squad's rifles
   private volleyReady = new Set<Unit>();
   private autoPaused = new Set<string>();
   private rng: Rng = Math.random;
@@ -285,6 +296,7 @@ export class Simulation {
   }
   openBoard = () => { if (this.phase !== 'headquarters') return; this.phase = 'briefing'; this.result = null; this.contract = null; this.refreshBoard(); this.emit(); };
   buy(type: Upgrade): boolean { return this.trade(applyPurchase(this.campaign, type), s => s.bought(type)); }
+  equip(loadout: Loadout): boolean { return this.trade(applyLoadout(this.campaign, loadout), s => s.equipped(loadout)); }
   recruit(id: string): boolean { return this.trade(applyRecruit(this.campaign, id), s => s.recruited(id)); }
   dismiss(id: string): boolean {
     const ok = this.trade(applyDismiss(this.campaign, id), s => s.dismissed(id));
@@ -315,7 +327,7 @@ export class Simulation {
     this.squad = this.squadPick.filter(id => this.campaign.roster.some(o => o.id === id));
     this.squad.forEach((id, i) => {
       const op = this.campaign.roster.find(o => o.id === id)!, stats = CLASS_STATS[op.cls];
-      const u = this.makeUnit(id, op.name, op.cls, 'squad', plan.spawn[i % plan.spawn.length], stats.hp + this.campaign.armor * ARMOR_BONUS, headingTo(plan.extract, { x: 0, z: 0 }));
+      const u = this.makeUnit(id, op.name, op.cls, 'squad', plan.spawn[i % plan.spawn.length], stats.hp + gearHp(this.campaign), headingTo(plan.extract, { x: 0, z: 0 }));
       u.ability = stats.ability; this.units.push(u);
     });
     plan.enemies.forEach((e, i) => {
@@ -436,13 +448,14 @@ export class Simulation {
   // An unaware guard, heavy or target that the selection's volley would not kill gets a takedown instead:
   // the nearest operative (two for a heavy) circles out of its sight and finishes it up close.
   // Otherwise every selected operative closes in and, before the alarm, they fire together.
-  private firepower(u: Unit) { return CLASS_STATS[u.kind as ClassId].damage + this.campaign.weapon * WEAPON_BONUS; }
+  private firepower(u: Unit) { return CLASS_STATS[u.kind as ClassId].damage + gearDamage(this.campaign); }
   private attackPlan(target: Unit, units: Unit[]) {
     const world = this.plan!.world;
     const damage = units.reduce((sum, u) => sum + this.firepower(u) * (world.coverBetween(u, target) ? COVER_FACTOR : 1), 0), kills = damage >= target.hp;
     const quiet = !this.alarm && target.detect < SUSPICIOUS && takedownable(target) && !kills, need = target.kind === 'heavy' ? 2 : 1;
     const takedown = quiet && units.length >= need ? [...units].sort((a, b) => distance(a, target) - distance(b, target)).slice(0, need) : [];
-    return { takedown, short: quiet && units.length < need ? need : 0, damage: Math.round(damage), hp: Math.ceil(target.hp), alerts: !this.alarm && !kills };
+    const survives = !this.alarm && !kills, alerts = survives && target.detect + suppressedAlert(this.campaign) >= 1;
+    return { takedown, short: quiet && units.length < need ? need : 0, damage: Math.round(damage), hp: Math.ceil(target.hp), alerts, suspicious: survives && !alerts };
   }
   private attackable(id: string) {
     const target = this.unit(id), units = this.orderable();
@@ -452,14 +465,16 @@ export class Simulation {
   attackPreview(id: string): AttackPreview | null {
     const order = this.attackable(id); if (!order) return null;
     const p = this.attackPlan(order.target, order.units);
-    const outcome = p.takedown.length ? 'takedown' : this.alarm ? 'volley' : p.alerts ? 'alert' : 'kill';
+    const outcome = p.takedown.length ? 'takedown' : this.alarm ? 'volley' : p.alerts ? 'alert' : p.suspicious ? 'suspicious' : 'kill';
     return { outcome, takedown: p.takedown.map(u => u.id), damage: p.damage, hp: p.hp, short: p.short };
   }
   // The hover hint for a preview: "Takedown · ROOK" or "48 / 75 · will alert".
   describeAttack(p: AttackPreview): string {
     if (p.outcome === 'takedown') return `Takedown · ${p.takedown.map(id => this.unit(id)?.name).join(' + ')}`;
     const volley = `${p.damage} / ${p.hp}`;
-    return p.outcome === 'volley' ? volley : `${volley} · ${p.outcome === 'alert' ? 'will alert' : 'silent kill'}${p.short ? ` · takedown needs ${p.short}` : ''}`;
+    if (p.outcome === 'volley') return volley;
+    const effect = p.outcome === 'alert' ? 'will alert' : p.outcome === 'suspicious' ? 'turns suspicious' : 'silent kill';
+    return `${volley} · ${effect}${p.short ? ` · takedown needs ${p.short}` : ''}`;
   }
   attackHint(id: string): string | null {
     const p = this.attackPreview(id);
@@ -620,12 +635,13 @@ export class Simulation {
     this.autoPaused.add(u.id); this.paused = true;
     this.message = `${u.name} is suspicious. Auto-paused.`;
   }
-  private damage(target: Unit, amount: number, from: Unit | null) {
+  // `rifle`: a squad rifle round, which suppressors quieten (sniper shots and grenades are never quiet).
+  private damage(target: Unit, amount: number, from: Unit | null, rifle = false) {
     if (target.hp <= 0) return;
     const covered = from && this.plan?.world.coverBetween(from, target);
     if (target.faction === 'vip') { amount *= VIP_DAMAGE_TAKEN; if (from) this.vipThreat = { x: from.x, z: from.z }; }
     target.hp = Math.max(0, target.hp - amount * (covered ? COVER_FACTOR : 1));
-    if (target.faction === 'hostile') this.hitThisFrame.set(target, from);
+    if (target.faction === 'hostile') this.hitThisFrame.set(target, { by: from, rifle: rifle && (this.hitThisFrame.get(target)?.rifle ?? true) });
     else {
       target.hurt = 1.5; target.revive = 0;
       // A downed operative drops its orders; once revived it stays where it fell.
@@ -633,7 +649,7 @@ export class Simulation {
     }
   }
   private shoot(from: Unit, to: Unit, amount: number, kind: Shot['kind'] = 'bullet') {
-    this.damage(to, amount, from);
+    this.damage(to, amount, from, kind === 'bullet' && from.faction === 'squad');
     this.contact(from.faction === 'hostile' ? to : from);
     this.shots.push({ id: this.nextId++, from: { x: from.x, z: from.z }, to: { x: to.x, z: to.z }, faction: from.faction, shooter: from.kind, kind, ttl: kind === 'snipe' ? .35 : .12 });
   }
@@ -709,7 +725,8 @@ export class Simulation {
     if (this.alarm) { if (seen) this.contact(seen); }
     else if (seen) {
       const was = u.detect;
-      u.detect = Math.min(1, u.detect + dt / detectSeconds(u.kind as EnemyKind, distance(u, seen)));
+      const time = detectSeconds(u.kind as EnemyKind, distance(u, seen)) * (seen.faction === 'squad' ? concealment(this.campaign) : 1);
+      u.detect = Math.min(1, u.detect + dt / time);
       if (u.detect >= 1) { this.raiseAlarm(u, `${stats.name} spotted the squad`, seen, { trigger: 'sighting', by: u, culprit: seen }); return; }
       if (was <= SUSPICIOUS && u.detect > SUSPICIOUS) { this.reach('suspicious'); this.suspicious(u); }
     } else u.detect = Math.max(0, u.detect - DETECT_DRAIN * dt);
@@ -797,7 +814,7 @@ export class Simulation {
       } else if (!u.path.length) u.path = world.findPath(u, down);
     }
     if (u.takedownId && this.closeIn(u, dt)) return;
-    const canHit = (v: Unit) => v.visible && distance(u, v) <= stats.range && world.sightClear(u, v);
+    const canHit = (v: Unit) => v.visible && distance(u, v) <= stats.range + gearRange(this.campaign) && world.sightClear(u, v);
     const ordered = hostiles.find(v => v.id === u.targetId);
     if (!ordered) u.targetId = null;
     else if (!canHit(ordered) && !u.path.length) { u.repath -= dt; if (u.repath <= 0) { u.repath = .75; u.path = world.findPath(u, ordered); } }
@@ -1014,7 +1031,16 @@ export class Simulation {
     this.fireVolleys();
     this.resolveTakedowns(dt);
     // A volley that kills its target stays quiet; any hostile left standing after being hit raises the alarm.
-    for (const [u, by] of this.hitThisFrame) if (u.hp > 0) { this.raiseAlarm(u, `${u.name} returned fire`, undefined, { trigger: 'gunfire', by: u, culprit: by ?? undefined }); break; }
+    // With suppressed rifles a survivor only grows more suspicious, until that tips it into the alarm.
+    for (const [u, hit] of this.hitThisFrame) {
+      if (u.hp <= 0) continue;
+      const jump = hit.rifle ? suppressedAlert(this.campaign) : 1;
+      if (this.alarm || u.detect + jump >= 1) { this.raiseAlarm(u, `${u.name} returned fire`, undefined, { trigger: 'gunfire', by: u, culprit: hit.by ?? undefined }); break; }
+      const was = u.detect;
+      u.detect += jump;
+      if (was <= SUSPICIOUS && u.detect > SUSPICIOUS) { this.reach('suspicious'); this.suspicious(u); }
+      this.message = `${u.name} hit and suspicious.`;
+    }
     for (const u of this.units) if (u.faction === 'hostile' && u.hp <= 0) { u.path = []; u.moving = false; }
     const squad = this.livingSquad();
     const vip = this.unit('vip');
