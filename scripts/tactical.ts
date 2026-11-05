@@ -3,7 +3,7 @@
 // loud when the alarm sounds or when it has made no progress for STALL seconds. It knows only what bots.ts's
 // Knowledge holds and acts only through Orders.
 import { abilityPower, ABILITY_STATS, CLASS_STATS } from '../src/game/classes.ts';
-import { HOSTILE_STATS, posted, ROUTE_MAX, TAKEDOWN_REACH, watchedBy } from '../src/game/simulation.ts';
+import { COVER_FACTOR, HOSTILE_STATS, posted, ROUTE_MAX, TAKEDOWN_REACH, watchedBy } from '../src/game/simulation.ts';
 import type { Objective } from '../src/game/simulation.ts';
 import { distance } from '../src/game/world.ts';
 import type { Point, World } from '../src/game/world.ts';
@@ -209,8 +209,9 @@ class Tactician {
   }
   private snipe(h: Seen): boolean {
     const k = this.k, recon = this.living.find(op => op.ability === 'snipe' && op.abilityCd <= 0);
-    if (!recon || !h.visible || abilityPower('snipe', recon.level) < h.hp) return false;
-    if (distance(recon, h) > ABILITY_STATS.snipe.reach || !k.world.sightClear(recon, h)) return false;
+    if (!recon || !h.visible || distance(recon, h) > ABILITY_STATS.snipe.reach || !k.world.sightClear(recon, h)) return false;
+    // A barrier between them halves the shot, as it does any fire; only a shot that kills is quiet.
+    if (abilityPower('snipe', recon.level) * (k.world.coverBetween(recon, h) ? COVER_FACTOR : 1) < h.hp) return false;
     this.o.ability(recon.slot); this.o.unitClick(h.id); this.job = null;
     return true;
   }
