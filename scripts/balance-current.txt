@@ -27,24 +27,24 @@ escort            5    0%    0%  100%     -     -  12× The squad was wiped out.
 ## starters · tactical
 type           tier   win quiet alarm  time    hp  fails
 assassination     1  100%   42%   58%    27    8%  
-assassination     2  100%   33%   67%    44   12%  
-assassination     3   92%    0%  100%    76   22%  1× The squad was wiped out.
+assassination     2  100%   33%   67%    44   10%  
+assassination     3   92%    0%  100%    76   16%  1× The squad was wiped out.
 assassination     4    0%    0%  100%     -     -  1× The target escaped.; 11× The squad was wiped out.
 assassination     5    0%    0%  100%     -     -  10× The squad was wiped out.; 2× The target escaped.
 heist             1  100%   75%   25%    38    5%  
-heist             2  100%   67%   33%    47    9%  
-heist             3   92%   50%   50%    59    8%  1× The squad was wiped out.
-heist             4   42%   17%   83%    92   16%  7× The squad was wiped out.
+heist             2  100%   67%   33%    47    6%  
+heist             3  100%   50%   50%    92    9%  
+heist             4   50%   17%   83%    98   14%  6× The squad was wiped out.
 heist             5    0%    0%  100%     -     -  12× The squad was wiped out.
 sabotage          1  100%   67%   33%    53    6%  
-sabotage          2   92%   25%   75%    70   15%  1× The squad was wiped out.
-sabotage          3   83%   50%   50%    77    9%  2× The squad was wiped out.
-sabotage          4   42%    0%  100%    95   30%  7× The squad was wiped out.
+sabotage          2   92%   25%   75%    74   13%  1× The squad was wiped out.
+sabotage          3  100%   50%   50%    88   10%  
+sabotage          4   50%    0%  100%   109   23%  6× The squad was wiped out.
 sabotage          5    0%    0%  100%     -     -  12× The squad was wiped out.
 escort            1  100%   67%   33%    37    7%  
-escort            2  100%   17%   83%    61   17%  
-escort            3  100%   17%   83%    77   22%  
-escort            4   25%    8%   92%    73   30%  9× The squad was wiped out.
+escort            2   83%   17%   83%    57   18%  2× The VIP was killed.
+escort            3   83%   17%   83%    77   22%  2× The VIP was killed.
+escort            4   42%    8%   92%   145   16%  7× The squad was wiped out.
 escort            5    0%    0%  100%     -     -  12× The squad was wiped out.
 
 ## four · no-tactics
@@ -75,23 +75,23 @@ type           tier   win quiet alarm  time    hp  fails
 assassination     1  100%  100%    0%    20    0%  
 assassination     2  100%  100%    0%    30    0%  
 assassination     3  100%   83%   17%    28    2%  
-assassination     4  100%    8%   92%    89   15%  
-assassination     5   83%    0%  100%   103   22%  1× The target escaped.; 1× The squad was wiped out.
+assassination     4  100%    8%   92%   116   12%  
+assassination     5   92%    0%  100%   129   14%  1× The target escaped.
 heist             1  100%  100%    0%    33    0%  
 heist             2  100%  100%    0%    41    0%  
-heist             3  100%   67%   33%    54    3%  
-heist             4   92%   42%   58%    74    6%  1× The squad was wiped out.
-heist             5   92%   17%   83%   103    8%  1× The squad was wiped out.
+heist             3  100%   67%   33%    55    2%  
+heist             4   92%   42%   58%    74    5%  1× The squad was wiped out.
+heist             5   92%   17%   83%   130    9%  1× The squad was wiped out.
 sabotage          1  100%  100%    0%    38    0%  
 sabotage          2  100%  100%    0%    49    0%  
-sabotage          3  100%   58%   42%    52    3%  
-sabotage          4   92%   42%   58%    74    5%  1× timeout
-sabotage          5   92%    0%  100%   111   17%  1× The squad was wiped out.
+sabotage          3  100%   58%   42%    53    3%  
+sabotage          4   92%   42%   58%    85    5%  1× The squad was wiped out.
+sabotage          5  100%    0%  100%   184   12%  
 escort            1  100%  100%    0%    32    0%  
-escort            2  100%   75%   25%    55    3%  
+escort            2   92%   75%   25%    55    2%  1× The VIP was killed.
 escort            3  100%   83%   17%    56    1%  
-escort            4   92%   33%   67%    81    5%  1× The squad was wiped out.
-escort            5  100%   17%   83%    67   13%  
+escort            4   83%   33%   67%    91    6%  1× The squad was wiped out.; 1× The VIP was killed.
+escort            5   75%   17%   83%    80   12%  1× The squad was wiped out.; 2× The VIP was killed.
 
 ## four+max · no-tactics
 type           tier   win quiet alarm  time    hp  fails
@@ -121,30 +121,30 @@ type           tier   win quiet alarm  time    hp  fails
 assassination     1  100%  100%    0%    20    0%  
 assassination     2  100%   92%    8%    35    0%  
 assassination     3  100%   92%    8%    26    1%  
-assassination     4  100%   75%   25%    48    2%  
-assassination     5  100%   67%   33%    53    2%  
+assassination     4  100%   75%   25%    48    1%  
+assassination     5  100%   67%   33%    54    2%  
 heist             1  100%  100%    0%    33    0%  
 heist             2  100%  100%    0%    40    0%  
-heist             3  100%   83%   17%    50    1%  
+heist             3  100%   83%   17%    51    1%  
 heist             4  100%  100%    0%    62    0%  
-heist             5  100%   17%   83%    95    6%  
+heist             5  100%   17%   83%    96    6%  
 sabotage          1  100%  100%    0%    37    0%  
 sabotage          2  100%  100%    0%    49    0%  
 sabotage          3  100%   92%    8%    57    0%  
-sabotage          4  100%   92%    8%    65    1%  
+sabotage          4  100%   92%    8%    65    0%  
 sabotage          5  100%   50%   50%    95    4%  
 escort            1  100%  100%    0%    32    0%  
 escort            2  100%  100%    0%    57    0%  
 escort            3  100%   92%    8%    42    0%  
 escort            4  100%   67%   33%    71    1%  
-escort            5  100%   50%   50%    55    6%  
+escort            5  100%   50%   50%    63    5%  
 
 ## Mean win rate over the four contract types
 roster      bot             T1   T2   T3   T4   T5
 starters    no-tactics     83%  69%  44%   8%   0%
-starters    tactical      100%  98%  92%  27%   0%
+starters    tactical      100%  94%  94%  35%   0%
 four        no-tactics    100%  96%  85%  35%   4%
-four        tactical      100% 100% 100%  94%  92%
+four        tactical      100%  98% 100%  92%  90%
 four+max    no-tactics    100% 100% 100% 100%  98%
 four+max    tactical      100% 100% 100% 100% 100%
 
