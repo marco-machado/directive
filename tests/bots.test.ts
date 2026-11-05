@@ -42,3 +42,17 @@ test('a bot only knows hostiles the squad has seen, and a walking one only while
   });
   assert.ok(checks > 0);
 });
+
+test('a bot counts down a remembered stun while the stunned hostile is out of sight', () => {
+  const sim = new Simulation({ ...freshCampaign(mulberry32(7)), offers: [{ ...FIRST_CONTRACT, id: 'c01', payout: contractPayout(1) }] });
+  sim.deploy();
+  const see = observer(sim), u = sim.units.find(v => v.faction === 'hostile' && v.patrol.length < 2)!;
+  const remembered = () => see().hostiles.find(h => h.id === u.id)!.stunned;
+  u.visible = true; u.stunned = 5;
+  assert.equal(remembered(), 5);
+  u.visible = false;
+  sim.time += 3;
+  assert.equal(remembered(), 2);
+  sim.time += 3;
+  assert.equal(remembered(), 0);
+});

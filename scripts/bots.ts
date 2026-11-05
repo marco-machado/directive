@@ -61,7 +61,9 @@ const isHostile = (u: Unit) => u.faction === 'hostile';
 // Builds a mission's Knowledge each think, remembering what the squad has seen.
 export function observer(sim: Simulation): () => Knowledge {
   const known = new Map<string, Seen>(), dead = new Set<string>();
+  let last = sim.time;
   return () => {
+    const dt = sim.time - last; last = sim.time;
     for (const u of sim.units) {
       if (!isHostile(u)) continue;
       if (u.visible) {
@@ -75,6 +77,8 @@ export function observer(sim: Simulation): () => Knowledge {
       } else {
         const s = known.get(u.id); if (!s) continue;
         s.visible = false;
+        // A stun seen wears off on the mission clock, out of sight as in it.
+        s.stunned = Math.max(0, s.stunned - dt);
         // A hostile that walks is only where its last-seen marker says while the marker lasts.
         if (s.patrol.length >= 2 && sim.time - s.at >= GHOST_SECONDS) known.delete(u.id);
       }

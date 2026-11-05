@@ -76,7 +76,7 @@ assassination     1  100%  100%    0%    20   33%    0%
 assassination     2  100%  100%    0%    30   50%    0%  
 assassination     3  100%   83%   17%    28   75%    2%  
 assassination     4  100%    8%   92%   116    8%   12%  
-assassination     5   92%    0%  100%   129   18%   14%  1× The target escaped.
+assassination     5   92%    0%  100%   128   18%   14%  1× The target escaped.
 heist             1  100%  100%    0%    33    0%    0%  
 heist             2  100%  100%    0%    41   50%    0%  
 heist             3  100%   67%   33%    55   50%    2%  
@@ -86,12 +86,12 @@ sabotage          1  100%  100%    0%    38   17%    0%
 sabotage          2  100%  100%    0%    49   25%    0%  
 sabotage          3  100%   58%   42%    53   58%    3%  
 sabotage          4   92%   42%   58%    85   36%    5%  1× The squad was wiped out.
-sabotage          5  100%    0%  100%   187    8%   15%  
+sabotage          5  100%    0%  100%   187   17%   16%  
 escort            1  100%  100%    0%    32   25%    0%  
 escort            2   92%   75%   25%    55   36%    2%  1× The VIP was killed.
 escort            3  100%   83%   17%    56   50%    1%  
-escort            4   83%   33%   67%    91   40%    6%  1× The squad was wiped out.; 1× The VIP was killed.
-escort            5   75%   17%   83%    80   44%   13%  1× The squad was wiped out.; 2× The VIP was killed.
+escort            4   75%   33%   67%    85   44%    5%  1× The squad was wiped out.; 2× The VIP was killed.
+escort            5   75%   17%   83%    95   33%   12%  1× The squad was wiped out.; 2× The VIP was killed.
 
 ## four+max · no-tactics
 type           tier   win quiet alarm  time swift    hp  fails
@@ -144,7 +144,7 @@ roster      bot             T1   T2   T3   T4   T5
 starters    no-tactics     83%  69%  44%   8%   0%
 starters    tactical      100%  94%  94%  29%   0%
 four        no-tactics    100%  96%  85%  35%   4%
-four        tactical      100%  98% 100%  92%  90%
+four        tactical      100%  98% 100%  90%  90%
 four+max    no-tactics    100% 100% 100%  83%  52%
 four+max    tactical      100% 100% 100% 100% 100%
 
@@ -172,13 +172,13 @@ piercing/heavy       tactical       100%/77%  100%/42%
 piercing/light       no-tactics       75%/2%    17%/0%
 piercing/light       tactical       100%/85%  100%/44%
 suppressed/heavy     no-tactics       69%/0%     8%/0%
-suppressed/heavy     tactical       100%/79%   96%/29%
+suppressed/heavy     tactical       100%/77%   96%/29%
 suppressed/light     no-tactics       50%/0%     2%/0%
-suppressed/light     tactical       100%/85%   96%/29%
+suppressed/light     tactical       100%/83%   96%/29%
 extended/heavy       no-tactics       79%/0%    35%/0%
-extended/heavy       tactical       100%/73%   94%/25%
+extended/heavy       tactical       100%/75%   94%/25%
 extended/light       no-tactics       63%/0%     6%/0%
-extended/light       tactical       100%/77%   96%/31%
+extended/light       tactical       100%/79%   96%/33%
 
 ## Best loadout
 no-tactics   T4 wins :  83% with piercing/heavy
@@ -186,7 +186,7 @@ no-tactics   T4 quiet:   2% with piercing/heavy
 no-tactics   T5 wins :  52% with piercing/heavy
 no-tactics   T5 quiet:   0% with piercing/heavy
 tactical     T4 wins : 100% with piercing/heavy
-tactical     T4 quiet:  85% with suppressed/light
+tactical     T4 quiet:  85% with piercing/light
 tactical     T5 wins : 100% with piercing/heavy
 tactical     T5 quiet:  44% with piercing/light
 
