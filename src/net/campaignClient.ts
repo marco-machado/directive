@@ -78,11 +78,11 @@ export class CampaignClient implements CampaignSync {
     sim.setSyncing(false);
   }
 
-  deployed(contractId: string, squad: string[]) {
+  deployed(contractId: string, squad: string[], countermeasures: number) {
     const code = this.code; if (!code) return;
     const generation = this.generation;
     this.enqueue(async () => {
-      const { missionId, campaign } = await api<{ missionId: string; campaign: Campaign }>(`campaign/${code}/missions`, 'POST', { contractId, squad });
+      const { missionId, campaign } = await api<{ missionId: string; campaign: Campaign }>(`campaign/${code}/missions`, 'POST', { contractId, squad, countermeasures });
       if (generation === this.generation) { this.missionId = missionId; this.missionRegisteredAt = performance.now(); }
       return campaign;
     });

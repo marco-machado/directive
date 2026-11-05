@@ -5,7 +5,7 @@ import { BADGE_POINTS, BADGES, CONTRACT_POINTS, MAX_TIER, nextUnlock, OPENING_CO
 import type { Badge, Campaign, Contract, ContractType, Operative } from '../game/campaign.ts';
 import { ABILITY_STATS, CLASS_STATS } from '../game/classes.ts';
 import { formatSaveCode, normalizeSaveCode } from '../game/saveCode.ts';
-import { HACK_SECONDS, VIP_SECURE_SECONDS } from '../game/simulation.ts';
+import { COUNTERMEASURES, HACK_SECONDS, VIP_SECURE_SECONDS } from '../game/simulation.ts';
 import { ApiError, fetchCampaign, rememberSaveCode } from '../net/campaignClient.ts';
 import { Icon, Portrait } from './icons.tsx';
 import type { IconName } from './icons.tsx';
@@ -25,6 +25,15 @@ export const BADGE_COPY: Record<Badge, { title: string; icon: IconName; goal: (c
   bloodless: { title: 'Bloodless', icon: 'heal', goal: c => c.type === 'assassination' ? 'Kill no one but the target' : 'Kill no one' },
   purge: { title: 'Purge', icon: 'kills', goal: (_, n) => `Down all ${n} hostile${n === 1 ? '' : 's'} in the district` },
 };
+// Countermeasures levels by name, and what a level does (each adds to the ones below it).
+export const CM_LEVEL = ['Off', 'I', 'II', 'III'];
+export function countermeasuresEffect(level: number) {
+  const cm = COUNTERMEASURES[level], parts: string[] = [];
+  if (cm.detect < 1) parts.push(`hostiles notice the squad ${Math.round((1 / cm.detect - 1) * 100)}% faster`);
+  if (cm.calm) parts.push(`alarms take ${cm.calm} s longer to stand down`);
+  if (cm.uncapped) parts.push('reinforcements never stop');
+  return parts.length ? `${parts.join(', ')}.`.replace(/^./, c => c.toUpperCase()) : 'Standard district security.';
+}
 export const pad = (n: number) => String(n).padStart(2, '0');
 export const clock = (seconds: number) => `${pad(Math.floor(seconds / 60))}:${pad(Math.floor(seconds % 60))}`;
 export const secs = (n: number) => `${Number(n.toFixed(1))} s`;

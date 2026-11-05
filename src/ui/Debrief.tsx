@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
 import type { RefObject } from 'react';
 import type { ClassId } from '../game/classes.ts';
-import { BADGES, parSeconds } from '../game/campaign.ts';
+import { BADGES, MAX_COUNTERMEASURES, parSeconds } from '../game/campaign.ts';
 import { HOSTILE_STATS, isReinforcement } from '../game/simulation.ts';
 import type { AlarmCause, Snapshot, Unit } from '../game/simulation.ts';
-import { BADGE_COPY, Clearance, clock, CONTRACTS, Credits, SaveCode, SaveWarning, threat } from './common.tsx';
+import { BADGE_COPY, Clearance, clock, CM_LEVEL, CONTRACTS, Credits, SaveCode, SaveWarning, threat } from './common.tsx';
 import { Icon, Portrait } from './icons.tsx';
 import type { IconName } from './icons.tsx';
 
@@ -72,6 +72,13 @@ function Badges({ state }: { state: Snapshot }) {
   })}</ul>;
 }
 
+// How a won contract on a Countermeasures level moved the ladder.
+function countermeasuresResult(state: Snapshot) {
+  const level = state.countermeasures, name = `Countermeasures ${CM_LEVEL[level]}`;
+  if (!state.badges.length || state.campaign.countermeasures < level) return `${name} won, but no new level opens: that takes a badge on the highest open level.`;
+  return level < MAX_COUNTERMEASURES ? `${name} cleared: level ${CM_LEVEL[level + 1]} is open.` : `${name} cleared: the top of the ladder.`;
+}
+
 export function Debrief({ state, saveCode, titleRef, onBoard, onHeadquarters }: { state: Snapshot; saveCode: string | null; titleRef: RefObject<HTMLHeadingElement | null>; onBoard: () => void; onHeadquarters: () => void }) {
   const success = state.result === 'success', c = state.contract;
   const kills = state.units.filter(u => u.faction === 'hostile' && u.hp <= 0).length;
@@ -100,6 +107,7 @@ export function Debrief({ state, saveCode, titleRef, onBoard, onHeadquarters }: 
         </li>)}</ul>
       </div>
       {success ? <Badges state={state} /> : <p className="debrief-note">No badges on a lost contract.</p>}
+      {success && state.countermeasures ? <p className="debrief-note cm">{countermeasuresResult(state)}</p> : null}
       <div className={`debrief-intel${state.alarmCause ? '' : ' single'}`}>
         {state.alarmCause ? <AlarmReport state={state} cause={state.alarmCause} /> : null}
         <Clearance campaign={state.campaign} earned={success ? state.badges : null} />

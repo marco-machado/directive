@@ -193,3 +193,16 @@ tactical     T5 quiet:  44% with piercing/light
 ## Targets (each bot's best loadout for winning)
 PASS  no-tactics  four+max  tier 5: 52% with piercing/heavy (target 40–60%)
 PASS  tactical    four+max  tier 5: 100% with piercing/heavy (target 85% or more)
+
+
+Countermeasures: no-tactics and tactical bots with the fully upgraded four, 12 seeds per cell; mean over the four contract types of contracts won / won without an alarm.
+
+level  bot                  T5
+0      no-tactics       52%/0%
+0      tactical       100%/42%
+1      no-tactics       54%/0%
+1      tactical        98%/31%
+2      no-tactics       54%/0%
+2      tactical        98%/31%
+3      no-tactics       54%/0%
+3      tactical        81%/31%

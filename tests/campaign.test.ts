@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyDismiss, applyLoadout, applyPayout, applyPurchase, applyRecruit, BADGE_POINTS, baseTier, CAMPAIGN_VERSION, clampCampaign, clearancePoints, CONTRACT_POINTS, completeMission, contractPayout, dealBoard, DEFAULT_LOADOUT, FIRST_CONTRACT, freshCampaign, isLoadout, MAX_TIER, MIN_MISSION_MS, missionReport, nextUnlock, offerTiers, OPENING_CONTRACTS, PAR_PER_TIER, PAR_SECONDS, parSeconds, RECRUIT_COST, ROSTER_CAP, SILENT_CLASSES, squadRating, startMission, threatFor, topTier, upgradeLedger } from '../src/game/campaign.ts';
+import { applyDismiss, applyLoadout, applyPayout, applyPurchase, applyRecruit, BADGE_POINTS, baseTier, CAMPAIGN_VERSION, clampCampaign, clearancePoints, CONTRACT_POINTS, completeMission, contractPayout, dealBoard, DEFAULT_LOADOUT, FIRST_CONTRACT, freshCampaign, isLoadout, MAX_TIER, MAX_COUNTERMEASURES, MAX_LEVEL, MIN_MISSION_MS, missionReport, nextUnlock, offerTiers, OPENING_CONTRACTS, PAR_PER_TIER, PAR_SECONDS, parSeconds, RECRUIT_COST, ROSTER_CAP, SILENT_CLASSES, squadRating, startMission, threatFor, topTier, unlockedCountermeasures, upgradeLedger } from '../src/game/campaign.ts';
 import type { Ledger, MissionReport } from '../src/game/campaign.ts';
 import { mulberry32 } from '../src/game/rng.ts';
 import { formatSaveCode, generateSaveCode, normalizeSaveCode } from '../src/game/saveCode.ts';
@@ -25,7 +25,7 @@ test('until two contracts are complete, the board offers only the base tier and 
   assert.deepEqual(clampCampaign({ completed: 1 }, rng).offers.map(o => o.tier), [1, 1, 2]);
   assert.deepEqual(clampCampaign({ completed: 2 }, rng).offers.map(o => o.tier), [1, 2, 3]);
   // The Worker deals boards through the same rule when a mission starts.
-  const c = freshCampaign(rng), started = startMission({ campaign: c, activeMission: null }, 'm', 0, c.offers[0].id, ['vex'], rng)!;
+  const c = freshCampaign(rng), started = startMission({ campaign: c, activeMission: null }, 'm', 0, c.offers[0].id, ['vex'], 0, rng)!;
   assert.ok(started.campaign.offers.every(o => o.tier <= 2));
 });
 
@@ -80,7 +80,7 @@ test('a mission report keeps known badges, ties Ghost to stealth, and rejects an
 
 test('a payout counts the badges earned', () => {
   const c = freshCampaign(rng), contract = c.offers[1];
-  const paid = applyPayout(c, contract, { stealth: false, badges: ['untouched', 'swift'] }, rng);
+  const paid = applyPayout(c, contract, 0, { stealth: false, badges: ['untouched', 'swift'] }, rng);
   assert.equal(paid.badges.untouched, 1); assert.equal(paid.badges.swift, 1); assert.equal(paid.badges.ghost, 0);
   assert.equal(clearancePoints(paid), CONTRACT_POINTS + 2 * BADGE_POINTS);
   assert.deepEqual(clampCampaign({ ...paid, badges: { swift: 2, bogus: 9 } }, rng).badges, { ghost: 0, untouched: 0, swift: 2, bloodless: 0, purge: 0 });
@@ -105,7 +105,7 @@ test('a new campaign always offers a Recon or Tech recruit until its first contr
     const r = mulberry32(seed), fresh = freshCampaign(r);
     assert.ok(silent(fresh), `seed ${seed}: first board`);
     // Deploying deals the next board before the payout, so the guarantee holds there too: that is the board the first payout can buy from.
-    const ledger = startMission({ campaign: fresh, activeMission: null }, 'm', 0, fresh.offers[0].id, ['vex'], r)!;
+    const ledger = startMission({ campaign: fresh, activeMission: null }, 'm', 0, fresh.offers[0].id, ['vex'], 0, r)!;
     assert.ok(silent(ledger.campaign), `seed ${seed}: board dealt by the first deploy`);
     const paid = completeMission(ledger, 'm', MIN_MISSION_MS, QUIET, rng)!.campaign;
     assert.ok(paid.cash >= RECRUIT_COST && silent(paid));
@@ -116,7 +116,7 @@ test('a new campaign always offers a Recon or Tech recruit until its first contr
 
 test('a mission pays its stored contract once, only for the active id, and never too early', () => {
   const t0 = 1_000_000, campaign = freshCampaign(rng), offer = campaign.offers[2];
-  const ledger = startMission({ campaign, activeMission: null }, 'm1', t0, offer.id, ['vex', 'rook'], rng)!;
+  const ledger = startMission({ campaign, activeMission: null }, 'm1', t0, offer.id, ['vex', 'rook'], 0, rng)!;
   assert.ok(!ledger.campaign.offers.some(o => o.id === offer.id), 'deploying rerolls the board');
   assert.equal(completeMission(ledger, 'm1', t0 + MIN_MISSION_MS - 1, LOUD, rng), null);
   assert.equal(completeMission(ledger, 'other', t0 + MIN_MISSION_MS, LOUD, rng), null);
@@ -129,12 +129,12 @@ test('a mission pays its stored contract once, only for the active id, and never
 
 test('deploys reject unknown contracts and invalid squads; restarts keep the board', () => {
   const campaign = freshCampaign(rng), offer = campaign.offers[0], base: Ledger = { campaign, activeMission: null };
-  assert.equal(startMission(base, 'm', 0, 'forged', ['vex'], rng), null);
-  assert.equal(startMission(base, 'm', 0, offer.id, [], rng), null);
-  assert.equal(startMission(base, 'm', 0, offer.id, ['vex', 'vex'], rng), null);
-  assert.equal(startMission(base, 'm', 0, offer.id, ['ghost'], rng), null);
-  const started = startMission(base, 'm1', 0, offer.id, ['vex'], rng)!;
-  const restarted = startMission(started, 'm2', 5, offer.id, ['vex', 'rook'], rng)!;
+  assert.equal(startMission(base, 'm', 0, 'forged', ['vex'], 0, rng), null);
+  assert.equal(startMission(base, 'm', 0, offer.id, [], 0, rng), null);
+  assert.equal(startMission(base, 'm', 0, offer.id, ['vex', 'vex'], 0, rng), null);
+  assert.equal(startMission(base, 'm', 0, offer.id, ['ghost'], 0, rng), null);
+  const started = startMission(base, 'm1', 0, offer.id, ['vex'], 0, rng)!;
+  const restarted = startMission(started, 'm2', 5, offer.id, ['vex', 'rook'], 0, rng)!;
   assert.deepEqual(restarted.campaign, started.campaign);
   assert.equal(restarted.activeMission!.contract.id, offer.id);
 });
@@ -162,7 +162,7 @@ test('contract 01 is the same hand-checked heist until a contract is completed',
     assert.equal(new Set(fresh.offers.map(o => o.type)).size, 3);
     assert.ok(fresh.offers.slice(1).every(o => o.patrols === undefined));
     // A failed or abandoned first run deals it again; the first payout deals a board without it.
-    const ledger = startMission({ campaign: fresh, activeMission: null }, 'm', 0, first.id, ['vex'], mulberry32(seed))!;
+    const ledger = startMission({ campaign: fresh, activeMission: null }, 'm', 0, first.id, ['vex'], 0, mulberry32(seed))!;
     assert.equal(ledger.campaign.offers[0].seed, FIRST_CONTRACT.seed);
     const paid = completeMission(ledger, 'm', MIN_MISSION_MS, QUIET, rng)!.campaign;
     assert.deepEqual(paid.offers.map(o => o.tier), [1, 1, 2]);
@@ -188,7 +188,26 @@ test('upgrading an older ledger keeps the mission in flight and its payout claim
   const old = { campaign: { ...c, version: 3, loadout: undefined }, activeMission: { id: 'm1', startedAt: 5, contract: offer } } as unknown as Ledger;
   const up = upgradeLedger(old, rng);
   assert.equal(up.campaign.version, CAMPAIGN_VERSION); assert.deepEqual(up.campaign.loadout, DEFAULT_LOADOUT);
-  assert.deepEqual(up.activeMission, { id: 'm1', startedAt: 5, contract: offer });
+  assert.deepEqual(up.activeMission, { id: 'm1', startedAt: 5, contract: offer, countermeasures: 0 });
   assert.ok(completeMission(up, 'm1', 5 + MIN_MISSION_MS, QUIET, rng));
   assert.equal(upgradeLedger({ ...old, activeMission: { id: 7 } } as unknown as Ledger, rng).activeMission, null);
+});
+
+test('Countermeasures open once fully upgraded, refuse a locked level, and a badge on the top open level opens the next', () => {
+  const base = freshCampaign(rng), maxed = { ...base, weapon: MAX_LEVEL, armor: MAX_LEVEL, abilities: { assault: MAX_LEVEL, support: MAX_LEVEL, recon: MAX_LEVEL, tech: MAX_LEVEL } };
+  assert.equal(unlockedCountermeasures(base), 0); assert.equal(unlockedCountermeasures(maxed), 1);
+  assert.equal(unlockedCountermeasures({ ...maxed, abilities: { ...maxed.abilities, tech: 2 } }), 0);
+  const offer = maxed.offers[0], ledger: Ledger = { campaign: maxed, activeMission: null };
+  assert.equal(startMission(ledger, 'm', 0, offer.id, ['vex'], 2, rng), null);
+  const started = startMission(ledger, 'm', 0, offer.id, ['vex'], 1, rng)!;
+  assert.equal(started.activeMission!.countermeasures, 1);
+  assert.equal(startMission(started, 'm2', 0, offer.id, ['vex'], 2, rng), null); // a restart is held to the open levels too
+  assert.equal(completeMission(started, 'm', MIN_MISSION_MS, LOUD, rng)!.campaign.countermeasures, 0); // no badge, no unlock
+  const cleared = completeMission(started, 'm', MIN_MISSION_MS, QUIET, rng)!.campaign;
+  assert.equal(cleared.countermeasures, 1); assert.equal(unlockedCountermeasures(cleared), 2);
+  assert.equal(unlockedCountermeasures({ ...cleared, countermeasures: MAX_COUNTERMEASURES }), MAX_COUNTERMEASURES);
+  assert.equal(clampCampaign({ ...cleared, countermeasures: 9 }, rng).countermeasures, MAX_COUNTERMEASURES);
+  // Clearing a lower level than the top open one unlocks nothing.
+  const low = startMission({ campaign: { ...maxed, countermeasures: 1 }, activeMission: null }, 'm', 0, offer.id, ['vex'], 1, rng)!;
+  assert.equal(completeMission(low, 'm', MIN_MISSION_MS, QUIET, rng)!.campaign.countermeasures, 1);
 });

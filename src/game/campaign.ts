@@ -27,12 +27,13 @@ export const isBadge = (v: unknown): v is Badge => BADGES.includes(v as Badge);
 // What the client reports when a contract is won.
 export type MissionReport = { stealth: boolean; badges: Badge[] };
 // The campaign's shape; the Durable Object upgrades a ledger saved in an older one when it reads it (upgradeLedger).
-export const CAMPAIGN_VERSION = 5;
+export const CAMPAIGN_VERSION = 6;
 export type Campaign = {
   version: typeof CAMPAIGN_VERSION; cash: number; weapon: number; armor: number; completed: number; loadout: Loadout; badges: Record<Badge, number>;
+  countermeasures: number; // the highest Countermeasures level cleared with a badge
   abilities: Record<ClassId, number>; roster: Operative[]; recruits: Operative[]; offers: Contract[];
 };
-export type ActiveMission = { id: string; startedAt: number; contract: Contract } | null;
+export type ActiveMission = { id: string; startedAt: number; contract: Contract; countermeasures: number } | null;
 export type Ledger = { campaign: Campaign; activeMission: ActiveMission };
 
 export const CONTRACT_TYPES: readonly ContractType[] = ['assassination', 'heist', 'sabotage', 'escort'];
@@ -89,6 +90,11 @@ export function threatFor(c: Campaign, tier: number): Threat {
   const margin = tier - 1 - squadRating(c);
   return margin <= .5 ? 'low' : margin <= 1.5 ? 'moderate' : margin <= 2.5 ? 'high' : 'extreme';
 }
+// Countermeasures: an opt-in difficulty ladder for a squad with nothing left to buy. Level 1 opens once every upgrade is
+// maxed; clearing the highest open level with at least one badge opens the next. It pays no credits.
+export const MAX_COUNTERMEASURES = 3;
+export const fullyUpgraded = (c: Campaign) => c.weapon >= MAX_LEVEL && c.armor >= MAX_LEVEL && CLASSES.every(k => c.abilities[k] >= MAX_LEVEL);
+export const unlockedCountermeasures = (c: Campaign) => fullyUpgraded(c) ? Math.min(MAX_COUNTERMEASURES, c.countermeasures + 1) : 0;
 export const missionPayout = (contract: Contract, stealth: boolean) => Math.round(contract.payout * (stealth ? 1 + STEALTH_BONUS : 1));
 
 const DISTRICTS = ['GLASS DISTRICT', 'CHROME QUARTER', 'NEON VERGE', 'KESSLER YARDS', 'DATA WARRENS', 'HALCYON ROW', 'IRON MARKET', 'ORBITAL DOCKS', 'VANTA HEIGHTS', 'SILT CANAL'];
@@ -146,7 +152,7 @@ export const dealBoard = (c: Campaign, rng: Rng): Campaign => ({ ...c, offers: d
 
 const noBadges = () => Object.fromEntries(BADGES.map(b => [b, 0])) as Record<Badge, number>;
 export function freshCampaign(rng: Rng = Math.random): Campaign {
-  return dealBoard({ version: CAMPAIGN_VERSION, cash: 0, weapon: 0, armor: 0, completed: 0, loadout: { ...DEFAULT_LOADOUT }, badges: noBadges(), abilities: { assault: 0, support: 0, recon: 0, tech: 0 }, roster: STARTERS.map(o => ({ ...o })), recruits: [], offers: [] }, rng);
+  return dealBoard({ version: CAMPAIGN_VERSION, cash: 0, weapon: 0, armor: 0, completed: 0, loadout: { ...DEFAULT_LOADOUT }, badges: noBadges(), countermeasures: 0, abilities: { assault: 0, support: 0, recon: 0, tech: 0 }, roster: STARTERS.map(o => ({ ...o })), recruits: [], offers: [] }, rng);
 }
 
 export function parseCampaign(text: string | null): Campaign {
@@ -172,7 +178,7 @@ function clampContract(c: any): Contract | null {
   const contract: Contract = { id, type: c.type, tier, seed: n(c.seed, 2 ** 31), payout: contractPayout(tier), district, sector: Math.max(1, n(c.sector, 99)) };
   return c.patrols === undefined ? contract : { ...contract, patrols: n(c.patrols, 3 + MAX_TIER) };
 }
-// Accepts v1 (`mission`) to v5 saves.
+// Accepts v1 (`mission`) to v6 saves.
 export function clampCampaign(data: any, rng: Rng = Math.random): Campaign {
   if (!data || typeof data !== 'object') return freshCampaign(rng);
   const abilities = Object.fromEntries(CLASSES.map(k => [k, n(data.abilities?.[k], MAX_LEVEL)])) as Record<ClassId, number>;
@@ -184,7 +190,7 @@ export function clampCampaign(data: any, rng: Rng = Math.random): Campaign {
   };
   const campaign: Campaign = {
     version: CAMPAIGN_VERSION, cash: n(data.cash, 1e8), weapon: n(data.weapon, MAX_LEVEL), armor: n(data.armor, MAX_LEVEL), loadout,
-    badges: Object.fromEntries(BADGES.map(b => [b, n(data.badges?.[b], 1e6)])) as Record<Badge, number>,
+    badges: Object.fromEntries(BADGES.map(b => [b, n(data.badges?.[b], 1e6)])) as Record<Badge, number>, countermeasures: n(data.countermeasures, MAX_COUNTERMEASURES),
     completed: n(data.completed ?? ((data.mission || 1) - 1), 1e6), abilities,
     roster: roster.length ? roster : STARTERS.map(o => ({ ...o })), recruits: clampOperatives(data.recruits, RECRUIT_OFFERS), offers,
   };
@@ -195,7 +201,7 @@ export function clampCampaign(data: any, rng: Rng = Math.random): Campaign {
 export function upgradeLedger(ledger: Ledger, rng: Rng): Ledger {
   const m = ledger.activeMission as any, contract = m && clampContract(m.contract);
   const keep = contract && typeof m.id === 'string' && Number.isFinite(m.startedAt);
-  return { campaign: clampCampaign(ledger.campaign, rng), activeMission: keep ? { id: m.id, startedAt: m.startedAt, contract } : null };
+  return { campaign: clampCampaign(ledger.campaign, rng), activeMission: keep ? { id: m.id, startedAt: m.startedAt, contract, countermeasures: n(m.countermeasures, MAX_COUNTERMEASURES) } : null };
 }
 
 // Switching how the gear is spent is free.
@@ -218,10 +224,12 @@ export function applyDismiss(c: Campaign, id: string): Campaign | null {
 const isFirstContract = (o: Contract) => o.seed === FIRST_CONTRACT.seed && o.patrols === FIRST_CONTRACT.patrols;
 // The board was dealt at deploy, before this payout counted, so the first payout deals new offers in place of one that
 // still holds contract 01. Recruits stay: they are what the first payout can buy.
-export function applyPayout(c: Campaign, contract: Contract, report: MissionReport, rng: Rng): Campaign {
+// Clearing the highest open Countermeasures level (`countermeasures`, 0 for none) with a badge opens the next.
+export function applyPayout(c: Campaign, contract: Contract, countermeasures: number, report: MissionReport, rng: Rng): Campaign {
   const badges = { ...c.badges };
   for (const b of report.badges) badges[b]++;
-  const paid = { ...c, cash: c.cash + missionPayout(contract, report.stealth), completed: c.completed + 1, badges };
+  const cleared = countermeasures > c.countermeasures && countermeasures === unlockedCountermeasures(c) && report.badges.length > 0;
+  const paid = { ...c, cash: c.cash + missionPayout(contract, report.stealth), completed: c.completed + 1, badges, countermeasures: cleared ? countermeasures : c.countermeasures };
   return c.offers.some(isFirstContract) ? { ...paid, offers: dealOffers(paid, rng) } : paid;
 }
 
@@ -229,17 +237,17 @@ export const validSquad = (c: Campaign, squad: readonly string[]) =>
   squad.length >= 1 && squad.length <= SQUAD_MAX && new Set(squad).size === squad.length && squad.every(id => c.roster.some(o => o.id === id));
 
 // Deploying an offer deals a new board, so offers reroll whether the mission is won or lost.
-// Restarting the active contract keeps the board as it is.
-export function startMission(state: Ledger, id: string, now: number, contractId: string, squad: readonly string[], rng: Rng): Ledger | null {
-  if (!validSquad(state.campaign, squad)) return null;
+// Restarting the active contract keeps the board as it is. Either way the Countermeasures level must be open.
+export function startMission(state: Ledger, id: string, now: number, contractId: string, squad: readonly string[], countermeasures: number, rng: Rng): Ledger | null {
+  if (!validSquad(state.campaign, squad) || countermeasures > unlockedCountermeasures(state.campaign)) return null;
   const offer = state.campaign.offers.find(o => o.id === contractId);
-  if (offer) return { campaign: dealBoard(state.campaign, rng), activeMission: { id, startedAt: now, contract: offer } };
+  if (offer) return { campaign: dealBoard(state.campaign, rng), activeMission: { id, startedAt: now, contract: offer, countermeasures } };
   const active = state.activeMission?.contract;
-  if (active?.id === contractId) return { ...state, activeMission: { id, startedAt: now, contract: active } };
+  if (active?.id === contractId) return { ...state, activeMission: { id, startedAt: now, contract: active, countermeasures } };
   return null;
 }
 export function completeMission(state: Ledger, id: string, now: number, report: MissionReport, rng: Rng): Ledger | null {
   const m = state.activeMission;
   if (!m || m.id !== id || now - m.startedAt < MIN_MISSION_MS) return null;
-  return { campaign: applyPayout(state.campaign, m.contract, report, rng), activeMission: null };
+  return { campaign: applyPayout(state.campaign, m.contract, m.countermeasures, report, rng), activeMission: null };
 }

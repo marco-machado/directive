@@ -38,11 +38,11 @@ export class PlayerCampaign extends DurableObject<Env> {
     const ledger = await this.load();
     return ledger ? { ok: true, campaign: ledger.campaign } : unknown;
   }
-  async startMission(contractId: string, squad: string[]): Promise<{ ok: true; missionId: string; campaign: Campaign } | Extract<Result, { ok: false }>> {
+  async startMission(contractId: string, squad: string[], countermeasures: number): Promise<{ ok: true; missionId: string; campaign: Campaign } | Extract<Result, { ok: false }>> {
     const ledger = await this.load(); if (!ledger) return unknown;
     const missionId = crypto.randomUUID();
-    const next = startMission(ledger, missionId, Date.now(), contractId, squad, random);
-    if (!next) return { ok: false, status: 409, error: 'That contract is not on offer, or the squad is invalid.' };
+    const next = startMission(ledger, missionId, Date.now(), contractId, squad, countermeasures, random);
+    if (!next) return { ok: false, status: 409, error: 'That contract is not on offer, the squad is invalid, or that countermeasures level is locked.' };
     await this.ctx.storage.put(KEY, next);
     return { ok: true, missionId, campaign: next.campaign };
   }

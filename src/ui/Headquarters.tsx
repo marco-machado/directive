@@ -1,10 +1,10 @@
 import type { RefObject } from 'react';
 import { sim } from '../app.ts';
-import { ABILITY_UPGRADE_COST, ARMOR_MODES, BADGES, GEAR_COST, MAX_LEVEL, RECRUIT_COST, ROSTER_CAP, WEAPON_MODES } from '../game/campaign.ts';
+import { ABILITY_UPGRADE_COST, ARMOR_MODES, BADGES, GEAR_COST, MAX_LEVEL, RECRUIT_COST, ROSTER_CAP, unlockedCountermeasures, WEAPON_MODES } from '../game/campaign.ts';
 import type { ArmorMode, Campaign, Operative, WeaponMode } from '../game/campaign.ts';
 import { abilityCooldown, ABILITY_STATS, CLASSES, CLASS_STATS, effectScale } from '../game/classes.ts';
 import { EXTENDED_RANGE, HEAVY_HP, LIGHT_CONCEALMENT, PIERCING_BONUS, SUPPRESSOR_STEP } from '../game/simulation.ts';
-import { BADGE_COPY, credits, Credits, LoadSaveCode, OperativeLabel, Pips, SaveCode, secs } from './common.tsx';
+import { BADGE_COPY, CM_LEVEL, credits, Credits, LoadSaveCode, OperativeLabel, Pips, SaveCode, secs } from './common.tsx';
 import { Icon } from './icons.tsx';
 import type { IconName } from './icons.tsx';
 import { play } from './audio.ts';
@@ -81,6 +81,10 @@ export function Headquarters({ campaign, saveCode, titleRef, onDismiss, connecti
           <button className="btn buy" data-cue="own" onClick={() => { if (sim.recruit(r.id)) play('purchase'); }} disabled={full || cash < RECRUIT_COST || locked}
             aria-label={full ? `Recruit ${r.name}: roster full` : `Recruit ${r.name} for ${credits(RECRUIT_COST)}`}>{full ? 'Roster full' : <><Icon name="recruit" /><Credits value={RECRUIT_COST} /></>}</button></li>)}</ul>
           : <p className="empty-note">No candidates right now. New recruits arrive after the next deployment.</p>}
+        <h3 className="section-title">Countermeasures</h3>
+        <p className="hq-note">{unlockedCountermeasures(campaign)
+          ? `Open up to level ${CM_LEVEL[unlockedCountermeasures(campaign)]}; ${campaign.countermeasures ? `level ${CM_LEVEL[campaign.countermeasures]} cleared` : 'none cleared yet'}. Pick a level on the briefing: each makes contracts harder, and winning the highest open one with a badge opens the next.`
+          : 'Max out every upgrade to open Countermeasures: an opt-in ladder of harder contracts.'}</p>
         <h3 className="section-title">Service record <small>Each badge counts half a contract toward clearance</small></h3>
         <ul className="badge-grid" aria-label="Badges earned">{BADGES.map(b => <li key={b}><Icon name={BADGE_COPY[b].icon} /><b>{campaign.badges[b]}</b><small>{BADGE_COPY[b].title}</small></li>)}</ul>
         {saveCode ? <SaveCode code={saveCode} /> : null}

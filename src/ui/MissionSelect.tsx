@@ -1,12 +1,12 @@
 import { useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import { sim } from '../app.ts';
-import { BADGES, MAX_TIER, missionPayout, parSeconds, SQUAD_MAX, threatFor } from '../game/campaign.ts';
+import { BADGES, MAX_COUNTERMEASURES, MAX_TIER, missionPayout, parSeconds, SQUAD_MAX, threatFor } from '../game/campaign.ts';
 import { ABILITY_STATS, CLASS_STATS } from '../game/classes.ts';
 import type { Threat } from '../game/campaign.ts';
 import type { EnemyKind } from '../game/mapgen.ts';
 import type { Snapshot } from '../game/simulation.ts';
-import { BADGE_COPY, Clearance, clock, CONTRACTS, Credits, pad, Pips, SaveWarning, threat, useScrollEdges } from './common.tsx';
+import { BADGE_COPY, Clearance, clock, CM_LEVEL, CONTRACTS, countermeasuresEffect, Credits, pad, Pips, SaveWarning, threat, useScrollEdges } from './common.tsx';
 import { Icon, Portrait } from './icons.tsx';
 import type { IconName } from './icons.tsx';
 
@@ -55,6 +55,11 @@ export function MissionSelect({ state, titleRef, onChoose, onDeploy, onRecenter,
           <ThreatRead level={threatFor(campaign, contract.tier)} />
           <h3>{CONTRACTS[contract.type].title}</h3>
           <p className="brief-copy">{CONTRACTS[contract.type].brief}</p>
+          {state.countermeasuresOpen ? <div className="countermeasures">
+            <div className="cm-head"><small>Countermeasures</small><div className="cm-levels" role="group" aria-label="Countermeasures level">{CM_LEVEL.map((name, level) =>
+              <button key={name} className="btn ghost small" aria-pressed={state.countermeasures === level} disabled={level > state.countermeasuresOpen} onClick={() => sim.chooseCountermeasures(level)}>{name}</button>)}</div></div>
+            <p>{countermeasuresEffect(state.countermeasures)}{state.countermeasures && state.countermeasures === state.countermeasuresOpen && state.countermeasures < MAX_COUNTERMEASURES ? ` Win with a badge to open ${CM_LEVEL[state.countermeasures + 1]}.` : ''}</p>
+          </div> : null}
           {/* Shown instead of the details when the panel is short; see the "brief" container query. */}
           <div className="brief-summary">
             <span>{objectives.length} objective{objectives.length === 1 ? '' : 's'} · {hostiles} hostile{hostiles === 1 ? '' : 's'} · <Credits value={contract.payout} /></span>
@@ -95,7 +100,7 @@ export function MissionSelect({ state, titleRef, onChoose, onDeploy, onRecenter,
         </fieldset>
         {state.saveUnavailable ? <SaveWarning /> : null}
         <button className="btn primary deploy" onClick={onDeploy} disabled={deployBlocked || !contract}>
-          <span className="deploy-copy"><strong>{connecting ? 'Connecting…' : state.syncing ? 'Saving…' : 'Deploy squad'}</strong><small>{squadPick.length} operative{squadPick.length === 1 ? '' : 's'}{contract ? ` · ${CONTRACTS[contract.type].title} · Tier ${contract.tier}` : ''}</small></span>
+          <span className="deploy-copy"><strong>{connecting ? 'Connecting…' : state.syncing ? 'Saving…' : 'Deploy squad'}</strong><small>{squadPick.length} operative{squadPick.length === 1 ? '' : 's'}{contract ? ` · ${CONTRACTS[contract.type].title} · Tier ${contract.tier}` : ''}{state.countermeasures ? ` · CM ${CM_LEVEL[state.countermeasures]}` : ''}</small></span>
           <Icon name="arrow" />
         </button>
       </div>
