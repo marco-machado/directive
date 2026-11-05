@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Simulation, parseCampaign, CALM_SECONDS, FIRST_WAVE_SECONDS, VIP_DAMAGE_TAKEN, VIP_SECURE_SECONDS, CAMERA_DETECT, COVER_FACTOR, DETECT_DRAIN, detectSeconds, GHOST_SECONDS, HACK_SECONDS, LOOK_ANGLE, LOOK_EVERY, LOOK_PAUSE, QUEUE_SPACING, REINFORCE_CAP, ROUTE_MAX, SUSPICIOUS, REINFORCE_SECONDS, REVIVE_SECONDS, SIGHT_RANGE, TAKEDOWN_REACH, TAKEDOWN_SECONDS, tierDamage, tierHp, WAIT_MAX, WAIT_STEP } from '../src/game/simulation.ts';
+import { Simulation, parseCampaign, CALM_SECONDS, CALM_STEP, escalation, FIRST_WAVE_SECONDS, REPEAT_REINFORCEMENTS, VIP_DAMAGE_TAKEN, VIP_SECURE_SECONDS, CAMERA_DETECT, COVER_FACTOR, DETECT_DRAIN, detectSeconds, GHOST_SECONDS, HACK_SECONDS, LOOK_ANGLE, LOOK_EVERY, LOOK_PAUSE, QUEUE_SPACING, REINFORCE_CAP, ROUTE_MAX, SUSPICIOUS, REINFORCE_SECONDS, REVIVE_SECONDS, SIGHT_RANGE, TAKEDOWN_REACH, TAKEDOWN_SECONDS, tierDamage, tierHp, WAIT_MAX, WAIT_STEP } from '../src/game/simulation.ts';
 import type { CampaignSync, Unit, Upgrade } from '../src/game/simulation.ts';
 import { contractPayout, FIRST_CONTRACT, freshCampaign, MAX_TIER } from '../src/game/campaign.ts';
 import type { Campaign, ContractType } from '../src/game/campaign.ts';
@@ -729,14 +729,52 @@ test('a stunned guard facing the squad is no contact', () => {
   assert.equal(sim.alarm, false);
 });
 
-test('a fresh detection after a stand-down raises the alarm again without refilling the waves', () => {
-  const { sim, hostile, raise } = alarmed();
+const waves = (sim: Simulation) => sim.units.filter(u => /^r\d+$/.test(u.id));
+
+test('after a stand-down the next alarm is telegraphed, then brings fresh reinforcements led by heavies and stands down later', () => {
+  const { sim, squad, hostile, raise } = alarmed();
+  sim.plan = { ...sim.plan!, exits: [{ x: 19, z: 0 }, { x: -19, z: 5 }] };
+  squad.forEach(u => { u.hp = u.maxHp = 1e6; });
   raise(); step(sim, CALM_SECONDS + .5); assert.equal(sim.alarm, false);
+  const next = escalation(2);
+  assert.deepEqual(sim.getSnapshot().nextAlarm, next);
+  assert.match(sim.message, /Next alarm/);
+  assert.equal(next.calm, CALM_SECONDS + CALM_STEP); assert.equal(next.heavies, 1);
   hostile('guard', 3, 0, -Math.PI / 2, 1e6);
   step(sim, 3, () => sim.alarm);
-  assert.equal(sim.alarm, true); assert.equal(internals(sim).reinforced, REINFORCE_CAP);
-  const before = sim.units.length; step(sim, REINFORCE_SECONDS + 1);
-  assert.equal(sim.units.length, before);
+  assert.equal(sim.alarm, true);
+  assert.equal(sim.getSnapshot().calmFor, next.calm); assert.equal(sim.getSnapshot().reinforceCap, next.cap);
+  step(sim, FIRST_WAVE_SECONDS + .1);
+  assert.equal(waves(sim).length, 2);
+  assert.ok(waves(sim).every(u => distance(u, { x: -19, z: 5 }) < 2), 'the first wave of the second alarm flanked too');
+  assert.deepEqual(waves(sim).map(u => u.kind), ['heavy', 'guard']);
+  step(sim, REINFORCE_SECONDS * 3);
+  assert.equal(waves(sim).length, REPEAT_REINFORCEMENTS);
+});
+
+test('reinforcements an earlier alarm never sent still come with the next one', () => {
+  const { sim, squad, raise } = alarmed();
+  squad.forEach(u => { u.hp = u.maxHp = 1e6; });
+  raise(); step(sim, CALM_SECONDS + .5); assert.equal(sim.alarm, false);
+  internals(sim).reinforced = REINFORCE_CAP - 2; // the first alarm stood down with two of its reinforcements unsent
+  raise();
+  step(sim, FIRST_WAVE_SECONDS + REINFORCE_SECONDS * 4);
+  assert.equal(waves(sim).length, 2 + REPEAT_REINFORCEMENTS);
+  assert.equal(sim.getSnapshot().reinforced, escalation(2).cap);
+});
+
+test('escalation replays exactly for the same contract', () => {
+  const run = () => {
+    const { sim, squad, raise } = alarmed();
+    sim.plan = { ...sim.plan!, exits: [{ x: 19, z: 0 }, { x: -19, z: 5 }, { x: 0, z: 19 }] };
+    squad.forEach(u => { u.hp = u.maxHp = 1e6; });
+    raise(); step(sim, CALM_SECONDS + .5);
+    raise(); step(sim, FIRST_WAVE_SECONDS + REINFORCE_SECONDS * 2);
+    return waves(sim).map(u => `${u.id}:${u.kind}:${u.x.toFixed(2)},${u.z.toFixed(2)}`);
+  };
+  const first = run();
+  assert.ok(first.length > 2);
+  assert.deepEqual(run(), first);
 });
 
 test('a contract finished after a stand-down pays without the stealth bonus', () => {

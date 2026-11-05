@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import { REINFORCE_CAP } from '../game/simulation.ts';
 import type { Snapshot } from '../game/simulation.ts';
 import { CONTRACTS } from './common.tsx';
 import { play, stinger } from './audio.ts';
@@ -24,13 +23,13 @@ export function useCallouts(state: Snapshot) {
     if (p.phase === 'mission' && state.phase === 'headquarters') { setQueue([]); stinger(state.result === 'success' ? 'success' : 'failure'); return; }
     if (p.phase !== 'mission' || state.phase !== 'mission') return;
     if (state.pending && !p.pending) play('aim');
-    if (state.alarm && !p.alarm) add('danger', { title: 'Alarm', detail: state.reinforced >= REINFORCE_CAP ? 'no more reinforcements' : `reinforcements in ${Math.ceil(state.reinforceIn)} s` }, 'alarm');
-    if (!state.alarm && p.alarm) add('good', { title: 'Alarm cleared', detail: 'stealth bonus lost' }, 'objective');
+    if (state.alarm && !p.alarm) add('danger', { title: state.alarms > 1 ? `Alarm ${state.alarms}` : 'Alarm', detail: state.reinforced >= state.reinforceCap ? 'no more reinforcements' : `reinforcements in ${Math.ceil(state.reinforceIn)} s` }, 'alarm');
+    if (!state.alarm && p.alarm) add('good', { title: 'Alarm cleared', detail: 'the next one brings heavies' }, 'objective');
     state.objectives.forEach((o, i) => {
       if (!o.done || p.objectives[i]?.done || o.kind === 'extract') return;
       add('objective', { title: 'Objective complete', detail: o.label }, 'objective');
     });
-    if (state.reinforced > p.reinforced) add('danger', { title: 'Reinforcements', detail: `${state.reinforced} / ${REINFORCE_CAP} entering` }, 'reinforce');
+    if (state.reinforced > p.reinforced) add('danger', { title: 'Reinforcements', detail: `${state.reinforced} / ${state.reinforceCap} entering` }, 'reinforce');
     for (const u of state.units) {
       const before = u.faction === 'squad' ? p.units.find(v => v.id === u.id) : undefined;
       if (!before) continue;

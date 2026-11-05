@@ -397,6 +397,8 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .tracker-pay .bonus { color: var(--mint) }
 .tracker-pay .lost { color: var(--faint) }
 .tracker-pay .lost .credits { text-decoration: line-through }
+.tracker-note { display: flex; gap: 8px; margin: 0; padding: 0 14px 12px; font: 500 13px/1.35 var(--f-ui); color: var(--amber) }
+.tracker-note .icon { width: 16px; height: 16px; margin-top: 1px }
 /* Under the status pill: who is spotting the squad. */
 .spotted { --c: var(--amber); position: absolute; z-index: 4; top: calc(var(--top) + 10px); left: 50%; translate: -50% 0; display: flex; align-items: center; gap: 12px; min-width: 280px; padding: 7px 12px 7px 10px; border: 1px solid var(--c); border-left-width: 3px;
   background: rgb(30 18 4 / .92); box-shadow: 0 0 18px rgb(255 180 84 / .2); color: #ffe2bd; animation: drop .2s ease-out both }
@@ -683,7 +685,7 @@ dialog::backdrop { overflow: hidden; overscroll-behavior: contain; background: r
   .hud-left:not(.open) .drawer-toggle { width: 100%; height: 100%; justify-items: end; padding-right: 14px }
   .hud-left:not(.open) .drawer-toggle .icon { transform: rotate(90deg) }
   .hud-left:not(.open) .objectives { padding: 8px 14px }
-  .hud-left:not(.open) .objectives li:not(.current), .hud-left:not(.open) .tracker-pay, .hud-left:not(.open) .comms { display: none }
+  .hud-left:not(.open) .objectives li:not(.current), .hud-left:not(.open) .tracker-pay, .hud-left:not(.open) .tracker-note, .hud-left:not(.open) .comms { display: none }
   /* Under the closed drawer a tip would cover the view, so it waits for the drawer to open. */
   .hud-left:not(.open) .tip { display: none }
   /* Paused shows in the status pill rather than in a banner over the view. */

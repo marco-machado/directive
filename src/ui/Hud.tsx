@@ -5,7 +5,7 @@ import { missionPayout } from '../game/campaign.ts';
 import type { Campaign } from '../game/campaign.ts';
 import { abilityCooldown, ABILITY_STATS, CLASS_STATS } from '../game/classes.ts';
 import type { ClassId } from '../game/classes.ts';
-import { SUSPICIOUS, WAIT_STEP } from '../game/simulation.ts';
+import { REPEAT_REINFORCEMENTS, SUSPICIOUS, WAIT_STEP } from '../game/simulation.ts';
 import type { Pending, Shield, Snapshot, Unit } from '../game/simulation.ts';
 import { clock, CONTRACTS, Credits, threat } from './common.tsx';
 import { Icon, Portrait } from './icons.tsx';
@@ -36,6 +36,7 @@ function Tracker({ state, open, onToggle }: { state: Snapshot; open: boolean; on
       <span><small>Payout</small><strong><Credits value={c.payout} /></strong></span>
       <span className={state.stealth ? 'bonus' : 'lost'}><small>{state.stealth ? 'Stealth bonus' : 'Bonus lost'}</small><strong>+<Credits value={missionPayout(c, true) - c.payout} /></strong></span>
     </footer>
+    {state.alarms && !state.alarm ? <p className="tracker-note"><Icon name="heavy" />Next alarm: {REPEAT_REINFORCEMENTS} more reinforcements, {state.nextAlarm.heavies} {state.nextAlarm.heavies === 1 ? 'heavy' : 'heavies'} leading each wave, {state.nextAlarm.calm} s to stand down.</p> : null}
   </section>;
 }
 

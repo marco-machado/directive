@@ -48,6 +48,8 @@ export type AlarmCause = Point & { trigger: AlarmTrigger | null; hostile: EnemyK
 export type Snapshot = {
   phase: Phase; paused: boolean; selected: string[]; squad: string[]; squadPick: string[]; units: Unit[]; campaign: Campaign;
   contract: Contract | null; plan: MissionPlan | null; objectives: Objective[]; alarm: boolean; calmIn: number; reinforceIn: number; reinforced: number;
+  // How many alarms the mission has had, this alarm's reinforcement cap and stand-down time, and what the next alarm brings.
+  alarms: number; reinforceCap: number; calmFor: number; nextAlarm: Escalation;
   result: 'success' | 'failure' | null; failReason: string; payout: number; stealth: boolean; alarmCause: AlarmCause | null; time: number; message: string;
   saveUnavailable: boolean; syncing: boolean; pending: Pending; cover: Record<string, Shield>; milestones: Milestone[];
 };
@@ -92,7 +94,14 @@ export const FIRST_WAVE_SECONDS = 5; // the first reinforcement wave follows the
 export const REINFORCE_SECONDS = 20; // and later waves this far apart
 export const CALM_SECONDS = 25;     // the alarm stands down after this long without contact
 export const SEARCH_TURN = 1.5;     // a hunter at the last known position turns this fast (rad/s)
-export const REINFORCE_CAP = 8;
+export const REINFORCE_CAP = 8;     // reinforcements the first alarm of a mission can bring
+export const REPEAT_REINFORCEMENTS = 4; // each later alarm in the mission brings this many more
+export const CALM_STEP = 10;        // and takes this much longer to stand down
+// What a mission's `n`th alarm brings (n counts from 1; the first is the plain alarm): how many reinforcements the
+// mission can have had by its end (any an earlier alarm never sent still come), how many heavies lead each wave,
+// and how long the squad must stay out of contact for it to stand down.
+export type Escalation = { cap: number; heavies: number; calm: number };
+export const escalation = (n: number): Escalation => ({ cap: REINFORCE_CAP + REPEAT_REINFORCEMENTS * (n - 1), heavies: n - 1, calm: CALM_SECONDS + CALM_STEP * (n - 1) });
 export const REVIVE_SECONDS = 3;
 export const REVIVE_HP = .4;
 export const HACK_SECONDS = 12;
@@ -192,6 +201,10 @@ export class Simulation {
   intel = new Map<string, Point[]>();
   milestones: Milestone[] = [];
   private reinforced = 0;
+  private alarms = 0;
+  private reinforceCap = REINFORCE_CAP;
+  private calmFor = CALM_SECONDS;
+  private waves = 0; // waves the current alarm has sent
   private vipJoined = false;
   private vipThreat: Point | null = null; // where the last shot at the VIP came from
   private lastKnown: Point | null = null;
@@ -217,6 +230,7 @@ export class Simulation {
       phase: this.phase, paused: this.paused, selected: [...this.selected], squad: [...this.squad], squadPick: [...this.squadPick],
       units: this.units.map(u => ({ ...u })), campaign: this.campaign, contract: this.contract, plan: this.plan,
       objectives: this.objectives.map(o => ({ ...o })), alarm: this.alarm, calmIn: this.calmIn, reinforceIn: this.reinforceIn, reinforced: this.reinforced, result: this.result,
+      alarms: this.alarms, reinforceCap: this.reinforceCap, calmFor: this.calmFor, nextAlarm: escalation(this.alarms + 1),
       failReason: this.failReason, payout: this.payout, stealth: !this.detected, alarmCause: this.alarmCause, time: this.time, message: this.message,
       saveUnavailable: this.saveUnavailable, syncing: this.syncing, pending: this.pending,
       milestones: this.milestones,
@@ -290,7 +304,7 @@ export class Simulation {
     const plan = this.plan;
     this.units = []; this.objectives = []; this.shots = []; this.blasts = []; this.casts = []; this.hitThisFrame.clear(); this.volleyReady.clear(); this.autoPaused.clear();
     this.alarm = false; this.detected = false; this.alarmCause = null; this.calmIn = 0; this.lastKnown = null; this.lastSeen = new Map(); this.intel = new Map(); this.milestones = [];
-    this.reinforceIn = 0; this.reinforced = 0; this.vipJoined = false; this.vipThreat = null; this.holdup = ''; this.pending = null; this.commandPoint = null;
+    this.reinforceIn = 0; this.reinforced = 0; this.alarms = 0; this.reinforceCap = REINFORCE_CAP; this.calmFor = CALM_SECONDS; this.waves = 0; this.vipJoined = false; this.vipThreat = null; this.holdup = ''; this.pending = null; this.commandPoint = null;
     this.targetArea = plan?.targetArea ? { ...plan.targetArea } : null;
     if (!plan) { this.squad = []; this.selected = []; return; }
     this.rng = mulberry32(plan.contract.seed ^ 0x5bd1e995);
@@ -557,7 +571,10 @@ export class Simulation {
     // A fresh trigger during the alarm only restarts the stand-down countdown.
     this.contact(null);
     if (this.alarm) return;
-    this.alarm = true; this.detected = true; this.reach('alarm'); this.reinforceIn = this.reinforced ? REINFORCE_SECONDS : FIRST_WAVE_SECONDS; this.calmIn = CALM_SECONDS;
+    this.alarm = true; this.detected = true; this.reach('alarm');
+    // Every alarm sends its first wave as quickly; a later one sends more, and takes longer to stand down.
+    const e = escalation(++this.alarms);
+    this.reinforceCap = e.cap; this.calmFor = this.calmIn = e.calm; this.waves = 0; this.reinforceIn = FIRST_WAVE_SECONDS;
     const known = seen ?? at; this.lastKnown = { x: known.x, z: known.z };
     this.alarmCause ??= { x: known.x, z: known.z, trigger: cause.trigger ?? null, hostile: (cause.by?.kind as EnemyKind | undefined) ?? null, operative: cause.culprit?.name ?? null, near: this.landmarkNear(known), at: this.time };
     for (const u of this.units) {
@@ -582,7 +599,7 @@ export class Simulation {
   // While alarmed, anything that gives the squad away restarts the countdown; a sighting or gunfire also updates where hunters search.
   private contact(seen: Point | null) {
     if (!this.alarm) return;
-    this.calmIn = CALM_SECONDS;
+    this.calmIn = this.calmFor;
     if (seen) this.lastKnown = { x: seen.x, z: seen.z };
   }
   private standDown() {
@@ -590,7 +607,8 @@ export class Simulation {
     // A fleeing target keeps running for its exit.
     // A posted guard that left its post to hunt keeps watch where it ends up.
     for (const u of this.units) if (u.faction === 'hostile' && u.hp > 0) { if (u.hunting && posted(u)) u.sweep = u.heading; u.detect = 0; u.hunting = false; if (!u.exit) u.path = []; }
-    this.message = 'Contact lost. Alarm standing down. Holding fire.';
+    const next = escalation(this.alarms + 1);
+    this.message = `Contact lost. Alarm standing down. Holding fire. Next alarm: ${REPEAT_REINFORCEMENTS} more reinforcements, ${next.heavies} ${next.heavies === 1 ? 'heavy' : 'heavies'} leading each wave, ${next.calm} s to stand down.`;
   }
   // With auto-pause on, the first time a hostile turns suspicious pauses the mission so the player can react.
   private suspicious(u: Unit) {
@@ -959,20 +977,21 @@ export class Simulation {
     this.holdup = holdup;
   }
   private reinforce(dt: number) {
-    if (!this.alarm || this.reinforced >= REINFORCE_CAP || !this.plan) return;
+    if (!this.alarm || this.reinforced >= this.reinforceCap || !this.plan) return;
     this.reinforceIn -= dt;
     if (this.reinforceIn > 0) return;
     this.reinforceIn = REINFORCE_SECONDS;
-    // The first wave flanks: it enters at the exit nearest extraction, between the squad and its way out.
-    const exits = this.plan.exits, extract = this.plan.extract;
-    const exit = this.reinforced ? exits[Math.floor(this.rng() * exits.length)] : exits.reduce((a, b) => distance(b, extract) < distance(a, extract) ? b : a);
-    const count = Math.min(this.plan.contract.tier >= 4 ? 3 : 2, REINFORCE_CAP - this.reinforced);
+    // An alarm's first wave flanks: it enters at the exit nearest extraction, between the squad and its way out.
+    const exits = this.plan.exits, extract = this.plan.extract, tier = this.plan.contract.tier;
+    const exit = this.waves++ ? exits[Math.floor(this.rng() * exits.length)] : exits.reduce((a, b) => distance(b, extract) < distance(a, extract) ? b : a);
+    const count = Math.min(tier >= 4 ? 3 : 2, this.reinforceCap - this.reinforced), heavies = escalation(this.alarms).heavies;
     for (let k = 0; k < count; k++) {
-      const u = this.makeUnit(`r${this.reinforced++}`, 'SECURITY', 'guard', 'hostile', { x: exit.x + (k - 1) * .6, z: exit.z }, Math.round(HOSTILE_STATS.guard.hp * tierHp(this.plan.contract.tier)));
+      const kind = k < heavies ? 'heavy' : 'guard', stats = HOSTILE_STATS[kind];
+      const u = this.makeUnit(`r${this.reinforced++}`, stats.name, kind, 'hostile', { x: exit.x + (k - 1) * .6, z: exit.z }, Math.round(stats.hp * tierHp(tier)));
       if (!this.plan.world.walkable(u)) { u.x = exit.x; u.z = exit.z; }
       u.hunting = true; u.detect = 1; this.units.push(u);
     }
-    this.message = `Reinforcements entering the district (${this.reinforced}/${REINFORCE_CAP}).`;
+    this.message = `Reinforcements entering the district (${this.reinforced}/${this.reinforceCap}).`;
   }
 
   update(dt: number) {
