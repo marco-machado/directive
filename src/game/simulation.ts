@@ -100,8 +100,12 @@ export const CALM_STEP = 10;        // and takes this much longer to stand down
 // What a mission's `n`th alarm brings (n counts from 1; the first is the plain alarm): how many reinforcements the
 // mission can have had by its end (any an earlier alarm never sent still come), how many heavies lead each wave,
 // and how long the squad must stay out of contact for it to stand down.
+// Each alarm puts one more heavy at the head of its waves than the one before, until whole waves are heavies.
 export type Escalation = { cap: number; heavies: number; calm: number };
-export const escalation = (n: number): Escalation => ({ cap: REINFORCE_CAP + REPEAT_REINFORCEMENTS * (n - 1), heavies: n - 1, calm: CALM_SECONDS + CALM_STEP * (n - 1) });
+export const escalation = (n: number, tier: number): Escalation =>
+  ({ cap: REINFORCE_CAP + REPEAT_REINFORCEMENTS * (n - 1), heavies: Math.min(n - 1, waveSize(tier)), calm: CALM_SECONDS + CALM_STEP * (n - 1) });
+// Reinforcements enter in waves of this many.
+export const waveSize = (tier: number) => tier >= 4 ? 3 : 2;
 export const REVIVE_SECONDS = 3;
 export const REVIVE_HP = .4;
 export const HACK_SECONDS = 12;
@@ -230,7 +234,7 @@ export class Simulation {
       phase: this.phase, paused: this.paused, selected: [...this.selected], squad: [...this.squad], squadPick: [...this.squadPick],
       units: this.units.map(u => ({ ...u })), campaign: this.campaign, contract: this.contract, plan: this.plan,
       objectives: this.objectives.map(o => ({ ...o })), alarm: this.alarm, calmIn: this.calmIn, reinforceIn: this.reinforceIn, reinforced: this.reinforced, result: this.result,
-      alarms: this.alarms, reinforceCap: this.reinforceCap, calmFor: this.calmFor, nextAlarm: escalation(this.alarms + 1),
+      alarms: this.alarms, reinforceCap: this.reinforceCap, calmFor: this.calmFor, nextAlarm: escalation(this.alarms + 1, this.plan?.contract.tier ?? 1),
       failReason: this.failReason, payout: this.payout, stealth: !this.detected, alarmCause: this.alarmCause, time: this.time, message: this.message,
       saveUnavailable: this.saveUnavailable, syncing: this.syncing, pending: this.pending,
       milestones: this.milestones,
@@ -573,7 +577,7 @@ export class Simulation {
     if (this.alarm) return;
     this.alarm = true; this.detected = true; this.reach('alarm');
     // Every alarm sends its first wave as quickly; a later one sends more, and takes longer to stand down.
-    const e = escalation(++this.alarms);
+    const e = escalation(++this.alarms, this.plan.contract.tier);
     this.reinforceCap = e.cap; this.calmFor = this.calmIn = e.calm; this.waves = 0; this.reinforceIn = FIRST_WAVE_SECONDS;
     const known = seen ?? at; this.lastKnown = { x: known.x, z: known.z };
     this.alarmCause ??= { x: known.x, z: known.z, trigger: cause.trigger ?? null, hostile: (cause.by?.kind as EnemyKind | undefined) ?? null, operative: cause.culprit?.name ?? null, near: this.landmarkNear(known), at: this.time };
@@ -607,7 +611,7 @@ export class Simulation {
     // A fleeing target keeps running for its exit.
     // A posted guard that left its post to hunt keeps watch where it ends up.
     for (const u of this.units) if (u.faction === 'hostile' && u.hp > 0) { if (u.hunting && posted(u)) u.sweep = u.heading; u.detect = 0; u.hunting = false; if (!u.exit) u.path = []; }
-    const next = escalation(this.alarms + 1);
+    const next = escalation(this.alarms + 1, this.plan!.contract.tier);
     this.message = `Contact lost. Alarm standing down. Holding fire. Next alarm: ${REPEAT_REINFORCEMENTS} more reinforcements, ${next.heavies} ${next.heavies === 1 ? 'heavy' : 'heavies'} leading each wave, ${next.calm} s to stand down.`;
   }
   // With auto-pause on, the first time a hostile turns suspicious pauses the mission so the player can react.
@@ -984,7 +988,7 @@ export class Simulation {
     // An alarm's first wave flanks: it enters at the exit nearest extraction, between the squad and its way out.
     const exits = this.plan.exits, extract = this.plan.extract, tier = this.plan.contract.tier;
     const exit = this.waves++ ? exits[Math.floor(this.rng() * exits.length)] : exits.reduce((a, b) => distance(b, extract) < distance(a, extract) ? b : a);
-    const count = Math.min(tier >= 4 ? 3 : 2, this.reinforceCap - this.reinforced), heavies = escalation(this.alarms).heavies;
+    const count = Math.min(waveSize(tier), this.reinforceCap - this.reinforced), heavies = escalation(this.alarms, tier).heavies;
     for (let k = 0; k < count; k++) {
       const kind = k < heavies ? 'heavy' : 'guard', stats = HOSTILE_STATS[kind];
       const u = this.makeUnit(`r${this.reinforced++}`, stats.name, kind, 'hostile', { x: exit.x + (k - 1) * .6, z: exit.z }, Math.round(stats.hp * tierHp(tier)));

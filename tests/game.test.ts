@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Simulation, parseCampaign, CALM_SECONDS, CALM_STEP, escalation, FIRST_WAVE_SECONDS, REPEAT_REINFORCEMENTS, VIP_DAMAGE_TAKEN, VIP_SECURE_SECONDS, CAMERA_DETECT, COVER_FACTOR, DETECT_DRAIN, detectSeconds, GHOST_SECONDS, HACK_SECONDS, LOOK_ANGLE, LOOK_EVERY, LOOK_PAUSE, QUEUE_SPACING, REINFORCE_CAP, ROUTE_MAX, SUSPICIOUS, REINFORCE_SECONDS, REVIVE_SECONDS, SIGHT_RANGE, TAKEDOWN_REACH, TAKEDOWN_SECONDS, tierDamage, tierHp, WAIT_MAX, WAIT_STEP } from '../src/game/simulation.ts';
+import { Simulation, parseCampaign, CALM_SECONDS, CALM_STEP, escalation, FIRST_WAVE_SECONDS, waveSize, REPEAT_REINFORCEMENTS, VIP_DAMAGE_TAKEN, VIP_SECURE_SECONDS, CAMERA_DETECT, COVER_FACTOR, DETECT_DRAIN, detectSeconds, GHOST_SECONDS, HACK_SECONDS, LOOK_ANGLE, LOOK_EVERY, LOOK_PAUSE, QUEUE_SPACING, REINFORCE_CAP, ROUTE_MAX, SUSPICIOUS, REINFORCE_SECONDS, REVIVE_SECONDS, SIGHT_RANGE, TAKEDOWN_REACH, TAKEDOWN_SECONDS, tierDamage, tierHp, WAIT_MAX, WAIT_STEP } from '../src/game/simulation.ts';
 import type { CampaignSync, Unit, Upgrade } from '../src/game/simulation.ts';
 import { contractPayout, FIRST_CONTRACT, freshCampaign, MAX_TIER } from '../src/game/campaign.ts';
 import type { Campaign, ContractType } from '../src/game/campaign.ts';
@@ -736,7 +736,7 @@ test('after a stand-down the next alarm is telegraphed, then brings fresh reinfo
   sim.plan = { ...sim.plan!, exits: [{ x: 19, z: 0 }, { x: -19, z: 5 }] };
   squad.forEach(u => { u.hp = u.maxHp = 1e6; });
   raise(); step(sim, CALM_SECONDS + .5); assert.equal(sim.alarm, false);
-  const next = escalation(2);
+  const next = escalation(2, 1);
   assert.deepEqual(sim.getSnapshot().nextAlarm, next);
   assert.match(sim.message, /Next alarm/);
   assert.equal(next.calm, CALM_SECONDS + CALM_STEP); assert.equal(next.heavies, 1);
@@ -752,6 +752,12 @@ test('after a stand-down the next alarm is telegraphed, then brings fresh reinfo
   assert.equal(waves(sim).length, REPEAT_REINFORCEMENTS);
 });
 
+test('heavies grow one an alarm until they fill whole waves', () => {
+  assert.deepEqual([1, 2, 3, 4, 5].map(n => escalation(n, 1).heavies), [0, 1, 2, 2, 2]);
+  assert.deepEqual([1, 2, 3, 4, 5].map(n => escalation(n, 4).heavies), [0, 1, 2, 3, 3]);
+  assert.equal(waveSize(1), 2); assert.equal(waveSize(4), 3);
+});
+
 test('reinforcements an earlier alarm never sent still come with the next one', () => {
   const { sim, squad, raise } = alarmed();
   squad.forEach(u => { u.hp = u.maxHp = 1e6; });
@@ -760,7 +766,7 @@ test('reinforcements an earlier alarm never sent still come with the next one', 
   raise();
   step(sim, FIRST_WAVE_SECONDS + REINFORCE_SECONDS * 4);
   assert.equal(waves(sim).length, 2 + REPEAT_REINFORCEMENTS);
-  assert.equal(sim.getSnapshot().reinforced, escalation(2).cap);
+  assert.equal(sim.getSnapshot().reinforced, escalation(2, 1).cap);
 });
 
 test('escalation replays exactly for the same contract', () => {

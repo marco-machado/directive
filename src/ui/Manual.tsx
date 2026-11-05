@@ -34,7 +34,7 @@ const RULES: [IconName, string][] = [
   ['snipe', 'Sniper shots are silent. Grenades are loud and raise the alarm at once. A hostile that survives a hit raises it too.'],
   ['flag', 'Extraction counts only when every operative, downed ones included, is in the zone. Revive the fallen first.'],
   ['alert', `The first reinforcements arrive ${FIRST_WAVE_SECONDS} s after the alarm, entering near extraction, then more every ${REINFORCE_SECONDS} s. Stay out of every hostile's sight and range for ${CALM_SECONDS} s and it stands down.`],
-  ['heavy', `The first alarm brings up to ${REINFORCE_CAP} reinforcements. Each later alarm in the same mission brings ${REPEAT_REINFORCEMENTS} more with heavies leading its waves, one more heavy each time, and takes ${CALM_STEP} s longer to stand down.`],
+  ['heavy', `The first alarm brings up to ${REINFORCE_CAP} reinforcements. Each later alarm in the same mission brings ${REPEAT_REINFORCEMENTS} more with heavies leading its waves, one more heavy each time until whole waves are heavies, and takes ${CALM_STEP} s longer to stand down.`],
   ['check', `Extract without ever raising the alarm for +${Math.round(STEALTH_BONUS * 100)}% payout. A stood-down alarm still voids the bonus.`],
 ];
 
