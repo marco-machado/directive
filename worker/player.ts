@@ -1,6 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 import { applyDismiss, applyLoadout, applyPurchase, applyRecruit, CAMPAIGN_VERSION, clampCampaign, completeMission, freshCampaign, startMission, upgradeLedger } from '../src/game/campaign.ts';
-import type { Campaign, Ledger, Loadout, Upgrade } from '../src/game/campaign.ts';
+import type { Campaign, Ledger, Loadout, MissionReport, Upgrade } from '../src/game/campaign.ts';
 import type { Rng } from '../src/game/rng.ts';
 
 export type Result = { ok: true; campaign: Campaign } | { ok: false; status: 404 | 409; error: string };
@@ -46,9 +46,9 @@ export class PlayerCampaign extends DurableObject<Env> {
     await this.ctx.storage.put(KEY, next);
     return { ok: true, missionId, campaign: next.campaign };
   }
-  async completeMission(missionId: string, stealth: boolean): Promise<Result> {
+  async completeMission(missionId: string, report: MissionReport): Promise<Result> {
     const ledger = await this.load(); if (!ledger) return unknown;
-    const next = completeMission(ledger, missionId, Date.now(), stealth, random);
+    const next = completeMission(ledger, missionId, Date.now(), report, random);
     return next ? this.save(next) : { ok: false, status: 409, error: 'Mission is not active or ended too soon.' };
   }
   buy(type: Upgrade) { return this.update(c => applyPurchase(c, type), 'Not enough credits or upgrade maxed.'); }

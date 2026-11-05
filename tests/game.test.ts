@@ -2,8 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Simulation, parseCampaign, CALM_SECONDS, EXTENDED_RANGE, HEAVY_HP, LIGHT_CONCEALMENT, PIERCING_BONUS, SUPPRESSOR_STEP, CALM_STEP, escalation, FIRST_WAVE_SECONDS, waveSize, REPEAT_REINFORCEMENTS, VIP_DAMAGE_TAKEN, VIP_SECURE_SECONDS, CAMERA_DETECT, COVER_FACTOR, DETECT_DRAIN, detectSeconds, GHOST_SECONDS, HACK_SECONDS, LOOK_ANGLE, LOOK_EVERY, LOOK_PAUSE, QUEUE_SPACING, REINFORCE_CAP, ROUTE_MAX, SUSPICIOUS, REINFORCE_SECONDS, REVIVE_SECONDS, SIGHT_RANGE, TAKEDOWN_REACH, TAKEDOWN_SECONDS, tierDamage, tierHp, WAIT_MAX, WAIT_STEP } from '../src/game/simulation.ts';
 import type { CampaignSync, Unit, Upgrade } from '../src/game/simulation.ts';
-import { CAMPAIGN_VERSION, contractPayout, FIRST_CONTRACT, freshCampaign, MAX_LEVEL, MAX_TIER } from '../src/game/campaign.ts';
-import type { ArmorMode, Campaign, ContractType, WeaponMode } from '../src/game/campaign.ts';
+import { CAMPAIGN_VERSION, contractPayout, FIRST_CONTRACT, freshCampaign, MAX_LEVEL, MAX_TIER, parSeconds } from '../src/game/campaign.ts';
+import type { ArmorMode, Campaign, ContractType, MissionReport, WeaponMode } from '../src/game/campaign.ts';
 import { abilityCooldown, CLASS_STATS } from '../src/game/classes.ts';
 import { mapSize, planMission, TARGET_AREA_OFFSET, TARGET_AREA_RADIUS } from '../src/game/mapgen.ts';
 import type { EnemyKind } from '../src/game/mapgen.ts';
@@ -14,7 +14,7 @@ import type { Point } from '../src/game/world.ts';
 const recorder = () => {
   const events: string[] = [];
   const sync: CampaignSync = {
-    deployed: (id, squad) => events.push(`deployed:${id}:${squad.join(',')}`), completed: s => events.push(`completed:${s}`),
+    deployed: (id, squad) => events.push(`deployed:${id}:${squad.join(',')}`), completed: r => events.push(`completed:${r.stealth}`),
     bought: (t: Upgrade) => events.push(`bought:${t}`), equipped: l => events.push(`equipped:${l.weapon}/${l.armor}`), recruited: id => events.push(`recruited:${id}`), dismissed: id => events.push(`dismissed:${id}`),
     picked: squad => events.push(`picked:${squad.join(',')}`),
   };
@@ -1401,4 +1401,58 @@ test('switching the loadout is free, reported to the server, and refused mid-mis
   assert.equal(events.at(-1), 'equipped:suppressed/light');
   sim.deploy();
   assert.equal(sim.equip({ weapon: 'piercing', armor: 'heavy' }), false);
+});
+
+// ---- Badges ----
+// Wins an arena contract once its objectives are done: the whole squad steps into extraction.
+const extractAll = (sim: Simulation, squad: Unit[]) => { squad.forEach(u => { u.x = -18; u.z = -18; u.path = []; }); sim.update(1 / 60); };
+const hack = (sim: Simulation, squad: Unit[]) => { const t = sim.objectives[0]; squad.forEach(u => { u.x = t.x; u.z = t.z; u.path = []; }); step(sim, HACK_SECONDS + .5); };
+
+test('a quiet, clean, quick win earns Ghost, Untouched, Swift and Bloodless, and reports them', () => {
+  const reports: MissionReport[] = [];
+  const sync = { ...recorder().sync, completed: (r: MissionReport) => { reports.push(r); } };
+  const { sim, squad } = arena('heist', {}, sync);
+  hack(sim, squad); extractAll(sim, squad);
+  assert.equal(sim.result, 'success');
+  assert.deepEqual(sim.getSnapshot().badges, ['ghost', 'untouched', 'swift', 'bloodless']); // no hostiles, so nothing to purge
+  assert.deepEqual(reports, [{ stealth: true, badges: ['ghost', 'untouched', 'swift', 'bloodless'] }]);
+  assert.equal(sim.campaign.badges.swift, 1);
+});
+
+test('an alarm, a downed operative, a slow finish and a kill each cost their badge', () => {
+  const { sim, squad, hostile, raise } = alarmed();
+  squad.forEach(u => { u.hp = u.maxHp = 1e6; });
+  hostile('guard', 15, 15, 0).hp = 0;
+  hostile('guard', 15, 12, 0, 1e6).cooldown = 1e9;
+  raise({ x: 15, z: 15 });
+  (sim as unknown as { damage(t: Unit, n: number, from: null): void }).damage(squad[1], 2e6, null);
+  squad[1].hp = 50; // revived
+  hack(sim, squad); step(sim, parSeconds('heist', 1));
+  extractAll(sim, squad);
+  assert.equal(sim.result, 'success');
+  assert.deepEqual(sim.getSnapshot().badges, []);
+  assert.equal(sim.getSnapshot().downs, 1);
+});
+
+test('Bloodless spares only the assassination target; Purge counts the district, not reinforcements', () => {
+  const play = (killGuard: boolean) => {
+    const { sim, squad, hostile } = arena('assassination');
+    hostile('target', 10, 10, 0).hp = 0;
+    hostile('guard', 12, 10, 0).hp = killGuard ? 0 : 75;
+    hostile('guard', 14, 10, 0).id = 'r0'; // a reinforcement, left standing
+    step(sim, .1); extractAll(sim, squad);
+    assert.equal(sim.result, 'success');
+    return sim.getSnapshot().badges;
+  };
+  const spared = play(false), swept = play(true);
+  assert.ok(spared.includes('bloodless') && !spared.includes('purge'), spared.join());
+  assert.ok(swept.includes('purge') && !swept.includes('bloodless'), swept.join());
+});
+
+test('a restart clears the downs a run had counted', () => {
+  const { sim, squad } = arena('heist');
+  (sim as unknown as { damage(t: Unit, n: number, from: null): void }).damage(squad[0], 1e6, null);
+  step(sim, .2); assert.equal(sim.getSnapshot().downs, 1);
+  sim.restart();
+  assert.equal(sim.getSnapshot().downs, 0); assert.deepEqual(sim.getSnapshot().badges, []);
 });

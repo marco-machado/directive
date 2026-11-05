@@ -237,6 +237,24 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .brief-pay .credits { display: block; margin-top: 4px; font: 600 22px/1 var(--f-ui); color: var(--gold) }
 .brief-pay .bonus { border-color: rgb(94 242 192 / .35) }
 .brief-pay .bonus .credits { color: var(--mint) }
+.brief-badges { list-style: none; display: grid; gap: 6px; margin: 12px 0 0; padding: 0 }
+.brief-badges li { display: grid; grid-template-columns: 18px 84px minmax(0, 1fr); align-items: center; gap: 8px; font: 500 13px var(--f-body); color: var(--dim) }
+.brief-badges .icon { width: 16px; height: 16px; color: var(--mint) }
+.brief-badges b { font: 600 12px var(--f-ui); letter-spacing: .1em; text-transform: uppercase; color: var(--text) }
+.brief-note { margin: 8px 0 0; font: 400 12px var(--f-body); color: var(--faint) }
+.offer-par { font: 600 10px var(--f-ui); letter-spacing: .1em; text-transform: uppercase; color: var(--dim) }
+.badge-grid { list-style: none; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); margin: 0; padding: 0; border: 1px solid var(--line); background: rgb(3 8 10 / .45) }
+.badge-grid li { display: grid; justify-items: center; align-content: start; gap: 3px; padding: 10px 4px; border-left: 1px solid var(--line); text-align: center }
+.badge-grid li:first-child { border-left: 0 }
+.badge-grid .icon { width: 18px; height: 18px; color: var(--mint) }
+.badge-grid b { font: 700 12px var(--f-ui); letter-spacing: .08em; text-transform: uppercase }
+.badge-grid small { font: 500 11px/1.25 var(--f-ui); color: var(--dim) }
+.badge-grid li.missed { opacity: .5 }
+.badge-grid li.missed .icon { color: var(--faint) }
+.debrief-badges { margin: 14px 0 }
+.debrief-note { margin: 14px 0; font: 400 13px var(--f-body); color: var(--faint) }
+.hq-roster .badge-grid { margin: 0 18px 14px }
+.hq-roster .badge-grid b { font-size: 18px; line-height: 1 }
 .squad-pick { display: flex; flex-direction: column; min-width: 0; min-height: 0; margin: 0 0 12px; padding: 0; border: 0 }
 .squad-pick legend { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; padding: 0; font: 600 20px/1 var(--f-display); letter-spacing: .08em; text-transform: uppercase }
 .squad-pick legend span { font: 700 12px var(--f-ui); letter-spacing: .14em; color: var(--amber) }

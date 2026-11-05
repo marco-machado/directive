@@ -1,7 +1,7 @@
 import { abilityCooldown, abilityPower, ABILITY_STATS, CLASS_STATS, effectScale, EMP_CAMERA_SECONDS, MARK_RADIUS, MARK_SECONDS } from './classes.ts';
 import type { AbilityId, ClassId } from './classes.ts';
-import { applyDismiss, applyLoadout, applyPayout, applyPurchase, applyRecruit, dealBoard, freshCampaign, missionPayout, SQUAD_MAX } from './campaign.ts';
-import type { Campaign, Contract, Loadout, Upgrade } from './campaign.ts';
+import { applyDismiss, applyLoadout, applyPayout, applyPurchase, applyRecruit, dealBoard, freshCampaign, missionPayout, parSeconds, SQUAD_MAX } from './campaign.ts';
+import type { Badge, Campaign, Contract, Loadout, MissionReport, Upgrade } from './campaign.ts';
 import { planMission } from './mapgen.ts';
 import type { Area, EnemyKind, MissionPlan } from './mapgen.ts';
 import { mulberry32 } from './rng.ts';
@@ -52,10 +52,12 @@ export type Snapshot = {
   alarms: number; reinforceCap: number; calmFor: number; nextAlarm: Escalation;
   result: 'success' | 'failure' | null; failReason: string; payout: number; stealth: boolean; alarmCause: AlarmCause | null; time: number; message: string;
   saveUnavailable: boolean; syncing: boolean; pending: Pending; cover: Record<string, Shield>; milestones: Milestone[];
+  // The badges a won contract earned, and how many times an operative went down.
+  badges: Badge[]; downs: number;
 };
 // Reports campaign events to the server; the server answers through applyCampaign.
 export type CampaignSync = {
-  deployed(contractId: string, squad: string[]): void; completed(stealth: boolean): void;
+  deployed(contractId: string, squad: string[]): void; completed(report: MissionReport): void;
   bought(type: Upgrade): void; equipped(loadout: Loadout): void; recruited(id: string): void; dismissed(id: string): void;
   picked(squad: string[]): void; // the briefing's squad pick, which stays in this browser
 };
@@ -150,6 +152,8 @@ const hashed = (seed: number, id: string, n: number) => {
 };
 // How the debrief names each objective as a landmark (charges carry their letter from the label).
 const LANDMARK: Record<Objective['kind'], string> = { target: 'the target', terminal: 'the vault terminal', charge: 'a charge site', vip: 'the VIP', extract: 'extraction' };
+// Reinforcements are numbered r0, r1, … as they enter (see reinforce); the district's own hostiles are h0, h1, ….
+export const isReinforcement = (u: Pick<Unit, 'id' | 'faction'>) => u.faction === 'hostile' && /^r\d+$/.test(u.id);
 const takedownable = (u: Unit) => u.kind === 'guard' || u.kind === 'heavy' || u.kind === 'target';
 export const posted = (u: Pick<Unit, 'kind' | 'patrol'>) => (u.kind === 'guard' || u.kind === 'heavy') && u.patrol.length < 2;
 const headingTo = (a: Point, b: Point) => Math.atan2(b.x - a.x, b.z - a.z);
@@ -216,6 +220,8 @@ export class Simulation {
   intel = new Map<string, Point[]>();
   milestones: Milestone[] = [];
   private reinforced = 0;
+  private badges: Badge[] = [];
+  private downs = 0;
   private alarms = 0;
   private reinforceCap = REINFORCE_CAP;
   private calmFor = CALM_SECONDS;
@@ -247,7 +253,7 @@ export class Simulation {
       objectives: this.objectives.map(o => ({ ...o })), alarm: this.alarm, calmIn: this.calmIn, reinforceIn: this.reinforceIn, reinforced: this.reinforced, result: this.result,
       alarms: this.alarms, reinforceCap: this.reinforceCap, calmFor: this.calmFor, nextAlarm: escalation(this.alarms + 1, this.plan?.contract.tier ?? 1),
       failReason: this.failReason, payout: this.payout, stealth: !this.detected, alarmCause: this.alarmCause, time: this.time, message: this.message,
-      saveUnavailable: this.saveUnavailable, syncing: this.syncing, pending: this.pending,
+      saveUnavailable: this.saveUnavailable, syncing: this.syncing, pending: this.pending, badges: this.badges, downs: this.downs,
       milestones: this.milestones,
       cover: Object.fromEntries(this.phase === 'mission' && this.plan ? this.livingSquad().map(u => [u.id, this.coverStatus(u).shield]) : []),
     };
@@ -320,7 +326,7 @@ export class Simulation {
     const plan = this.plan;
     this.units = []; this.objectives = []; this.shots = []; this.blasts = []; this.casts = []; this.hitThisFrame.clear(); this.volleyReady.clear(); this.autoPaused.clear();
     this.alarm = false; this.detected = false; this.alarmCause = null; this.calmIn = 0; this.lastKnown = null; this.lastSeen = new Map(); this.intel = new Map(); this.milestones = [];
-    this.reinforceIn = 0; this.reinforced = 0; this.alarms = 0; this.reinforceCap = REINFORCE_CAP; this.calmFor = CALM_SECONDS; this.waves = 0; this.vipJoined = false; this.vipThreat = null; this.holdup = ''; this.pending = null; this.commandPoint = null;
+    this.reinforceIn = 0; this.reinforced = 0; this.badges = []; this.downs = 0; this.alarms = 0; this.reinforceCap = REINFORCE_CAP; this.calmFor = CALM_SECONDS; this.waves = 0; this.vipJoined = false; this.vipThreat = null; this.holdup = ''; this.pending = null; this.commandPoint = null;
     this.targetArea = plan?.targetArea ? { ...plan.targetArea } : null;
     if (!plan) { this.squad = []; this.selected = []; return; }
     this.rng = mulberry32(plan.contract.seed ^ 0x5bd1e995);
@@ -645,7 +651,7 @@ export class Simulation {
     else {
       target.hurt = 1.5; target.revive = 0;
       // A downed operative drops its orders; once revived it stays where it fell.
-      if (target.hp <= 0) { target.path = []; this.clearOrders(target); if (target.faction === 'squad') { this.reach('downed'); this.message = `${target.name} is down.`; } }
+      if (target.hp <= 0) { target.path = []; this.clearOrders(target); if (target.faction === 'squad') { this.reach('downed'); this.downs++; this.message = `${target.name} is down.`; } }
     }
   }
   private shoot(from: Unit, to: Unit, amount: number, kind: Shot['kind'] = 'bullet') {
@@ -682,11 +688,21 @@ export class Simulation {
     if (this.phase !== 'mission' || !this.contract) return;
     this.phase = 'headquarters'; this.result = success ? 'success' : 'failure'; this.failReason = reason; this.pending = null;
     if (success) {
-      const stealth = !this.detected;
-      this.payout = missionPayout(this.contract, stealth);
-      this.campaign = applyPayout(this.campaign, this.contract, stealth, Math.random); this.report(s => s.completed(stealth));
+      const report = { stealth: !this.detected, badges: this.earnedBadges() };
+      this.badges = report.badges; this.payout = missionPayout(this.contract, report.stealth);
+      this.campaign = applyPayout(this.campaign, this.contract, report, Math.random); this.report(s => s.completed(report));
     }
     this.emit();
+  }
+  // The badges a won contract earns (see Badge in campaign.ts). Purge counts the hostiles the district started with, not
+  // reinforcements, which an alarm can keep sending.
+  private earnedBadges(): Badge[] {
+    const c = this.contract!, hostiles = this.units.filter(u => u.faction === 'hostile'), district = hostiles.filter(u => !isReinforcement(u));
+    const earned: Record<Badge, boolean> = {
+      ghost: !this.detected, untouched: !this.downs, swift: this.time <= parSeconds(c.type, c.tier),
+      bloodless: hostiles.every(u => u.hp > 0 || u.kind === 'target'), purge: district.length > 0 && district.every(u => u.hp <= 0),
+    };
+    return (Object.keys(earned) as Badge[]).filter(b => earned[b]);
   }
   private intruders() { return this.units.filter(u => u.hp > 0 && (u.faction === 'squad' || (u.faction === 'vip' && this.vipJoined))); }
   private walk(u: Unit, speed: number, dt: number) {

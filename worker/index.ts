@@ -1,4 +1,4 @@
-import { isLoadout, isUpgrade } from '../src/game/campaign.ts';
+import { isLoadout, isUpgrade, missionReport } from '../src/game/campaign.ts';
 import { normalizeSaveCode } from '../src/game/saveCode.ts';
 import type { Result } from './player.ts';
 export { PlayerCampaign } from './player.ts';
@@ -67,10 +67,11 @@ export default {
       const r = await player.startMission(contractId, squad);
       return r.ok ? json({ missionId: r.missionId, campaign: r.campaign }, 201) : json({ error: r.error }, r.status);
     }
-    // POST /missions/:id/complete  { stealth: boolean }
+    // POST /missions/:id/complete  { stealth: boolean, badges?: Badge[] }
     if (rest.length === 3 && rest[0] === 'missions' && rest[2] === 'complete' && method === 'POST') {
-      const { stealth } = body(text);
-      return reply(await player.completeMission(rest[1], stealth === true));
+      const { stealth, badges } = body(text), report = missionReport(stealth, badges);
+      if (!report) return json({ error: 'Unknown badge.' }, 400);
+      return reply(await player.completeMission(rest[1], report));
     }
     if (rest.length === 2 && rest[0] === 'upgrades' && method === 'POST') {
       if (!isUpgrade(rest[1])) return json({ error: 'Unknown upgrade.' }, 400);

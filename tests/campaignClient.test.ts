@@ -29,7 +29,7 @@ test('a fast win waits for the minimum mission time after the server registers t
   client.attach(sim, 'CODE');
 
   client.deployed('c1', ['vex']);
-  client.completed(false);
+  client.completed({ stealth: false, badges: [] });
   await settle();
   mock.timers.tick(startLatency);
   await settle();
@@ -58,7 +58,7 @@ test('the client reports syncing until a held payout claim lands, so a save code
   client.attach(sim, 'CODE');
 
   client.deployed('c1', ['vex']);
-  client.completed(false);
+  client.completed({ stealth: false, badges: [] });
   await settle();
   assert.equal(syncing, true);
 
@@ -245,7 +245,7 @@ test('a resync drops the old mission id, so winning the next mission cannot clai
   mock.timers.tick(5000);
   await settle();
 
-  client.completed(true);
+  client.completed({ stealth: true, badges: ['ghost'] });
   await settle();
   mock.timers.tick(MIN_MISSION_MS);
   await settle();
@@ -272,4 +272,24 @@ test('the squad pick is kept in this browser per save code', t => {
   stored.set('ndSquad', '{not json');
   reloaded.attach(sim, 'AAAA');
   assert.deepEqual(reloaded.savedPick(), []);
+});
+
+test('the payout claim carries the stealth flag and the badges earned', async t => {
+  mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 });
+  t.after(() => mock.timers.reset());
+  t.mock.method(performance, 'now', () => Date.now());
+  const bodies = new Map<string, unknown>();
+  t.mock.method(globalThis, 'fetch', async (url: string, init?: RequestInit) => {
+    bodies.set(url, init?.body ? JSON.parse(String(init.body)) : null);
+    return url.endsWith('/missions')
+      ? { ok: true, status: 201, json: async () => ({ missionId: 'm1', campaign: freshCampaign() }) }
+      : { ok: true, status: 200, json: async () => ({ campaign: freshCampaign() }) };
+  });
+  const sim = { applyCampaign: () => {}, setSaveUnavailable: () => {}, setSyncing: () => {} } as unknown as Simulation;
+  const client = new CampaignClient();
+  client.attach(sim, 'CODE');
+  client.deployed('c1', ['vex']);
+  client.completed({ stealth: true, badges: ['ghost', 'swift'] });
+  await settle(); mock.timers.tick(MIN_MISSION_MS); await settle();
+  assert.deepEqual(bodies.get('/api/campaign/CODE/missions/m1/complete'), { stealth: true, badges: ['ghost', 'swift'] });
 });

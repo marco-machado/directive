@@ -18,10 +18,18 @@ export type Loadout = { weapon: WeaponMode; armor: ArmorMode };
 export const WEAPON_MODES: readonly WeaponMode[] = ['piercing', 'suppressed', 'extended'];
 export const ARMOR_MODES: readonly ArmorMode[] = ['heavy', 'light'];
 export const DEFAULT_LOADOUT: Loadout = { weapon: 'piercing', armor: 'heavy' };
+// Badges a completed contract can earn, each counting toward clearance: never raising the alarm (ghost), no operative
+// downed (untouched), extracting under par time (swift), killing no hostile but an assassination target (bloodless), and
+// downing every hostile the district started with (purge).
+export type Badge = 'ghost' | 'untouched' | 'swift' | 'bloodless' | 'purge';
+export const BADGES: readonly Badge[] = ['ghost', 'untouched', 'swift', 'bloodless', 'purge'];
+export const isBadge = (v: unknown): v is Badge => BADGES.includes(v as Badge);
+// What the client reports when a contract is won.
+export type MissionReport = { stealth: boolean; badges: Badge[] };
 // The campaign's shape; the Durable Object upgrades a ledger saved in an older one when it reads it (upgradeLedger).
-export const CAMPAIGN_VERSION = 4;
+export const CAMPAIGN_VERSION = 5;
 export type Campaign = {
-  version: typeof CAMPAIGN_VERSION; cash: number; weapon: number; armor: number; completed: number; loadout: Loadout;
+  version: typeof CAMPAIGN_VERSION; cash: number; weapon: number; armor: number; completed: number; loadout: Loadout; badges: Record<Badge, number>;
   abilities: Record<ClassId, number>; roster: Operative[]; recruits: Operative[]; offers: Contract[];
 };
 export type ActiveMission = { id: string; startedAt: number; contract: Contract } | null;
@@ -51,7 +59,23 @@ export const isLoadout = (v: unknown): v is Loadout => {
 export const isContractType = (v: unknown): v is ContractType => CONTRACT_TYPES.includes(v as ContractType);
 
 export const contractPayout = (tier: number) => 500 + (tier - 1) * 250;
-export const baseTier = (completed: number) => Math.min(MAX_TIER, 1 + Math.floor(completed / 2));
+// Clearance: each completed contract earns CONTRACT_POINTS and each badge BADGE_POINTS (half a contract); the base
+// tier rises every TIER_POINTS, so every two contracts without badges.
+export const CONTRACT_POINTS = 2, BADGE_POINTS = 1, TIER_POINTS = 4;
+export type Progress = Pick<Campaign, 'completed' | 'badges'>;
+export const clearancePoints = (p: Progress) => CONTRACT_POINTS * p.completed + BADGE_POINTS * BADGES.reduce((sum, b) => sum + p.badges[b], 0);
+export const baseTier = (points: number) => Math.min(MAX_TIER, 1 + Math.floor(points / TIER_POINTS));
+// Swift: extract within this many seconds of mission time, by contract type, plus PAR_PER_TIER for each tier above the first.
+export const PAR_SECONDS: Record<ContractType, number> = { assassination: 18, heist: 28, sabotage: 32, escort: 28 };
+export const PAR_PER_TIER = 12;
+export const parSeconds = (type: ContractType, tier: number) => PAR_SECONDS[type] + PAR_PER_TIER * (tier - 1);
+// A client's report of a won contract, checked: only known badges, and Ghost exactly when the alarm never sounded (so an
+// older client that reports no badges still earns it). Null when it is malformed.
+export function missionReport(stealth: unknown, badges: unknown = []): MissionReport | null {
+  if (!Array.isArray(badges) || !badges.every(isBadge)) return null;
+  const quiet = stealth === true;
+  return { stealth: quiet, badges: BADGES.filter(b => b === 'ghost' ? quiet : badges.includes(b)) };
+}
 // How hard a tier is for this campaign's squad. Four operatives count for about one tier and the six
 // weapon and armor levels for a little over one more (see scripts/balance.ts); ability levels of the classes on the
 // roster add a little. The margin is how many tiers the contract sits above what the squad handles easily.
@@ -72,11 +96,11 @@ const NAMES = ['KAI', 'NOVA', 'SABLE', 'ORIN', 'JUNO', 'HEX', 'MIRA', 'DACE', 'R
 const STARTERS: Operative[] = [{ id: 'vex', name: 'VEX', cls: 'assault' }, { id: 'rook', name: 'ROOK', cls: 'support' }];
 const token = (rng: Rng) => Array.from({ length: 8 }, () => '0123456789abcdefghijklmnopqrstuvwxyz'[Math.floor(rng() * 36)]).join('');
 
-// Until this many contracts are complete, the board offers only the base tier and the one above it.
+// Until this many contracts are complete, the board offers only the first two tiers, whatever badges were earned.
 export const OPENING_CONTRACTS = 2;
-export function offerTiers(completed: number): number[] {
-  const base = baseTier(completed);
-  if (completed < OPENING_CONTRACTS) return [base, base, base + 1];
+export function offerTiers(p: Progress): number[] {
+  if (p.completed < OPENING_CONTRACTS) return [1, 1, 2];
+  const base = baseTier(clearancePoints(p));
   // Three consecutive tiers around the base, shifted inward at either end so every offer differs.
   const low = Math.min(MAX_TIER - 2, Math.max(1, base - 1));
   return [low, low + 1, low + 2];
@@ -84,20 +108,24 @@ export function offerTiers(completed: number): number[] {
 // Contract 01 is the same hand-checked district for every campaign: one patrol to read and a quiet way round it.
 // It stays first on the board until a contract is completed, so a failed first run can try it again.
 export const FIRST_CONTRACT = { type: 'heist', tier: 1, seed: 10492675, district: 'GLASS DISTRICT', sector: 1, patrols: 1 } as const satisfies Omit<Contract, 'id' | 'payout'>;
-// The highest tier on a board dealt after `completed` contracts. Boards are dealt at each deployment.
-export const topTier = (completed: number) => Math.max(...offerTiers(completed));
-// The next tier a board will add, how many more completed contracts that takes, and how far the campaign is from the
-// last unlock to it (0 to 1); null once boards reach MAX_TIER.
-export function nextUnlock(completed: number): { tier: number; after: number; progress: number } | null {
-  const top = topTier(completed);
+// The highest tier on a board dealt with this progress. Boards are dealt at each deployment.
+export const topTier = (p: Progress) => Math.max(...offerTiers(p));
+// The next tier a board will add: during the opening, once the contracts left in it are done; after it, once the
+// clearance points reach the next threshold, `points` more (`contracts` contracts without badges). `progress` (0 to 1)
+// is how far the campaign has come from the last unlock. Null once boards reach MAX_TIER.
+export function nextUnlock(p: Progress): { tier: number; points: number; contracts: number; progress: number } | null {
+  const top = topTier(p);
   if (top >= MAX_TIER) return null;
-  let after = 1, since = completed;
-  while (topTier(completed + after) <= top) after++;
-  while (since > 0 && topTier(since - 1) === top) since--;
-  return { tier: topTier(completed + after), after, progress: (completed - since) / (completed + after - since) };
+  if (p.completed < OPENING_CONTRACTS) {
+    const contracts = OPENING_CONTRACTS - p.completed;
+    return { tier: topTier({ ...p, completed: OPENING_CONTRACTS }), points: CONTRACT_POINTS * contracts, contracts, progress: p.completed / OPENING_CONTRACTS };
+  }
+  // After the opening the top tier is the base tier plus one, so the next one comes with the next base tier.
+  const now = clearancePoints(p), points = TIER_POINTS * baseTier(now) - now;
+  return { tier: top + 1, points, contracts: Math.ceil(points / CONTRACT_POINTS), progress: 1 - points / TIER_POINTS };
 }
-function dealOffers(completed: number, rng: Rng): Contract[] {
-  const tiers = offerTiers(completed), first = completed ? null : FIRST_CONTRACT;
+function dealOffers(p: Progress, rng: Rng): Contract[] {
+  const tiers = offerTiers(p), first = p.completed ? null : FIRST_CONTRACT;
   const types = shuffle(rng, CONTRACT_TYPES.filter(t => t !== first?.type));
   return tiers.map((tier, i) => {
     const id = token(rng);
@@ -114,10 +142,11 @@ function dealRecruits(c: Campaign, rng: Rng): Operative[] {
   return free.slice(0, RECRUIT_OFFERS).map((name, i) => ({ id: `r-${token(rng)}`, name, cls: pick(rng, i === 0 && !c.completed ? SILENT_CLASSES : CLASSES) }));
 }
 // New contract offers and recruits; dealt for a new campaign and after every deployment.
-export const dealBoard = (c: Campaign, rng: Rng): Campaign => ({ ...c, offers: dealOffers(c.completed, rng), recruits: dealRecruits(c, rng) });
+export const dealBoard = (c: Campaign, rng: Rng): Campaign => ({ ...c, offers: dealOffers(c, rng), recruits: dealRecruits(c, rng) });
 
+const noBadges = () => Object.fromEntries(BADGES.map(b => [b, 0])) as Record<Badge, number>;
 export function freshCampaign(rng: Rng = Math.random): Campaign {
-  return dealBoard({ version: CAMPAIGN_VERSION, cash: 0, weapon: 0, armor: 0, completed: 0, loadout: { ...DEFAULT_LOADOUT }, abilities: { assault: 0, support: 0, recon: 0, tech: 0 }, roster: STARTERS.map(o => ({ ...o })), recruits: [], offers: [] }, rng);
+  return dealBoard({ version: CAMPAIGN_VERSION, cash: 0, weapon: 0, armor: 0, completed: 0, loadout: { ...DEFAULT_LOADOUT }, badges: noBadges(), abilities: { assault: 0, support: 0, recon: 0, tech: 0 }, roster: STARTERS.map(o => ({ ...o })), recruits: [], offers: [] }, rng);
 }
 
 export function parseCampaign(text: string | null): Campaign {
@@ -143,7 +172,7 @@ function clampContract(c: any): Contract | null {
   const contract: Contract = { id, type: c.type, tier, seed: n(c.seed, 2 ** 31), payout: contractPayout(tier), district, sector: Math.max(1, n(c.sector, 99)) };
   return c.patrols === undefined ? contract : { ...contract, patrols: n(c.patrols, 3 + MAX_TIER) };
 }
-// Accepts v1 (`mission`) to v4 saves.
+// Accepts v1 (`mission`) to v5 saves.
 export function clampCampaign(data: any, rng: Rng = Math.random): Campaign {
   if (!data || typeof data !== 'object') return freshCampaign(rng);
   const abilities = Object.fromEntries(CLASSES.map(k => [k, n(data.abilities?.[k], MAX_LEVEL)])) as Record<ClassId, number>;
@@ -155,6 +184,7 @@ export function clampCampaign(data: any, rng: Rng = Math.random): Campaign {
   };
   const campaign: Campaign = {
     version: CAMPAIGN_VERSION, cash: n(data.cash, 1e8), weapon: n(data.weapon, MAX_LEVEL), armor: n(data.armor, MAX_LEVEL), loadout,
+    badges: Object.fromEntries(BADGES.map(b => [b, n(data.badges?.[b], 1e6)])) as Record<Badge, number>,
     completed: n(data.completed ?? ((data.mission || 1) - 1), 1e6), abilities,
     roster: roster.length ? roster : STARTERS.map(o => ({ ...o })), recruits: clampOperatives(data.recruits, RECRUIT_OFFERS), offers,
   };
@@ -188,9 +218,11 @@ export function applyDismiss(c: Campaign, id: string): Campaign | null {
 const isFirstContract = (o: Contract) => o.seed === FIRST_CONTRACT.seed && o.patrols === FIRST_CONTRACT.patrols;
 // The board was dealt at deploy, before this payout counted, so the first payout deals new offers in place of one that
 // still holds contract 01. Recruits stay: they are what the first payout can buy.
-export function applyPayout(c: Campaign, contract: Contract, stealth: boolean, rng: Rng): Campaign {
-  const paid = { ...c, cash: c.cash + missionPayout(contract, stealth), completed: c.completed + 1 };
-  return c.offers.some(isFirstContract) ? { ...paid, offers: dealOffers(paid.completed, rng) } : paid;
+export function applyPayout(c: Campaign, contract: Contract, report: MissionReport, rng: Rng): Campaign {
+  const badges = { ...c.badges };
+  for (const b of report.badges) badges[b]++;
+  const paid = { ...c, cash: c.cash + missionPayout(contract, report.stealth), completed: c.completed + 1, badges };
+  return c.offers.some(isFirstContract) ? { ...paid, offers: dealOffers(paid, rng) } : paid;
 }
 
 export const validSquad = (c: Campaign, squad: readonly string[]) =>
@@ -206,8 +238,8 @@ export function startMission(state: Ledger, id: string, now: number, contractId:
   if (active?.id === contractId) return { ...state, activeMission: { id, startedAt: now, contract: active } };
   return null;
 }
-export function completeMission(state: Ledger, id: string, now: number, stealth: boolean, rng: Rng): Ledger | null {
+export function completeMission(state: Ledger, id: string, now: number, report: MissionReport, rng: Rng): Ledger | null {
   const m = state.activeMission;
   if (!m || m.id !== id || now - m.startedAt < MIN_MISSION_MS) return null;
-  return { campaign: applyPayout(state.campaign, m.contract, stealth, rng), activeMission: null };
+  return { campaign: applyPayout(state.campaign, m.contract, report, rng), activeMission: null };
 }
