@@ -7,7 +7,7 @@ import type { Area, EnemyKind, MissionPlan } from './mapgen.ts';
 import { mulberry32 } from './rng.ts';
 import type { Rng } from './rng.ts';
 import { distance } from './world.ts';
-import type { Point } from './world.ts';
+import type { Point, World } from './world.ts';
 export { freshCampaign, parseCampaign } from './campaign.ts';
 export type { Campaign, Upgrade } from './campaign.ts';
 
@@ -110,6 +110,8 @@ export const LOOK_ANGLE = Math.PI / 3; // posted guards look this far to either 
 export const LOOK_PAUSE = 2;        // and hold that look this long
 export const LOOK_EVERY = [6, 8] as const; // seconds between the starts of two look-arounds
 export const LOOK_TURN = 1.5;       // rad/s while looking around
+// Cameras and turrets sweep this far (rad) to either side of the way they were set up to face.
+export const SWEEP: Record<'camera' | 'turret', number> = { camera: .7, turret: 1 };
 
 const angleDiff = (a: number, b: number) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
 // Turns `u` toward `heading` by at most `step` radians, the short way round.
@@ -126,7 +128,7 @@ const hashed = (seed: number, id: string, n: number) => {
 // How the debrief names each objective as a landmark (charges carry their letter from the label).
 const LANDMARK: Record<Objective['kind'], string> = { target: 'the target', terminal: 'the vault terminal', charge: 'a charge site', vip: 'the VIP', extract: 'extraction' };
 const takedownable = (u: Unit) => u.kind === 'guard' || u.kind === 'heavy' || u.kind === 'target';
-const posted = (u: Unit) => (u.kind === 'guard' || u.kind === 'heavy') && u.patrol.length < 2;
+export const posted = (u: Pick<Unit, 'kind' | 'patrol'>) => (u.kind === 'guard' || u.kind === 'heavy') && u.patrol.length < 2;
 const headingTo = (a: Point, b: Point) => Math.atan2(b.x - a.x, b.z - a.z);
 const routeLength = (from: Point, path: Point[]) => path.reduce((sum, p, i) => sum + distance(i ? path[i - 1] : from, p), 0);
 // The point `d` back from the end of a route, walking toward its start.
@@ -138,6 +140,21 @@ const pointBack = (route: Point[], d: number): Point => {
   }
   return { x: route[0].x, z: route[0].z };
 };
+// Ground a hostile can see, widened by `margin` for planning, wherever it will look: a posted guard's whole look-around
+// and a camera's or turret's whole sweep count, not only the way it faces now.
+export function watchedBy(world: World, v: Pick<Unit, 'x' | 'z' | 'kind' | 'heading' | 'sweep' | 'patrol'>, margin = 1) {
+  const stats = HOSTILE_STATS[v.kind as EnemyKind], range = stats.vision + .8 * margin, fov = stats.fov + .25 * margin;
+  const turn = posted(v) ? LOOK_ANGLE : v.kind === 'camera' || v.kind === 'turret' ? SWEEP[v.kind] : null;
+  return (p: Point) => {
+    if (distance(v, p) > range) return false;
+    const a = headingTo(v, p);
+    if (angleDiff(a, v.heading) > fov && !(turn !== null && angleDiff(a, v.sweep) <= turn + fov)) return false;
+    return world.sightClear(v, p);
+  };
+}
+// What an attack order would do with the current selection: a takedown by the listed operatives, a volley that kills
+// silently, one that leaves the hostile alive and raises the alarm, or (during the alarm) just a volley.
+export type AttackPreview = { outcome: 'takedown' | 'kill' | 'alert' | 'volley'; takedown: string[]; damage: number; hp: number; short: number };
 
 export class Simulation {
   campaign: Campaign;
@@ -413,13 +430,22 @@ export class Simulation {
     const target = this.unit(id), units = this.orderable();
     return this.phase === 'mission' && this.plan && target && target.faction === 'hostile' && target.hp > 0 && target.visible && units.length ? { target, units } : null;
   }
-  // What an attack order on `id` would do with the current selection, for the hover hint: "48 / 75 · will alert".
-  attackHint(id: string): string | null {
+  // What an attack order on `id` would do with the current selection.
+  attackPreview(id: string): AttackPreview | null {
     const order = this.attackable(id); if (!order) return null;
     const p = this.attackPlan(order.target, order.units);
-    if (p.takedown.length) return `Takedown · ${p.takedown.map(u => u.name).join(' + ')}`;
+    const outcome = p.takedown.length ? 'takedown' : this.alarm ? 'volley' : p.alerts ? 'alert' : 'kill';
+    return { outcome, takedown: p.takedown.map(u => u.id), damage: p.damage, hp: p.hp, short: p.short };
+  }
+  // The hover hint for a preview: "Takedown · ROOK" or "48 / 75 · will alert".
+  describeAttack(p: AttackPreview): string {
+    if (p.outcome === 'takedown') return `Takedown · ${p.takedown.map(id => this.unit(id)?.name).join(' + ')}`;
     const volley = `${p.damage} / ${p.hp}`;
-    return this.alarm ? volley : `${volley} · ${p.alerts ? 'will alert' : 'silent kill'}${p.short ? ` · takedown needs ${p.short}` : ''}`;
+    return p.outcome === 'volley' ? volley : `${volley} · ${p.outcome === 'alert' ? 'will alert' : 'silent kill'}${p.short ? ` · takedown needs ${p.short}` : ''}`;
+  }
+  attackHint(id: string): string | null {
+    const p = this.attackPreview(id);
+    return p && this.describeAttack(p);
   }
   attack(id: string) {
     const order = this.attackable(id); if (!order) return;
@@ -441,16 +467,7 @@ export class Simulation {
       : `${who} marked. Volley ${p.damage} / ${p.hp}, ${p.alerts ? 'will alert' : 'silent kill'}. ${fire}.${p.short ? ` A takedown needs ${p.short} operatives.` : ''}`;
     this.emit();
   }
-  // Ground the hostile can see, widened by `margin` for planning; a posted guard's whole look-around counts.
-  private watched(v: Unit, margin = 1) {
-    const world = this.plan!.world, stats = HOSTILE_STATS[v.kind as EnemyKind], range = stats.vision + .8 * margin, fov = stats.fov + .25 * margin, wide = posted(v);
-    return (p: Point) => {
-      if (distance(v, p) > range) return false;
-      const a = headingTo(v, p);
-      if (angleDiff(a, v.heading) > fov && !(wide && angleDiff(a, v.sweep) <= LOOK_ANGLE + fov)) return false;
-      return world.sightClear(v, p);
-    };
-  }
+  private watched(v: Unit, margin = 1) { return watchedBy(this.plan!.world, v, margin); }
   // A route to a spot just behind the hostile that never crosses its sight. Two operatives on a heavy take either shoulder.
   private approach(u: Unit, v: Unit): Point[] {
     const slot = this.units.filter(o => o.takedownId === v.id).indexOf(u);
@@ -664,7 +681,7 @@ export class Simulation {
     if (u.stunned > 0) { u.stunned -= dt; return; }
     u.cooldown -= dt;
     const mobile = u.kind === 'guard' || u.kind === 'heavy';
-    if (u.kind === 'camera' || u.kind === 'turret') u.heading = u.sweep + Math.sin(this.time * .6 + u.x) * (u.kind === 'camera' ? .7 : 1);
+    if (u.kind === 'camera' || u.kind === 'turret') u.heading = u.sweep + Math.sin(this.time * .6 + u.x) * SWEEP[u.kind];
     const seen = intruders.filter(v => distance(u, v) <= stats.vision && angleDiff(headingTo(u, v), u.heading) <= stats.fov && world.sightClear(u, v))
       .sort((a, b) => distance(u, a) - distance(u, b))[0];
     if (this.alarm) { if (seen) this.contact(seen); }
