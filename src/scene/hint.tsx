@@ -5,7 +5,7 @@ import { Vector3 } from 'three';
 import type { AttackPreview, Simulation } from '../game/simulation.ts';
 import { TOP } from './units.tsx';
 
-const TONE: Record<AttackPreview['outcome'], string> = { takedown: 'quiet', kill: 'quiet', alert: 'loud', volley: 'alarm' };
+const TONE: Record<AttackPreview['outcome'], string> = { takedown: 'quiet', kill: 'quiet', suspicious: 'wary', alert: 'loud', volley: 'alarm' };
 
 // Over a hostile the pointer would attack, what the order does with the current selection:
 // a takedown, or the volley against the hostile's HP ("48 / 75 · will alert"). A plain DOM node,

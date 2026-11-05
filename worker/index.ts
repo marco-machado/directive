@@ -1,4 +1,4 @@
-import { isUpgrade } from '../src/game/campaign.ts';
+import { isLoadout, isUpgrade, MAX_COUNTERMEASURES, missionReport } from '../src/game/campaign.ts';
 import { normalizeSaveCode } from '../src/game/saveCode.ts';
 import type { Result } from './player.ts';
 export { PlayerCampaign } from './player.ts';
@@ -29,6 +29,7 @@ const body = (text: string): Record<string, unknown> => {
   return {};
 };
 const isId = (v: unknown): v is string => typeof v === 'string' && /^[a-z0-9-]{1,24}$/.test(v);
+const isLevel = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= 0 && (v as number) <= MAX_COUNTERMEASURES;
 
 export default {
   async fetch(request, env): Promise<Response> {
@@ -60,21 +61,29 @@ export default {
     const rest = parts.slice(3);
 
     if (rest.length === 0 && method === 'GET') return reply(await player.get());
-    // POST /missions  { contractId, squad: string[] }
+    // POST /missions  { contractId, squad: string[], countermeasures?: 0–3 }  (an older client sends no level: 0)
     if (rest.length === 1 && rest[0] === 'missions' && method === 'POST') {
-      const { contractId, squad } = body(text);
+      const { contractId, squad, countermeasures = 0 } = body(text);
       if (!isId(contractId) || !Array.isArray(squad) || !squad.every(isId)) return json({ error: 'Expected a contractId and a squad.' }, 400);
-      const r = await player.startMission(contractId, squad);
+      if (!isLevel(countermeasures)) return json({ error: 'Unknown countermeasures level.' }, 400);
+      const r = await player.startMission(contractId, squad, countermeasures);
       return r.ok ? json({ missionId: r.missionId, campaign: r.campaign }, 201) : json({ error: r.error }, r.status);
     }
-    // POST /missions/:id/complete  { stealth: boolean }
+    // POST /missions/:id/complete  { stealth: boolean, badges?: Badge[] }
     if (rest.length === 3 && rest[0] === 'missions' && rest[2] === 'complete' && method === 'POST') {
-      const { stealth } = body(text);
-      return reply(await player.completeMission(rest[1], stealth === true));
+      const { stealth, badges } = body(text), report = missionReport(stealth, badges);
+      if (!report) return json({ error: 'Unknown badge.' }, 400);
+      return reply(await player.completeMission(rest[1], report));
     }
     if (rest.length === 2 && rest[0] === 'upgrades' && method === 'POST') {
       if (!isUpgrade(rest[1])) return json({ error: 'Unknown upgrade.' }, 400);
       return reply(await player.buy(rest[1]));
+    }
+    // POST /loadout  { weapon, armor }
+    if (rest.length === 1 && rest[0] === 'loadout' && method === 'POST') {
+      const { weapon, armor } = body(text), loadout = { weapon, armor };
+      if (!isLoadout(loadout)) return json({ error: 'Unknown loadout.' }, 400);
+      return reply(await player.equip(loadout));
     }
     if (rest.length === 2 && rest[0] === 'recruits' && method === 'POST') {
       if (!isId(rest[1])) return json({ error: 'Unknown recruit.' }, 400);

@@ -1,6 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
-import { applyDismiss, applyPurchase, applyRecruit, clampCampaign, completeMission, freshCampaign, startMission } from '../src/game/campaign.ts';
-import type { Campaign, Ledger, Upgrade } from '../src/game/campaign.ts';
+import { applyDismiss, applyLoadout, applyPurchase, applyRecruit, CAMPAIGN_VERSION, clampCampaign, completeMission, freshCampaign, startMission, upgradeLedger } from '../src/game/campaign.ts';
+import type { Campaign, Ledger, Loadout, MissionReport, Upgrade } from '../src/game/campaign.ts';
 import type { Rng } from '../src/game/rng.ts';
 
 export type Result = { ok: true; campaign: Campaign } | { ok: false; status: 404 | 409; error: string };
@@ -10,11 +10,11 @@ const unknown = { ok: false, status: 404, error: 'Unknown save code.' } as const
 
 // One instance per save code. Every write goes through the pure rules in src/game/campaign.ts.
 export class PlayerCampaign extends DurableObject<Env> {
-  // Ledgers written before contracts existed (v2) are upgraded on first read.
+  // A ledger saved in an older campaign shape is upgraded on first read; a mission in flight keeps its payout claim.
   private async load(): Promise<Ledger | undefined> {
     const ledger = await this.ctx.storage.get<Ledger>(KEY);
-    if (!ledger || ledger.campaign.version === 3) return ledger;
-    const upgraded: Ledger = { campaign: clampCampaign(ledger.campaign, random), activeMission: null };
+    if (!ledger || ledger.campaign.version === CAMPAIGN_VERSION) return ledger;
+    const upgraded = upgradeLedger(ledger, random);
     await this.ctx.storage.put(KEY, upgraded);
     return upgraded;
   }
@@ -38,20 +38,21 @@ export class PlayerCampaign extends DurableObject<Env> {
     const ledger = await this.load();
     return ledger ? { ok: true, campaign: ledger.campaign } : unknown;
   }
-  async startMission(contractId: string, squad: string[]): Promise<{ ok: true; missionId: string; campaign: Campaign } | Extract<Result, { ok: false }>> {
+  async startMission(contractId: string, squad: string[], countermeasures: number): Promise<{ ok: true; missionId: string; campaign: Campaign } | Extract<Result, { ok: false }>> {
     const ledger = await this.load(); if (!ledger) return unknown;
     const missionId = crypto.randomUUID();
-    const next = startMission(ledger, missionId, Date.now(), contractId, squad, random);
-    if (!next) return { ok: false, status: 409, error: 'That contract is not on offer, or the squad is invalid.' };
+    const next = startMission(ledger, missionId, Date.now(), contractId, squad, countermeasures, random);
+    if (!next) return { ok: false, status: 409, error: 'That contract is not on offer, the squad is invalid, or that countermeasures level is locked.' };
     await this.ctx.storage.put(KEY, next);
     return { ok: true, missionId, campaign: next.campaign };
   }
-  async completeMission(missionId: string, stealth: boolean): Promise<Result> {
+  async completeMission(missionId: string, report: MissionReport): Promise<Result> {
     const ledger = await this.load(); if (!ledger) return unknown;
-    const next = completeMission(ledger, missionId, Date.now(), stealth, random);
+    const next = completeMission(ledger, missionId, Date.now(), report, random);
     return next ? this.save(next) : { ok: false, status: 409, error: 'Mission is not active or ended too soon.' };
   }
   buy(type: Upgrade) { return this.update(c => applyPurchase(c, type), 'Not enough credits or upgrade maxed.'); }
+  equip(loadout: Loadout) { return this.update(c => applyLoadout(c, loadout), 'Unknown loadout.'); }
   recruit(id: string) { return this.update(c => applyRecruit(c, id), 'Recruit unavailable, roster full, or not enough credits.'); }
   dismiss(id: string) { return this.update(c => applyDismiss(c, id), 'Unknown operative, or the last one on the roster.'); }
 }

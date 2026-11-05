@@ -237,6 +237,34 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .brief-pay .credits { display: block; margin-top: 4px; font: 600 22px/1 var(--f-ui); color: var(--gold) }
 .brief-pay .bonus { border-color: rgb(94 242 192 / .35) }
 .brief-pay .bonus .credits { color: var(--mint) }
+.brief-badges { list-style: none; display: grid; gap: 6px; margin: 12px 0 0; padding: 0 }
+.brief-badges li { display: grid; grid-template-columns: 18px 84px minmax(0, 1fr); align-items: center; gap: 8px; font: 500 13px var(--f-body); color: var(--dim) }
+.brief-badges .icon { width: 16px; height: 16px; color: var(--mint) }
+.brief-badges b { font: 600 12px var(--f-ui); letter-spacing: .1em; text-transform: uppercase; color: var(--text) }
+.countermeasures { margin: 12px 0 0; padding: 10px 12px; border: 1px solid rgb(255 81 72 / .35); background: rgb(40 10 10 / .35) }
+.cm-head { display: flex; align-items: center; justify-content: space-between; gap: 10px }
+.cm-head small { font: 600 10px var(--f-ui); letter-spacing: .18em; text-transform: uppercase; color: var(--red) }
+.cm-levels { display: grid; grid-auto-flow: column; grid-auto-columns: 44px; gap: 4px }
+.cm-levels .btn { min-height: 28px; padding: 0 4px; font-size: 10px; letter-spacing: .06em }
+.cm-levels .btn[aria-pressed=true] { --edge: var(--red); --fill: rgb(70 18 16); color: #ffd0c8 }
+.countermeasures p { margin: 8px 0 0; font: 400 13px/1.4 var(--f-body); color: var(--dim) }
+.tier-badge.cm-badge { color: var(--red); border-color: rgb(255 81 72 / .6) }
+.debrief-note.cm { color: var(--red) }
+.hq-note { margin: 0 18px 14px; font: 400 13px/1.45 var(--f-body); color: var(--dim) }
+.brief-note { margin: 8px 0 0; font: 400 12px var(--f-body); color: var(--faint) }
+.offer-par { font: 600 10px var(--f-ui); letter-spacing: .1em; text-transform: uppercase; color: var(--dim) }
+.badge-grid { list-style: none; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); margin: 0; padding: 0; border: 1px solid var(--line); background: rgb(3 8 10 / .45) }
+.badge-grid li { display: grid; justify-items: center; align-content: start; gap: 3px; padding: 10px 4px; border-left: 1px solid var(--line); text-align: center }
+.badge-grid li:first-child { border-left: 0 }
+.badge-grid .icon { width: 18px; height: 18px; color: var(--mint) }
+.badge-grid b { font: 700 12px var(--f-ui); letter-spacing: .08em; text-transform: uppercase }
+.badge-grid small { font: 500 11px/1.25 var(--f-ui); color: var(--dim) }
+.badge-grid li.missed { opacity: .5 }
+.badge-grid li.missed .icon { color: var(--faint) }
+.debrief-badges { margin: 14px 0 }
+.debrief-note { margin: 14px 0; font: 400 13px var(--f-body); color: var(--faint) }
+.hq-roster .badge-grid { margin: 0 18px 14px }
+.hq-roster .badge-grid b { font-size: 18px; line-height: 1 }
 .squad-pick { display: flex; flex-direction: column; min-width: 0; min-height: 0; margin: 0 0 12px; padding: 0; border: 0 }
 .squad-pick legend { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; padding: 0; font: 600 20px/1 var(--f-display); letter-spacing: .08em; text-transform: uppercase }
 .squad-pick legend span { font: 700 12px var(--f-ui); letter-spacing: .14em; color: var(--amber) }
@@ -285,6 +313,10 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .upgrade-stat .icon { width: 12px; height: 12px; color: var(--faint) }
 .upgrade-stat b { color: var(--mint) }
 .upgrade .pips { grid-area: pips }
+.upgrade.has-modes { grid-template-areas: "icon copy copy" "icon modes modes" "icon pips buy" }
+.upgrade-modes { grid-area: modes; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 6px }
+.upgrade-modes .btn { min-height: 30px; padding: 0 4px; font-size: 10px; letter-spacing: .04em }
+.upgrade-modes .btn[aria-pressed=true] { --edge: var(--mint); --fill: rgb(18 52 48); color: var(--mint) }
 .upgrade.maxed { border-color: rgb(94 242 192 / .3) }
 .btn.buy { --edge: rgb(255 215 122 / .45); min-width: 92px; min-height: 38px; padding: 0 12px; font-size: 14px; letter-spacing: .04em; color: var(--gold) }
 .btn.buy:hover:not(:disabled) { --edge: var(--gold); --fill: rgb(48 40 16 / .95) }
@@ -375,6 +407,7 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .tracker-title { min-width: 0 }
 .tracker-title strong { display: block; font: 700 18px/1 var(--f-display); letter-spacing: .06em; text-transform: uppercase }
 .tracker-title small { display: block; margin-top: 4px; font: 600 11px var(--f-ui); letter-spacing: .14em; text-transform: uppercase; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+.tracker-badges { display: flex; gap: 6px; white-space: nowrap }
 .tier-badge { padding: 3px 7px; border: 1px solid var(--threat); color: var(--threat); font: 700 12px var(--f-ui); letter-spacing: .08em }
 .objectives { list-style: none; display: grid; gap: 10px; margin: 0; padding: 12px 14px }
 .objectives li { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: start; gap: 10px; font: 500 14px/1.3 var(--f-ui); color: var(--faint) }
