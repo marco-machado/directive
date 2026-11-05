@@ -63,6 +63,7 @@ class Tactician {
   private waiting: { id: string; since: number } | null = null;
   private job: Job | null = null;
   private fightTarget = ''; private fightGoal = '';
+  private retreat: Point | null = null; private retreatAt = -Infinity;
 
   constructor(private readonly o: Orders, private readonly quietOnly: boolean) {}
 
@@ -81,6 +82,7 @@ class Tactician {
       if (!this.living.some(op => op.reviveTarget)) { this.o.selectAll(); this.o.revive(down.id); }
       return;
     }
+    if (!k.alarm) this.retreat = null;
     if (k.alarm || this.loud) this.fight(goal); else this.sneak(goal);
   }
 
@@ -328,6 +330,7 @@ class Tactician {
     const k = this.k;
     this.job = null;
     this.abilities();
+    if (k.alarm && this.withdraw()) return;
     const visible = k.hostiles.filter(h => h.visible && h.hp > 0);
     const near = visible.filter(h => this.living.some(op => distance(op, h) <= CLASS_STATS[op.cls].range + 3) && (HOSTILE_STATS[h.kind].damage > 0 || h.kind === 'target'));
     const target = near.find(h => h.kind === 'target') ?? [...near].sort((a, b) => a.hp - b.hp)[0] ?? (goal.target?.visible ? goal.target : undefined);
@@ -341,6 +344,38 @@ class Tactician {
     if (this.fightGoal !== goal.key || (idle && this.living.some(op => distance(op, goal.point) > 2))) {
       this.fightGoal = goal.key; this.o.selectAll(); this.o.move(goal.point);
     }
+  }
+  // A squad losing a firefight (under 35% of its health, or with four armed hostiles in sight) breaks contact: it pulls
+  // back to the nearest spot within 20 m that no hostile it knows of can see, and holds there for the alarm to stand
+  // down. Not while an assassination target lives, which would get away meanwhile.
+  private withdraw(): boolean {
+    const k = this.k;
+    if (k.objectives.some(o => o.kind === 'target' && !o.done)) return false;
+    const hp = this.living.reduce((s, op) => s + op.hp, 0) / this.living.reduce((s, op) => s + op.maxHp, 0);
+    const armed = k.hostiles.filter(h => h.visible && HOSTILE_STATS[h.kind].damage > 0).length;
+    if (!this.retreat && hp >= .35 && armed < 4) return false;
+    const exposed = (p: Point) => k.hostiles.some(h => distance(h, p) <= HOSTILE_STATS[h.kind].vision + 2 && k.world.sightClear(h, p));
+    if (!this.retreat || (k.time - this.retreatAt > 2 && exposed(this.retreat))) {
+      this.retreat = this.hideout(exposed); this.retreatAt = k.time;
+      if (!this.retreat) return false;
+    }
+    for (const op of this.living) {
+      const end = op.route.at(-1);
+      if ((!end || distance(end, this.retreat) > 1) && distance(op, this.retreat) > 1) this.send(op, k.world.findPath(op, this.retreat));
+    }
+    return true;
+  }
+  private hideout(exposed: (p: Point) => boolean): Point | null {
+    const k = this.k, n = this.living.length;
+    const c = { x: Math.round(this.living.reduce((s, op) => s + op.x, 0) / n), z: Math.round(this.living.reduce((s, op) => s + op.z, 0) / n) };
+    const cells: Point[] = [];
+    for (let dx = -20; dx <= 20; dx++) for (let dz = -20; dz <= 20; dz++) {
+      const p = { x: c.x + dx, z: c.z + dz };
+      if (distance(p, c) <= 20 && k.world.walkable(p)) cells.push(p);
+    }
+    cells.sort((a, b) => distance(a, c) - distance(b, c));
+    for (const p of cells) if (!exposed(p) && k.world.findPath(this.living[0], p).length) return p;
+    return null;
   }
   private abilities() {
     const k = this.k, visible = k.hostiles.filter(h => h.visible && h.hp > 0);
