@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef } from 'react';
 import type { RefObject } from 'react';
 import { useFrame } from '@react-three/fiber';
-import { BufferGeometry, Color, DoubleSide, Float32BufferAttribute, Group, Mesh, MeshBasicMaterial, RingGeometry, Sphere } from 'three';
+import { BufferGeometry, Color, DoubleSide, Float32BufferAttribute, Group, Mesh, MeshBasicMaterial, Raycaster, RingGeometry, Sphere, Vector3 } from 'three';
+import type { Plane } from 'three';
 import { ABILITY_STATS } from '../game/classes.ts';
 import { HOSTILE_STATS, SUSPICIOUS } from '../game/simulation.ts';
 import type { Pending, Simulation, Unit } from '../game/simulation.ts';
@@ -143,6 +144,36 @@ export function CoverPreview({ sim, pointer, hovered }: { sim: Simulation; point
   return <group ref={marker} visible={false}>
     <mesh rotation={FLAT}><ringGeometry args={[.22, .29, 4]} /><meshBasicMaterial color={SHIELD_COLOR.covered} transparent opacity={.75} toneMapped={false} depthWrite={false} /></mesh>
     <mesh ref={icon} position={[0, .75, 0]} material={shield(SHIELD_COLOR.covered)} renderOrder={22}><planeGeometry args={[1, 1]} /></mesh>
+  </group>;
+}
+
+// Past the zone's edge a move order or an aimed ability lands on the nearest point inside it (World.clampToBounds):
+// a faint line runs from the pointer to that point, marked like the order's destination. Hidden over a unit, and
+// with nobody selected and nothing to aim. It casts the pointer onto the street every frame, so the line stays on
+// the cursor while the camera follows the squad or glides between views.
+const TETHER_WIDTH = .05; // m
+export function ZoneTether({ sim, pointer, hovered, street }: { sim: Simulation; pointer: RefObject<Pointer>; hovered: RefObject<string | null>; street: Plane }) {
+  const tether = useRef<Group>(null), strip = useRef<Group>(null), line = useRef<Mesh>(null), marker = useRef<Mesh>(null);
+  const ray = useMemo(() => ({ caster: new Raycaster(), hit: new Vector3() }), []);
+  useFrame(({ camera, pointer: ndc }) => {
+    const t = tether.current, s = strip.current, l = line.current, m = marker.current, world = sim.plan?.world;
+    if (!t || !s || !l || !m) return;
+    const acting = !!sim.pending || sim.selected.some(id => sim.units.some(u => u.id === id && u.hp > 0));
+    let raw: Point | null = null;
+    if (world && sim.phase === 'mission' && pointer.current.on && !hovered.current && acting) {
+      ray.caster.setFromCamera(ndc, camera);
+      raw = ray.caster.ray.intersectPlane(street, ray.hit);
+    }
+    t.visible = !!world && !!raw && !world.inBounds(raw, 0);
+    if (!world || !raw || !t.visible) return;
+    const end = world.clampToBounds(raw), dx = raw.x - end.x, dz = raw.z - end.z;
+    s.position.set((end.x + raw.x) / 2, .06, (end.z + raw.z) / 2); s.rotation.y = Math.atan2(dx, dz);
+    l.scale.set(TETHER_WIDTH, Math.hypot(dx, dz), 1);
+    m.position.set(end.x, .06, end.z);
+  });
+  return <group ref={tether} visible={false}>
+    <group ref={strip}><mesh ref={line} rotation={FLAT}><planeGeometry args={[1, 1]} /><meshBasicMaterial color="#5ef2c0" transparent opacity={.45} toneMapped={false} depthWrite={false} /></mesh></group>
+    <mesh ref={marker} rotation={FLAT}><ringGeometry args={[.22, .29, 4]} /><meshBasicMaterial color="#5ef2c0" transparent opacity={.6} toneMapped={false} depthWrite={false} /></mesh>
   </group>;
 }
 

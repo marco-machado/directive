@@ -20,6 +20,12 @@ function gridGeometry(b: Bounds) {
   for (let z = Math.ceil(b.minZ); z <= b.maxZ; z++) points.push(b.minX, 0, z, b.maxX, 0, z);
   const g = new BufferGeometry(); g.setAttribute('position', new Float32BufferAttribute(points, 3)); return g;
 }
+// The zone's edge, on the bounds themselves (the grid's lines are on whole meters, which odd tiers' bounds are not):
+// where the out-of-zone grade in materials.ts sets in, and where move orders past it are pulled back to.
+function edgeGeometry(b: Bounds) {
+  const points = [b.minX, 0, b.minZ, b.maxX, 0, b.minZ, b.maxX, 0, b.minZ, b.maxX, 0, b.maxZ, b.maxX, 0, b.maxZ, b.minX, 0, b.maxZ, b.minX, 0, b.maxZ, b.minX, 0, b.minZ];
+  const g = new BufferGeometry(); g.setAttribute('position', new Float32BufferAttribute(points, 3)); return g;
+}
 
 const FADE = .8;          // share of a faded building's pixels that are dropped
 const FADE_SECONDS = .25;
@@ -89,12 +95,13 @@ export const City = memo(function City({ plan, sim }: { plan: MissionPlan; sim: 
     pools: district.pools.map((p): Part => ({ x: p.x, y: .05, z: p.z, w: 2 * p.r, h: 2 * p.r, d: 1, rx: -Math.PI / 2, color: p.color, glow: p.strength })),
   }), [district]);
   const fades = useBuildingFades(sim, plan);
-  const grid = useMemo(() => gridGeometry(b), [b]);
-  useEffect(() => () => grid.dispose(), [grid]);
+  const grid = useMemo(() => gridGeometry(b), [b]), edge = useMemo(() => edgeGeometry(b), [b]);
+  useEffect(() => () => { grid.dispose(); edge.dispose(); }, [grid, edge]);
   const m = kit.materials;
   return <group>
     <mesh position={[cx, -.03, cz]} receiveShadow material={m.ground}><boxGeometry args={[w + 2 * GROUND, .06, d + 2 * GROUND]} /></mesh>
     <lineSegments geometry={grid} position={[0, GRID_Y, 0]}><lineBasicMaterial color="#2f5866" transparent opacity={.35} depthWrite={false} /></lineSegments>
+    <lineSegments geometry={edge} position={[0, GRID_Y, 0]}><lineBasicMaterial color="#5fb8cc" transparent opacity={.6} depthWrite={false} /></lineSegments>
     <InstancedParts parts={district.solid} geometry={BOX} material={m.solid} fades={fades} castShadow receiveShadow />
     <InstancedParts parts={parts.cylinders} geometry={ROUND} material={m.solid} fades={fades} castShadow receiveShadow />
     <InstancedParts parts={district.facade} geometry={BOX} material={m.facade} fades={fades} castShadow receiveShadow />

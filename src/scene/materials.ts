@@ -26,11 +26,17 @@ const fade: Step = m => {
   m.maskShadowNode = bool(true);
 };
 
-// Past the district's bounds the city sinks into the dark, so the ground and the ring never end at a hard edge.
+// The playable zone ends at the district's bounds. Past them the city is graded down, dimmer and nearly gray, so the
+// street the camera sees out there reads as backdrop, not ground the squad can take. The grade sets in over
+// OUT_OF_ZONE.edge meters at the bounds, where city.tsx outlines the zone. Further out the city sinks into the dark
+// (HORIZON, meters past the bounds), so the ground and the ring never end at a hard edge.
+const OUT_OF_ZONE = { dim: .45, saturation: .3, edge: .1 };
 const HORIZON = [7, 16];
-const horizon = (bounds: Node<'vec4'>): Step => m => {
-  const out = max(max(bounds.xy.sub(positionWorld.xz), positionWorld.xz.sub(bounds.zw)), 0);
-  m.outputNode = vec4(output.rgb.mul(smoothstep(HORIZON[0], HORIZON[1], length(out)).oneMinus()), output.a);
+const zone = (bounds: Node<'vec4'>): Step => m => {
+  const past = length(max(max(bounds.xy.sub(positionWorld.xz), positionWorld.xz.sub(bounds.zw)), 0));
+  const rgb = output.rgb, gray = vec3(dot(rgb, vec3(.2126, .7152, .0722)));
+  const graded = mix(rgb, mix(gray, rgb, OUT_OF_ZONE.saturation).mul(OUT_OF_ZONE.dim), smoothstep(0, OUT_OF_ZONE.edge, past));
+  m.outputNode = vec4(graded.mul(smoothstep(HORIZON[0], HORIZON[1], past).oneMinus()), output.a);
 };
 
 // Direct highlights stop at GLINT, keeping their hue, so a lit surface never reaches the bloom threshold
@@ -137,13 +143,13 @@ export function districtMaterials(atlas: Texture, signs: Texture, pool: Texture,
   const bounds = uniform(new Vector4());
   const materials = {
     bounds,
-    solid: build(new LitMaterial({ envMap: environment, envMapIntensity: .35 }), fade, surface, horizon(bounds)),
-    facade: build(new LitMaterial({ roughness: .82, metalness: .05, envMap: environment, envMapIntensity: .3 }), fade, horizon(bounds), facade(atlas, { window: 1.7, store: 1.7 })),
-    neon: build(new MeshBasicNodeMaterial(), fade, horizon(bounds)),
-    signs: build(new MeshBasicNodeMaterial(), fade, horizon(bounds), signRect(signs)),
-    pools: build(new MeshBasicNodeMaterial({ map: pool, transparent: true, depthWrite: false, blending: AdditiveBlending }), horizon(bounds)),
-    puddles: build(new LitMaterial({ alphaMap: puddle, transparent: true, depthWrite: false, roughness: .12, metalness: 1, envMapIntensity: 2.4, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }), horizon(bounds), wetReflection(environment)),
-    ground: build(new LitMaterial({ color: '#3b424c', roughness: .9, metalness: 0, envMap: environment, envMapIntensity: .3 }), horizon(bounds), asphalt(atlas)),
+    solid: build(new LitMaterial({ envMap: environment, envMapIntensity: .35 }), fade, surface, zone(bounds)),
+    facade: build(new LitMaterial({ roughness: .82, metalness: .05, envMap: environment, envMapIntensity: .3 }), fade, zone(bounds), facade(atlas, { window: 1.7, store: 1.7 })),
+    neon: build(new MeshBasicNodeMaterial(), fade, zone(bounds)),
+    signs: build(new MeshBasicNodeMaterial(), fade, zone(bounds), signRect(signs)),
+    pools: build(new MeshBasicNodeMaterial({ map: pool, transparent: true, depthWrite: false, blending: AdditiveBlending }), zone(bounds)),
+    puddles: build(new LitMaterial({ alphaMap: puddle, transparent: true, depthWrite: false, roughness: .12, metalness: 1, envMapIntensity: 2.4, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }), zone(bounds), wetReflection(environment)),
+    ground: build(new LitMaterial({ color: '#3b424c', roughness: .9, metalness: 0, envMap: environment, envMapIntensity: .3 }), zone(bounds), asphalt(atlas)),
   };
   return materials;
 }
