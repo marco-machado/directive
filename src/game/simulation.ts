@@ -1,7 +1,7 @@
 import { abilityCooldown, abilityPower, ABILITY_STATS, CLASS_STATS, effectScale, EMP_CAMERA_SECONDS, MARK_RADIUS, MARK_SECONDS } from './classes.ts';
 import type { AbilityId, ClassId } from './classes.ts';
-import { applyDismiss, applyPayout, applyPurchase, applyRecruit, dealBoard, freshCampaign, missionPayout, SQUAD_MAX } from './campaign.ts';
-import type { Campaign, Contract, Upgrade } from './campaign.ts';
+import { applyDismiss, applyLoadout, applyPayout, applyPurchase, applyRecruit, dealBoard, freshCampaign, missionPayout, parSeconds, SQUAD_MAX, unlockedCountermeasures } from './campaign.ts';
+import type { Badge, Campaign, Contract, Loadout, MissionReport, Upgrade } from './campaign.ts';
 import { planMission } from './mapgen.ts';
 import type { Area, EnemyKind, MissionPlan } from './mapgen.ts';
 import { mulberry32 } from './rng.ts';
@@ -48,13 +48,19 @@ export type AlarmCause = Point & { trigger: AlarmTrigger | null; hostile: EnemyK
 export type Snapshot = {
   phase: Phase; paused: boolean; selected: string[]; squad: string[]; squadPick: string[]; units: Unit[]; campaign: Campaign;
   contract: Contract | null; plan: MissionPlan | null; objectives: Objective[]; alarm: boolean; calmIn: number; reinforceIn: number; reinforced: number;
+  // How many alarms the mission has had, this alarm's reinforcement cap and stand-down time, and what the next alarm brings.
+  alarms: number; reinforceCap: number; calmFor: number; nextAlarm: Escalation;
   result: 'success' | 'failure' | null; failReason: string; payout: number; stealth: boolean; alarmCause: AlarmCause | null; time: number; message: string;
   saveUnavailable: boolean; syncing: boolean; pending: Pending; cover: Record<string, Shield>; milestones: Milestone[];
+  // The badges a won contract earned, and how many times an operative went down.
+  badges: Badge[]; downs: number;
+  // The Countermeasures level picked for (or fixed by) the mission, and the highest one open.
+  countermeasures: number; countermeasuresOpen: number;
 };
 // Reports campaign events to the server; the server answers through applyCampaign.
 export type CampaignSync = {
-  deployed(contractId: string, squad: string[]): void; completed(stealth: boolean): void;
-  bought(type: Upgrade): void; recruited(id: string): void; dismissed(id: string): void;
+  deployed(contractId: string, squad: string[], countermeasures: number): void; completed(report: MissionReport): void;
+  bought(type: Upgrade): void; equipped(loadout: Loadout): void; recruited(id: string): void; dismissed(id: string): void;
   picked(squad: string[]): void; // the briefing's squad pick, which stays in this browser
 };
 
@@ -92,13 +98,42 @@ export const FIRST_WAVE_SECONDS = 5; // the first reinforcement wave follows the
 export const REINFORCE_SECONDS = 20; // and later waves this far apart
 export const CALM_SECONDS = 25;     // the alarm stands down after this long without contact
 export const SEARCH_TURN = 1.5;     // a hunter at the last known position turns this fast (rad/s)
-export const REINFORCE_CAP = 8;
+export const REINFORCE_CAP = 8;     // reinforcements the first alarm of a mission can bring
+export const REPEAT_REINFORCEMENTS = 4; // each later alarm in the mission brings this many more
+export const CALM_STEP = 10;        // and takes this much longer to stand down
+// What a mission's `n`th alarm brings (n counts from 1; the first is the plain alarm): how many reinforcements the
+// mission can have had by its end (any an earlier alarm never sent still come), how many heavies lead each wave,
+// and how long the squad must stay out of contact for it to stand down.
+// Each alarm puts one more heavy at the head of its waves than the one before, until whole waves are heavies.
+export type Escalation = { cap: number; heavies: number; calm: number };
+export const escalation = (n: number, tier: number): Escalation =>
+  ({ cap: REINFORCE_CAP + REPEAT_REINFORCEMENTS * (n - 1), heavies: Math.min(n - 1, waveSize(tier)), calm: CALM_SECONDS + CALM_STEP * (n - 1) });
+// What each Countermeasures level does (see campaign.ts), each adding to the one before: hostiles notice intruders in
+// `detect` times the usual time, alarms take `calm` s longer to stand down, and with `uncapped` reinforcements never stop.
+export const COUNTERMEASURES = [
+  { detect: 1, calm: 0, uncapped: false },
+  { detect: .8, calm: 0, uncapped: false },
+  { detect: .8, calm: 15, uncapped: false },
+  { detect: .8, calm: 15, uncapped: true },
+] as const;
+// Reinforcements enter in waves of this many.
+export const waveSize = (tier: number) => tier >= 4 ? 3 : 2;
 export const REVIVE_SECONDS = 3;
 export const REVIVE_HP = .4;
 export const HACK_SECONDS = 12;
 export const PLANT_SECONDS = 3;
 export const COVER_FACTOR = .5;
-export const WEAPON_BONUS = 12, ARMOR_BONUS = 40;
+// What each gear level buys, by how the squad spends it (Campaign.loadout). At level 0 every mode is plain issue.
+export const PIERCING_BONUS = 4;       // damage a weapon level adds with piercing rounds
+export const SUPPRESSOR_STEP = .2;     // with suppressors, a hostile that survives a rifle hit gains 1 − this × level detection, not the alarm
+export const EXTENDED_RANGE = .6;      // m of rifle range a weapon level adds with extended barrels
+export const HEAVY_HP = 12;            // health an armor level adds with heavy plating
+export const LIGHT_CONCEALMENT = .15;  // with light weave, hostiles take 1 + this × level times as long to notice an operative
+export const gearDamage = (c: Campaign) => c.loadout.weapon === 'piercing' ? c.weapon * PIERCING_BONUS : 0;
+export const gearRange = (c: Campaign) => c.loadout.weapon === 'extended' ? c.weapon * EXTENDED_RANGE : 0;
+export const suppressedAlert = (c: Campaign) => c.loadout.weapon === 'suppressed' ? 1 - SUPPRESSOR_STEP * c.weapon : 1;
+export const gearHp = (c: Campaign) => c.loadout.armor === 'heavy' ? c.armor * HEAVY_HP : 0;
+export const concealment = (c: Campaign) => c.loadout.armor === 'light' ? 1 + LIGHT_CONCEALMENT * c.armor : 1;
 export const QUEUE_SPACING = .9;    // gap between operatives, side by side or in single file
 export const ROUTE_MAX = 8;         // waypoints an operative's route can hold, the one it is walking to included
 export const WAIT_STEP = 2;         // each wait order adds this many seconds at the last waypoint
@@ -127,6 +162,8 @@ const hashed = (seed: number, id: string, n: number) => {
 };
 // How the debrief names each objective as a landmark (charges carry their letter from the label).
 const LANDMARK: Record<Objective['kind'], string> = { target: 'the target', terminal: 'the vault terminal', charge: 'a charge site', vip: 'the VIP', extract: 'extraction' };
+// Reinforcements are numbered r0, r1, … as they enter (see reinforce); the district's own hostiles are h0, h1, ….
+export const isReinforcement = (u: Pick<Unit, 'id' | 'faction'>) => u.faction === 'hostile' && /^r\d+$/.test(u.id);
 const takedownable = (u: Unit) => u.kind === 'guard' || u.kind === 'heavy' || u.kind === 'target';
 export const posted = (u: Pick<Unit, 'kind' | 'patrol'>) => (u.kind === 'guard' || u.kind === 'heavy') && u.patrol.length < 2;
 const headingTo = (a: Point, b: Point) => Math.atan2(b.x - a.x, b.z - a.z);
@@ -154,7 +191,8 @@ export function watchedBy(world: World, v: Pick<Unit, 'x' | 'z' | 'kind' | 'head
 }
 // What an attack order would do with the current selection: a takedown by the listed operatives, a volley that kills
 // silently, one that leaves the hostile alive and raises the alarm, or (during the alarm) just a volley.
-export type AttackPreview = { outcome: 'takedown' | 'kill' | 'alert' | 'volley'; takedown: string[]; damage: number; hp: number; short: number };
+// With suppressed rifles, a volley that leaves the hostile alive can turn it suspicious instead of raising the alarm.
+export type AttackPreview = { outcome: 'takedown' | 'kill' | 'suspicious' | 'alert' | 'volley'; takedown: string[]; damage: number; hp: number; short: number };
 
 export class Simulation {
   campaign: Campaign;
@@ -186,18 +224,25 @@ export class Simulation {
   commandPoint: Point | null = null;
   pending: Pending = null;
   autoPause = false; // pause the first time each hostile turns suspicious
+  countermeasures = 0; // the Countermeasures level picked on the board; begin() fixes it for the mission
   // Fog-of-war memory, by hostile id: the last sighting of each hostile now out of sight, and the full patrol
   // route of each guard the squad has watched finish a leg. Both are replaced with each mission.
   lastSeen = new Map<string, Sighting>();
   intel = new Map<string, Point[]>();
   milestones: Milestone[] = [];
   private reinforced = 0;
+  private badges: Badge[] = [];
+  private downs = 0;
+  private alarms = 0;
+  private reinforceCap = REINFORCE_CAP;
+  private calmFor = CALM_SECONDS;
+  private waves = 0; // waves the current alarm has sent
   private vipJoined = false;
   private vipThreat: Point | null = null; // where the last shot at the VIP came from
   private lastKnown: Point | null = null;
   private holdup = '';
   private casts: { unitId: string; ability: AbilityId; point: Point; targetId: string | null }[] = [];
-  private hitThisFrame = new Map<Unit, Unit | null>(); // hostiles hit this frame, and by whom
+  private hitThisFrame = new Map<Unit, { by: Unit | null; rifle: boolean }>(); // hostiles hit this frame, by whom, and whether only by the squad's rifles
   private volleyReady = new Set<Unit>();
   private autoPaused = new Set<string>();
   private rng: Rng = Math.random;
@@ -217,8 +262,9 @@ export class Simulation {
       phase: this.phase, paused: this.paused, selected: [...this.selected], squad: [...this.squad], squadPick: [...this.squadPick],
       units: this.units.map(u => ({ ...u })), campaign: this.campaign, contract: this.contract, plan: this.plan,
       objectives: this.objectives.map(o => ({ ...o })), alarm: this.alarm, calmIn: this.calmIn, reinforceIn: this.reinforceIn, reinforced: this.reinforced, result: this.result,
+      alarms: this.alarms, reinforceCap: this.reinforceCap, calmFor: this.calmFor, nextAlarm: this.escalate(this.alarms + 1),
       failReason: this.failReason, payout: this.payout, stealth: !this.detected, alarmCause: this.alarmCause, time: this.time, message: this.message,
-      saveUnavailable: this.saveUnavailable, syncing: this.syncing, pending: this.pending,
+      saveUnavailable: this.saveUnavailable, syncing: this.syncing, pending: this.pending, badges: this.badges, downs: this.downs, countermeasures: this.countermeasures, countermeasuresOpen: unlockedCountermeasures(this.campaign),
       milestones: this.milestones,
       cover: Object.fromEntries(this.phase === 'mission' && this.plan ? this.livingSquad().map(u => [u.id, this.coverStatus(u).shield]) : []),
     };
@@ -236,7 +282,12 @@ export class Simulation {
     const keep = offers.find(o => o.id === this.contract?.id);
     this.squadPick = this.squadPick.filter(id => this.campaign.roster.some(o => o.id === id));
     if (!this.squadPick.length) this.squadPick = this.campaign.roster.slice(0, SQUAD_MAX).map(o => o.id);
+    this.countermeasures = Math.min(this.countermeasures, unlockedCountermeasures(this.campaign));
     if (this.phase === 'briefing') this.preview(keep ?? offers[0] ?? null);
+  }
+  chooseCountermeasures(level: number) {
+    if (this.phase === 'mission' || level < 0 || level > unlockedCountermeasures(this.campaign)) return;
+    this.countermeasures = level; this.emit();
   }
   private preview(contract: Contract | null) {
     if (contract && contract.id === this.contract?.id && this.plan) return;
@@ -267,6 +318,7 @@ export class Simulation {
   }
   openBoard = () => { if (this.phase !== 'headquarters') return; this.phase = 'briefing'; this.result = null; this.contract = null; this.refreshBoard(); this.emit(); };
   buy(type: Upgrade): boolean { return this.trade(applyPurchase(this.campaign, type), s => s.bought(type)); }
+  equip(loadout: Loadout): boolean { return this.trade(applyLoadout(this.campaign, loadout), s => s.equipped(loadout)); }
   recruit(id: string): boolean { return this.trade(applyRecruit(this.campaign, id), s => s.recruited(id)); }
   dismiss(id: string): boolean {
     const ok = this.trade(applyDismiss(this.campaign, id), s => s.dismissed(id));
@@ -290,14 +342,14 @@ export class Simulation {
     const plan = this.plan;
     this.units = []; this.objectives = []; this.shots = []; this.blasts = []; this.casts = []; this.hitThisFrame.clear(); this.volleyReady.clear(); this.autoPaused.clear();
     this.alarm = false; this.detected = false; this.alarmCause = null; this.calmIn = 0; this.lastKnown = null; this.lastSeen = new Map(); this.intel = new Map(); this.milestones = [];
-    this.reinforceIn = 0; this.reinforced = 0; this.vipJoined = false; this.vipThreat = null; this.holdup = ''; this.pending = null; this.commandPoint = null;
+    this.reinforceIn = 0; this.reinforced = 0; this.badges = []; this.downs = 0; this.alarms = 0; this.reinforceCap = REINFORCE_CAP; this.calmFor = CALM_SECONDS; this.waves = 0; this.vipJoined = false; this.vipThreat = null; this.holdup = ''; this.pending = null; this.commandPoint = null;
     this.targetArea = plan?.targetArea ? { ...plan.targetArea } : null;
     if (!plan) { this.squad = []; this.selected = []; return; }
     this.rng = mulberry32(plan.contract.seed ^ 0x5bd1e995);
     this.squad = this.squadPick.filter(id => this.campaign.roster.some(o => o.id === id));
     this.squad.forEach((id, i) => {
       const op = this.campaign.roster.find(o => o.id === id)!, stats = CLASS_STATS[op.cls];
-      const u = this.makeUnit(id, op.name, op.cls, 'squad', plan.spawn[i % plan.spawn.length], stats.hp + this.campaign.armor * ARMOR_BONUS, headingTo(plan.extract, { x: 0, z: 0 }));
+      const u = this.makeUnit(id, op.name, op.cls, 'squad', plan.spawn[i % plan.spawn.length], stats.hp + gearHp(this.campaign), headingTo(plan.extract, { x: 0, z: 0 }));
       u.ability = stats.ability; this.units.push(u);
     });
     plan.enemies.forEach((e, i) => {
@@ -330,7 +382,7 @@ export class Simulation {
     this.phase = 'mission'; this.result = null; this.failReason = ''; this.payout = 0; this.paused = false; this.time = 0;
     this.resetUnits();
     this.message = `Squad deployed. ${this.objectives[0].label}.`;
-    this.report(s => s.deployed(contract.id, [...this.squad])); this.emit();
+    this.report(s => s.deployed(contract.id, [...this.squad], this.countermeasures)); this.emit();
   }
 
   // ---- Orders ----
@@ -418,13 +470,14 @@ export class Simulation {
   // An unaware guard, heavy or target that the selection's volley would not kill gets a takedown instead:
   // the nearest operative (two for a heavy) circles out of its sight and finishes it up close.
   // Otherwise every selected operative closes in and, before the alarm, they fire together.
-  private firepower(u: Unit) { return CLASS_STATS[u.kind as ClassId].damage + this.campaign.weapon * WEAPON_BONUS; }
+  private firepower(u: Unit) { return CLASS_STATS[u.kind as ClassId].damage + gearDamage(this.campaign); }
   private attackPlan(target: Unit, units: Unit[]) {
     const world = this.plan!.world;
     const damage = units.reduce((sum, u) => sum + this.firepower(u) * (world.coverBetween(u, target) ? COVER_FACTOR : 1), 0), kills = damage >= target.hp;
     const quiet = !this.alarm && target.detect < SUSPICIOUS && takedownable(target) && !kills, need = target.kind === 'heavy' ? 2 : 1;
     const takedown = quiet && units.length >= need ? [...units].sort((a, b) => distance(a, target) - distance(b, target)).slice(0, need) : [];
-    return { takedown, short: quiet && units.length < need ? need : 0, damage: Math.round(damage), hp: Math.ceil(target.hp), alerts: !this.alarm && !kills };
+    const survives = !this.alarm && !kills, alerts = survives && target.detect + suppressedAlert(this.campaign) >= 1;
+    return { takedown, short: quiet && units.length < need ? need : 0, damage: Math.round(damage), hp: Math.ceil(target.hp), alerts, suspicious: survives && !alerts };
   }
   private attackable(id: string) {
     const target = this.unit(id), units = this.orderable();
@@ -434,14 +487,16 @@ export class Simulation {
   attackPreview(id: string): AttackPreview | null {
     const order = this.attackable(id); if (!order) return null;
     const p = this.attackPlan(order.target, order.units);
-    const outcome = p.takedown.length ? 'takedown' : this.alarm ? 'volley' : p.alerts ? 'alert' : 'kill';
+    const outcome = p.takedown.length ? 'takedown' : this.alarm ? 'volley' : p.alerts ? 'alert' : p.suspicious ? 'suspicious' : 'kill';
     return { outcome, takedown: p.takedown.map(u => u.id), damage: p.damage, hp: p.hp, short: p.short };
   }
   // The hover hint for a preview: "Takedown · ROOK" or "48 / 75 · will alert".
   describeAttack(p: AttackPreview): string {
     if (p.outcome === 'takedown') return `Takedown · ${p.takedown.map(id => this.unit(id)?.name).join(' + ')}`;
     const volley = `${p.damage} / ${p.hp}`;
-    return p.outcome === 'volley' ? volley : `${volley} · ${p.outcome === 'alert' ? 'will alert' : 'silent kill'}${p.short ? ` · takedown needs ${p.short}` : ''}`;
+    if (p.outcome === 'volley') return volley;
+    const effect = p.outcome === 'alert' ? 'will alert' : p.outcome === 'suspicious' ? 'turns suspicious' : 'silent kill';
+    return `${volley} · ${effect}${p.short ? ` · takedown needs ${p.short}` : ''}`;
   }
   attackHint(id: string): string | null {
     const p = this.attackPreview(id);
@@ -557,7 +612,10 @@ export class Simulation {
     // A fresh trigger during the alarm only restarts the stand-down countdown.
     this.contact(null);
     if (this.alarm) return;
-    this.alarm = true; this.detected = true; this.reach('alarm'); this.reinforceIn = this.reinforced ? REINFORCE_SECONDS : FIRST_WAVE_SECONDS; this.calmIn = CALM_SECONDS;
+    this.alarm = true; this.detected = true; this.reach('alarm');
+    // Every alarm sends its first wave as quickly; a later one sends more, and takes longer to stand down.
+    const e = this.escalate(++this.alarms);
+    this.reinforceCap = e.cap; this.calmFor = this.calmIn = e.calm; this.waves = 0; this.reinforceIn = FIRST_WAVE_SECONDS;
     const known = seen ?? at; this.lastKnown = { x: known.x, z: known.z };
     this.alarmCause ??= { x: known.x, z: known.z, trigger: cause.trigger ?? null, hostile: (cause.by?.kind as EnemyKind | undefined) ?? null, operative: cause.culprit?.name ?? null, near: this.landmarkNear(known), at: this.time };
     for (const u of this.units) {
@@ -582,7 +640,7 @@ export class Simulation {
   // While alarmed, anything that gives the squad away restarts the countdown; a sighting or gunfire also updates where hunters search.
   private contact(seen: Point | null) {
     if (!this.alarm) return;
-    this.calmIn = CALM_SECONDS;
+    this.calmIn = this.calmFor;
     if (seen) this.lastKnown = { x: seen.x, z: seen.z };
   }
   private standDown() {
@@ -590,7 +648,13 @@ export class Simulation {
     // A fleeing target keeps running for its exit.
     // A posted guard that left its post to hunt keeps watch where it ends up.
     for (const u of this.units) if (u.faction === 'hostile' && u.hp > 0) { if (u.hunting && posted(u)) u.sweep = u.heading; u.detect = 0; u.hunting = false; if (!u.exit) u.path = []; }
-    this.message = 'Contact lost. Alarm standing down. Holding fire.';
+    const next = this.escalate(this.alarms + 1), more = Number.isFinite(next.cap) ? `${REPEAT_REINFORCEMENTS} more reinforcements` : 'reinforcements without end';
+    this.message = `Contact lost. Alarm standing down. Holding fire. Next alarm: ${more}, ${next.heavies} ${next.heavies === 1 ? 'heavy' : 'heavies'} leading each wave, ${next.calm} s to stand down.`;
+  }
+  // A mission's `n`th alarm, as its Countermeasures level hardens it.
+  private escalate(n: number): Escalation {
+    const e = escalation(n, this.plan?.contract.tier ?? 1), cm = COUNTERMEASURES[this.countermeasures];
+    return { ...e, calm: e.calm + cm.calm, cap: cm.uncapped ? Infinity : e.cap };
   }
   // With auto-pause on, the first time a hostile turns suspicious pauses the mission so the player can react.
   private suspicious(u: Unit) {
@@ -598,20 +662,21 @@ export class Simulation {
     this.autoPaused.add(u.id); this.paused = true;
     this.message = `${u.name} is suspicious. Auto-paused.`;
   }
-  private damage(target: Unit, amount: number, from: Unit | null) {
+  // `rifle`: a squad rifle round, which suppressors quieten (sniper shots and grenades are never quiet).
+  private damage(target: Unit, amount: number, from: Unit | null, rifle = false) {
     if (target.hp <= 0) return;
     const covered = from && this.plan?.world.coverBetween(from, target);
     if (target.faction === 'vip') { amount *= VIP_DAMAGE_TAKEN; if (from) this.vipThreat = { x: from.x, z: from.z }; }
     target.hp = Math.max(0, target.hp - amount * (covered ? COVER_FACTOR : 1));
-    if (target.faction === 'hostile') this.hitThisFrame.set(target, from);
+    if (target.faction === 'hostile') this.hitThisFrame.set(target, { by: from, rifle: rifle && (this.hitThisFrame.get(target)?.rifle ?? true) });
     else {
       target.hurt = 1.5; target.revive = 0;
       // A downed operative drops its orders; once revived it stays where it fell.
-      if (target.hp <= 0) { target.path = []; this.clearOrders(target); if (target.faction === 'squad') { this.reach('downed'); this.message = `${target.name} is down.`; } }
+      if (target.hp <= 0) { target.path = []; this.clearOrders(target); if (target.faction === 'squad') { this.reach('downed'); this.downs++; this.message = `${target.name} is down.`; } }
     }
   }
   private shoot(from: Unit, to: Unit, amount: number, kind: Shot['kind'] = 'bullet') {
-    this.damage(to, amount, from);
+    this.damage(to, amount, from, kind === 'bullet' && from.faction === 'squad');
     this.contact(from.faction === 'hostile' ? to : from);
     this.shots.push({ id: this.nextId++, from: { x: from.x, z: from.z }, to: { x: to.x, z: to.z }, faction: from.faction, shooter: from.kind, kind, ttl: kind === 'snipe' ? .35 : .12 });
   }
@@ -644,11 +709,21 @@ export class Simulation {
     if (this.phase !== 'mission' || !this.contract) return;
     this.phase = 'headquarters'; this.result = success ? 'success' : 'failure'; this.failReason = reason; this.pending = null;
     if (success) {
-      const stealth = !this.detected;
-      this.payout = missionPayout(this.contract, stealth);
-      this.campaign = applyPayout(this.campaign, this.contract, stealth, Math.random); this.report(s => s.completed(stealth));
+      const report = { stealth: !this.detected, badges: this.earnedBadges() };
+      this.badges = report.badges; this.payout = missionPayout(this.contract, report.stealth);
+      this.campaign = applyPayout(this.campaign, this.contract, this.countermeasures, report, Math.random); this.report(s => s.completed(report));
     }
     this.emit();
+  }
+  // The badges a won contract earns (see Badge in campaign.ts). Purge counts the hostiles the district started with, not
+  // reinforcements, which an alarm can keep sending.
+  private earnedBadges(): Badge[] {
+    const c = this.contract!, hostiles = this.units.filter(u => u.faction === 'hostile'), district = hostiles.filter(u => !isReinforcement(u));
+    const earned: Record<Badge, boolean> = {
+      ghost: !this.detected, untouched: !this.downs, swift: this.time <= parSeconds(c.type, c.tier),
+      bloodless: hostiles.every(u => u.hp > 0 || u.kind === 'target'), purge: district.length > 0 && district.every(u => u.hp <= 0),
+    };
+    return (Object.keys(earned) as Badge[]).filter(b => earned[b]);
   }
   private intruders() { return this.units.filter(u => u.hp > 0 && (u.faction === 'squad' || (u.faction === 'vip' && this.vipJoined))); }
   private walk(u: Unit, speed: number, dt: number) {
@@ -687,7 +762,8 @@ export class Simulation {
     if (this.alarm) { if (seen) this.contact(seen); }
     else if (seen) {
       const was = u.detect;
-      u.detect = Math.min(1, u.detect + dt / detectSeconds(u.kind as EnemyKind, distance(u, seen)));
+      const time = detectSeconds(u.kind as EnemyKind, distance(u, seen)) * (seen.faction === 'squad' ? concealment(this.campaign) : 1) * COUNTERMEASURES[this.countermeasures].detect;
+      u.detect = Math.min(1, u.detect + dt / time);
       if (u.detect >= 1) { this.raiseAlarm(u, `${stats.name} spotted the squad`, seen, { trigger: 'sighting', by: u, culprit: seen }); return; }
       if (was <= SUSPICIOUS && u.detect > SUSPICIOUS) { this.reach('suspicious'); this.suspicious(u); }
     } else u.detect = Math.max(0, u.detect - DETECT_DRAIN * dt);
@@ -775,7 +851,7 @@ export class Simulation {
       } else if (!u.path.length) u.path = world.findPath(u, down);
     }
     if (u.takedownId && this.closeIn(u, dt)) return;
-    const canHit = (v: Unit) => v.visible && distance(u, v) <= stats.range && world.sightClear(u, v);
+    const canHit = (v: Unit) => v.visible && distance(u, v) <= stats.range + gearRange(this.campaign) && world.sightClear(u, v);
     const ordered = hostiles.find(v => v.id === u.targetId);
     if (!ordered) u.targetId = null;
     else if (!canHit(ordered) && !u.path.length) { u.repath -= dt; if (u.repath <= 0) { u.repath = .75; u.path = world.findPath(u, ordered); } }
@@ -959,20 +1035,21 @@ export class Simulation {
     this.holdup = holdup;
   }
   private reinforce(dt: number) {
-    if (!this.alarm || this.reinforced >= REINFORCE_CAP || !this.plan) return;
+    if (!this.alarm || this.reinforced >= this.reinforceCap || !this.plan) return;
     this.reinforceIn -= dt;
     if (this.reinforceIn > 0) return;
     this.reinforceIn = REINFORCE_SECONDS;
-    // The first wave flanks: it enters at the exit nearest extraction, between the squad and its way out.
-    const exits = this.plan.exits, extract = this.plan.extract;
-    const exit = this.reinforced ? exits[Math.floor(this.rng() * exits.length)] : exits.reduce((a, b) => distance(b, extract) < distance(a, extract) ? b : a);
-    const count = Math.min(this.plan.contract.tier >= 4 ? 3 : 2, REINFORCE_CAP - this.reinforced);
+    // An alarm's first wave flanks: it enters at the exit nearest extraction, between the squad and its way out.
+    const exits = this.plan.exits, extract = this.plan.extract, tier = this.plan.contract.tier;
+    const exit = this.waves++ ? exits[Math.floor(this.rng() * exits.length)] : exits.reduce((a, b) => distance(b, extract) < distance(a, extract) ? b : a);
+    const count = Math.min(waveSize(tier), this.reinforceCap - this.reinforced), heavies = this.escalate(this.alarms).heavies;
     for (let k = 0; k < count; k++) {
-      const u = this.makeUnit(`r${this.reinforced++}`, 'SECURITY', 'guard', 'hostile', { x: exit.x + (k - 1) * .6, z: exit.z }, Math.round(HOSTILE_STATS.guard.hp * tierHp(this.plan.contract.tier)));
+      const kind = k < heavies ? 'heavy' : 'guard', stats = HOSTILE_STATS[kind];
+      const u = this.makeUnit(`r${this.reinforced++}`, stats.name, kind, 'hostile', { x: exit.x + (k - 1) * .6, z: exit.z }, Math.round(stats.hp * tierHp(tier)));
       if (!this.plan.world.walkable(u)) { u.x = exit.x; u.z = exit.z; }
       u.hunting = true; u.detect = 1; this.units.push(u);
     }
-    this.message = `Reinforcements entering the district (${this.reinforced}/${REINFORCE_CAP}).`;
+    this.message = `Reinforcements entering the district (${this.reinforced}${Number.isFinite(this.reinforceCap) ? `/${this.reinforceCap}` : ''}).`;
   }
 
   update(dt: number) {
@@ -991,7 +1068,16 @@ export class Simulation {
     this.fireVolleys();
     this.resolveTakedowns(dt);
     // A volley that kills its target stays quiet; any hostile left standing after being hit raises the alarm.
-    for (const [u, by] of this.hitThisFrame) if (u.hp > 0) { this.raiseAlarm(u, `${u.name} returned fire`, undefined, { trigger: 'gunfire', by: u, culprit: by ?? undefined }); break; }
+    // With suppressed rifles a survivor only grows more suspicious, until that tips it into the alarm.
+    for (const [u, hit] of this.hitThisFrame) {
+      if (u.hp <= 0) continue;
+      const jump = hit.rifle ? suppressedAlert(this.campaign) : 1;
+      if (this.alarm || u.detect + jump >= 1) { this.raiseAlarm(u, `${u.name} returned fire`, undefined, { trigger: 'gunfire', by: u, culprit: hit.by ?? undefined }); break; }
+      const was = u.detect;
+      u.detect += jump;
+      if (was <= SUSPICIOUS && u.detect > SUSPICIOUS) { this.reach('suspicious'); this.suspicious(u); }
+      this.message = `${u.name} hit and suspicious.`;
+    }
     for (const u of this.units) if (u.faction === 'hostile' && u.hp <= 0) { u.path = []; u.moving = false; }
     const squad = this.livingSquad();
     const vip = this.unit('vip');

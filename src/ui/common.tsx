@@ -1,13 +1,14 @@
 import { Component, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { CSSProperties, ErrorInfo, FormEvent, ReactNode, RefObject } from 'react';
 import { client, sim } from '../app.ts';
-import { MAX_TIER, nextUnlock, topTier } from '../game/campaign.ts';
-import type { Campaign, ContractType, Operative } from '../game/campaign.ts';
+import { BADGE_POINTS, BADGES, CONTRACT_POINTS, MAX_TIER, nextUnlock, OPENING_CONTRACTS, parSeconds, topTier } from '../game/campaign.ts';
+import type { Badge, Campaign, Contract, ContractType, Operative } from '../game/campaign.ts';
 import { ABILITY_STATS, CLASS_STATS } from '../game/classes.ts';
 import { formatSaveCode, normalizeSaveCode } from '../game/saveCode.ts';
-import { HACK_SECONDS, VIP_SECURE_SECONDS } from '../game/simulation.ts';
+import { COUNTERMEASURES, HACK_SECONDS, VIP_SECURE_SECONDS } from '../game/simulation.ts';
 import { ApiError, fetchCampaign, rememberSaveCode } from '../net/campaignClient.ts';
 import { Icon, Portrait } from './icons.tsx';
+import type { IconName } from './icons.tsx';
 import { sound } from './audio.ts';
 
 export const CONTRACTS: Record<ContractType, { title: string; brief: string }> = {
@@ -16,6 +17,23 @@ export const CONTRACTS: Record<ContractType, { title: string; brief: string }> =
   sabotage: { title: 'Sabotage', brief: 'Plant a charge at every site, then extract.' },
   escort: { title: 'Escort', brief: `Stay beside the VIP for ${VIP_SECURE_SECONDS} seconds to free them, then escort them to extraction. Under fire, the VIP ducks behind cover near the squad; if they die, the contract fails.` },
 };
+// What each badge is called, its icon, and what earns it on a contract (its district holding `hostiles` hostiles).
+export const BADGE_COPY: Record<Badge, { title: string; icon: IconName; goal: (c: Contract, hostiles: number) => string }> = {
+  ghost: { title: 'Ghost', icon: 'eye', goal: () => 'Never raise the alarm' },
+  untouched: { title: 'Untouched', icon: 'cover', goal: () => 'No operative goes down' },
+  swift: { title: 'Swift', icon: 'clock', goal: c => `Extract within ${clock(parSeconds(c.type, c.tier))}` },
+  bloodless: { title: 'Bloodless', icon: 'heal', goal: c => c.type === 'assassination' ? 'Kill no one but the target' : 'Kill no one' },
+  purge: { title: 'Purge', icon: 'kills', goal: (_, n) => `Down all ${n} hostile${n === 1 ? '' : 's'} in the district` },
+};
+// Countermeasures levels by name, and what a level does (each adds to the ones below it).
+export const CM_LEVEL = ['Off', 'I', 'II', 'III'];
+export function countermeasuresEffect(level: number) {
+  const cm = COUNTERMEASURES[level], parts: string[] = [];
+  if (cm.detect < 1) parts.push(`hostiles notice the squad ${Math.round((1 / cm.detect - 1) * 100)}% faster`);
+  if (cm.calm) parts.push(`alarms take ${cm.calm} s longer to stand down`);
+  if (cm.uncapped) parts.push('reinforcements never stop');
+  return parts.length ? `${parts.join(', ')}.`.replace(/^./, c => c.toUpperCase()) : 'Standard district security.';
+}
 export const pad = (n: number) => String(n).padStart(2, '0');
 export const clock = (seconds: number) => `${pad(Math.floor(seconds / 60))}:${pad(Math.floor(seconds % 60))}`;
 export const secs = (n: number) => `${Number(n.toFixed(1))} s`;
@@ -30,17 +48,19 @@ export const Credits = ({ value, className }: { value: number; className?: strin
 export const Pips = ({ value, max, label, className = '' }: { value: number; max: number; label: string; className?: string }) =>
   <span className={`pips ${className}`} role="img" aria-label={`${label} ${value} of ${max}`}>{Array.from({ length: max }, (_, i) => <i className={value > i ? 'on' : ''} key={i} />)}</span>;
 
-// Tier progression. Boards are dealt at each deployment from the completed count, so a tier unlocked by a
-// contract reaches the board dealt at the next deployment, not the one already on display. `short` trims the copy to one line for the board.
-export function Clearance({ campaign, justCompleted = false, short = false, className = '' }: { campaign: Campaign; justCompleted?: boolean; short?: boolean; className?: string }) {
-  const done = campaign.completed, top = topTier(done), next = nextUnlock(done);
-  const onBoard = Math.max(0, ...campaign.offers.map(o => o.tier)), unlocked = justCompleted && done > 0 && top > topTier(done - 1);
-  const left = next ? `${next.after} more contract${next.after === 1 ? '' : 's'}` : '';
+// Tier progression. Boards are dealt at each deployment from the campaign's clearance, so a tier unlocked by a contract
+// reaches the board dealt at the next deployment, not the one already on display. `earned` holds the badges of a contract
+// just completed (null otherwise); `short` trims the copy to one line for the board.
+export function Clearance({ campaign, earned = null, short = false, className = '' }: { campaign: Campaign; earned?: Badge[] | null; short?: boolean; className?: string }) {
+  const top = topTier(campaign), next = nextUnlock(campaign), opening = campaign.completed < OPENING_CONTRACTS;
+  const before = earned && { completed: campaign.completed - 1, badges: Object.fromEntries(BADGES.map(b => [b, campaign.badges[b] - (earned.includes(b) ? 1 : 0)])) as Record<Badge, number> };
+  const onBoard = Math.max(0, ...campaign.offers.map(o => o.tier)), unlocked = !!before && before.completed >= 0 && top > topTier(before);
+  const left = !next ? '' : opening ? `${next.contracts} more contract${next.contracts === 1 ? '' : 's'}` : `${next.points} more clearance point${next.points === 1 ? '' : 's'}`;
   return <section className={`clearance ${className}`} style={threat(top)} aria-label="Clearance">
     <header><small>Clearance</small><strong>Tier {top}</strong><Pips value={top} max={MAX_TIER} label="Clearance tier" />{unlocked ? <b className="clearance-new">Unlocked</b> : null}</header>
     {short ? <p>{top > onBoard ? `Tier ${top} joins the next board.` : next ? `Tier ${next.tier} after ${left}.` : 'Every tier is open.'}</p>
       : <p>{top > onBoard ? `Tier ${top} offers join the board dealt at your next deployment.` : `Offers up to Tier ${top}.`}
-        {' '}{next ? `Tier ${next.tier} unlocks after ${left}.` : 'Every tier is open.'}</p>}
+        {' '}{next ? `Tier ${next.tier} unlocks after ${left}${opening ? '' : `: a contract earns ${CONTRACT_POINTS}, each badge ${BADGE_POINTS}`}.` : 'Every tier is open.'}</p>}
     {next ? <span className="clearance-meter" role="progressbar" aria-label={`Progress to Tier ${next.tier}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(next.progress * 100)}><i style={{ width: `${next.progress * 100}%` }} /></span> : null}
   </section>;
 }

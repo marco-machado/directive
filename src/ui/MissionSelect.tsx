@@ -1,12 +1,12 @@
 import { useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import { sim } from '../app.ts';
-import { MAX_TIER, missionPayout, SQUAD_MAX, threatFor } from '../game/campaign.ts';
+import { BADGES, MAX_COUNTERMEASURES, MAX_TIER, missionPayout, parSeconds, SQUAD_MAX, threatFor } from '../game/campaign.ts';
 import { ABILITY_STATS, CLASS_STATS } from '../game/classes.ts';
 import type { Threat } from '../game/campaign.ts';
 import type { EnemyKind } from '../game/mapgen.ts';
 import type { Snapshot } from '../game/simulation.ts';
-import { Clearance, CONTRACTS, Credits, pad, Pips, SaveWarning, threat, useScrollEdges } from './common.tsx';
+import { BADGE_COPY, Clearance, clock, CM_LEVEL, CONTRACTS, countermeasuresEffect, Credits, pad, Pips, SaveWarning, threat, useScrollEdges } from './common.tsx';
 import { Icon, Portrait } from './icons.tsx';
 import type { IconName } from './icons.tsx';
 
@@ -34,7 +34,7 @@ export function MissionSelect({ state, titleRef, onChoose, onDeploy, onRecenter,
           return <button key={c.id} className={`offer${on ? ' selected' : ''}`} aria-pressed={on} style={threat(c.tier)} onClick={() => onChoose(c.id)}>
             <span className="offer-icon"><Icon name={c.type} /></span>
             <span className="offer-copy"><strong>{CONTRACTS[c.type].title}</strong><small>Sector {pad(c.sector)} · {c.district}</small><ThreatRead level={threatFor(campaign, c.tier)} /></span>
-            <span className="offer-side"><Credits value={c.payout} /><span className="offer-tier">T{c.tier}<Pips value={c.tier} max={MAX_TIER} label="Threat tier" /></span></span>
+            <span className="offer-side"><Credits value={c.payout} /><span className="offer-tier">T{c.tier}<Pips value={c.tier} max={MAX_TIER} label="Threat tier" /></span><small className="offer-par">Par {clock(parSeconds(c.type, c.tier))}</small></span>
           </button>;
         })}</div>
         {campaign.offers.length ? null : <p className="empty-note">No contracts on the board.</p>}
@@ -55,6 +55,11 @@ export function MissionSelect({ state, titleRef, onChoose, onDeploy, onRecenter,
           <ThreatRead level={threatFor(campaign, contract.tier)} />
           <h3>{CONTRACTS[contract.type].title}</h3>
           <p className="brief-copy">{CONTRACTS[contract.type].brief}</p>
+          {state.countermeasuresOpen ? <div className="countermeasures">
+            <div className="cm-head"><small>Countermeasures</small><div className="cm-levels" role="group" aria-label="Countermeasures level">{CM_LEVEL.map((name, level) =>
+              <button key={name} className="btn ghost small" aria-pressed={state.countermeasures === level} disabled={level > state.countermeasuresOpen} onClick={() => sim.chooseCountermeasures(level)}>{name}</button>)}</div></div>
+            <p>{countermeasuresEffect(state.countermeasures)}{state.countermeasures && state.countermeasures === state.countermeasuresOpen && state.countermeasures < MAX_COUNTERMEASURES ? ` Win with a badge to open ${CM_LEVEL[state.countermeasures + 1]}.` : ''}</p>
+          </div> : null}
           {/* Shown instead of the details when the panel is short; see the "brief" container query. */}
           <div className="brief-summary">
             <span>{objectives.length} objective{objectives.length === 1 ? '' : 's'} · {hostiles} hostile{hostiles === 1 ? '' : 's'} · <Credits value={contract.payout} /></span>
@@ -70,6 +75,8 @@ export function MissionSelect({ state, titleRef, onChoose, onDeploy, onRecenter,
               <div><small>Payout</small><Credits value={contract.payout} /></div>
               <div className="bonus"><small>No alarm</small><Credits value={missionPayout(contract, true)} /></div>
             </div>
+            <ul className="brief-badges" aria-label="Badges">{BADGES.map(b => <li key={b}><Icon name={BADGE_COPY[b].icon} /><b>{BADGE_COPY[b].title}</b><span>{BADGE_COPY[b].goal(contract, hostiles)}</span></li>)}</ul>
+            <p className="brief-note">Each badge counts half a contract toward clearance.</p>
           </div>
         </div> : null}
         <i className="scroll-fade bottom" aria-hidden="true" />
@@ -93,7 +100,7 @@ export function MissionSelect({ state, titleRef, onChoose, onDeploy, onRecenter,
         </fieldset>
         {state.saveUnavailable ? <SaveWarning /> : null}
         <button className="btn primary deploy" onClick={onDeploy} disabled={deployBlocked || !contract}>
-          <span className="deploy-copy"><strong>{connecting ? 'Connecting…' : state.syncing ? 'Saving…' : 'Deploy squad'}</strong><small>{squadPick.length} operative{squadPick.length === 1 ? '' : 's'}{contract ? ` · ${CONTRACTS[contract.type].title} · Tier ${contract.tier}` : ''}</small></span>
+          <span className="deploy-copy"><strong>{connecting ? 'Connecting…' : state.syncing ? 'Saving…' : 'Deploy squad'}</strong><small>{squadPick.length} operative{squadPick.length === 1 ? '' : 's'}{contract ? ` · ${CONTRACTS[contract.type].title} · Tier ${contract.tier}` : ''}{state.countermeasures ? ` · CM ${CM_LEVEL[state.countermeasures]}` : ''}</small></span>
           <Icon name="arrow" />
         </button>
       </div>
