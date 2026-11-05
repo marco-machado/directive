@@ -1,5 +1,5 @@
 import { MIN_MISSION_MS, parseCampaign } from '../game/campaign.ts';
-import type { Campaign, Upgrade } from '../game/campaign.ts';
+import type { Campaign, Loadout, MissionReport, Upgrade } from '../game/campaign.ts';
 import { generateSaveCode, normalizeSaveCode } from '../game/saveCode.ts';
 import type { CampaignSync, Simulation } from '../game/simulation.ts';
 
@@ -78,16 +78,16 @@ export class CampaignClient implements CampaignSync {
     sim.setSyncing(false);
   }
 
-  deployed(contractId: string, squad: string[]) {
+  deployed(contractId: string, squad: string[], countermeasures: number) {
     const code = this.code; if (!code) return;
     const generation = this.generation;
     this.enqueue(async () => {
-      const { missionId, campaign } = await api<{ missionId: string; campaign: Campaign }>(`campaign/${code}/missions`, 'POST', { contractId, squad });
+      const { missionId, campaign } = await api<{ missionId: string; campaign: Campaign }>(`campaign/${code}/missions`, 'POST', { contractId, squad, countermeasures });
       if (generation === this.generation) { this.missionId = missionId; this.missionRegisteredAt = performance.now(); }
       return campaign;
     });
   }
-  completed(stealth: boolean) {
+  completed(report: MissionReport) {
     const code = this.code; if (!code) return;
     this.enqueue(async () => {
       const { generation, missionId } = this;
@@ -96,11 +96,12 @@ export class CampaignClient implements CampaignSync {
       const wait = this.missionRegisteredAt + MIN_MISSION_MS - performance.now();
       if (wait > 0) await new Promise(resolve => setTimeout(resolve, wait));
       if (generation !== this.generation) return null;
-      const { campaign } = await api<{ campaign: Campaign }>(`campaign/${code}/missions/${missionId}/complete`, 'POST', { stealth });
+      const { campaign } = await api<{ campaign: Campaign }>(`campaign/${code}/missions/${missionId}/complete`, 'POST', report);
       return campaign;
     });
   }
   bought(type: Upgrade) { this.change(`upgrades/${type}`, 'POST'); }
+  equipped(loadout: Loadout) { this.change('loadout', 'POST', loadout); }
   recruited(id: string) { this.change(`recruits/${id}`, 'POST'); }
   dismissed(id: string) { this.change(`roster/${id}`, 'DELETE'); }
   picked(squad: string[]) { if (this.code) storage.set(PICK_KEY, JSON.stringify({ code: this.code, squad })); }
@@ -111,9 +112,9 @@ export class CampaignClient implements CampaignSync {
       return saved?.code === this.code && Array.isArray(saved.squad) ? saved.squad.filter((id): id is string => typeof id === 'string') : [];
     } catch { return []; }
   }
-  private change(path: string, method: string) {
+  private change(path: string, method: string, body?: unknown) {
     const code = this.code; if (!code) return;
-    this.enqueue(async () => (await api<{ campaign: Campaign }>(`campaign/${code}/${path}`, method)).campaign);
+    this.enqueue(async () => (await api<{ campaign: Campaign }>(`campaign/${code}/${path}`, method, body)).campaign);
   }
 
   private enqueue(task: () => Promise<Campaign | null>) {
