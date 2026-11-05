@@ -1,11 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyDismiss, applyLoadout, applyPurchase, applyRecruit, baseTier, CAMPAIGN_VERSION, clampCampaign, completeMission, contractPayout, dealBoard, DEFAULT_LOADOUT, FIRST_CONTRACT, freshCampaign, isLoadout, MAX_TIER, MIN_MISSION_MS, nextUnlock, OPENING_CONTRACTS, RECRUIT_COST, ROSTER_CAP, SILENT_CLASSES, squadRating, startMission, threatFor, topTier, upgradeLedger } from '../src/game/campaign.ts';
-import type { Ledger } from '../src/game/campaign.ts';
+import { applyDismiss, applyLoadout, applyPayout, applyPurchase, applyRecruit, BADGE_POINTS, baseTier, CAMPAIGN_VERSION, clampCampaign, clearancePoints, CONTRACT_POINTS, completeMission, contractPayout, dealBoard, DEFAULT_LOADOUT, FIRST_CONTRACT, freshCampaign, isLoadout, MAX_TIER, MIN_MISSION_MS, missionReport, nextUnlock, offerTiers, OPENING_CONTRACTS, PAR_PER_TIER, PAR_SECONDS, parSeconds, RECRUIT_COST, ROSTER_CAP, SILENT_CLASSES, squadRating, startMission, threatFor, topTier, upgradeLedger } from '../src/game/campaign.ts';
+import type { Ledger, MissionReport } from '../src/game/campaign.ts';
 import { mulberry32 } from '../src/game/rng.ts';
 import { formatSaveCode, generateSaveCode, normalizeSaveCode } from '../src/game/saveCode.ts';
 
 const rng = mulberry32(42);
+const QUIET: MissionReport = { stealth: true, badges: ['ghost'] }, LOUD: MissionReport = { stealth: false, badges: [] };
+// Campaign progress: completed contracts, and badges (all counted as Ghosts).
+const done = (completed: number, badges = 0) => ({ completed, badges: { ghost: badges, untouched: 0, swift: 0, bloodless: 0, purge: 0 } });
 
 test('purchases charge the listed cost and stop at the level cap', () => {
   const rich = { ...freshCampaign(rng), cash: 5000 };
@@ -40,7 +43,7 @@ test('the threat read weighs the tier against roster size and upgrades', () => {
 
 test('offers bracket the base tier, which rises with completed contracts', () => {
   const veteran = clampCampaign({ completed: 6 }, rng);
-  assert.equal(baseTier(6), 4);
+  assert.equal(baseTier(CONTRACT_POINTS * 6), 4);
   assert.deepEqual(veteran.offers.map(o => o.tier), [3, 4, 5]);
   assert.deepEqual(veteran.offers.map(o => o.payout), [3, 4, 5].map(contractPayout));
   assert.equal(new Set(veteran.offers.map(o => o.type)).size, 3);
@@ -49,12 +52,38 @@ test('offers bracket the base tier, which rises with completed contracts', () =>
 });
 
 test('the next tier unlock counts the contracts left and stops at the top tier', () => {
-  assert.deepEqual([0, 1, 2, 4, 6, 9].map(topTier), [2, 2, 3, 4, 5, 5]);
-  assert.deepEqual(nextUnlock(0), { tier: 3, after: 2, progress: 0 });
-  assert.deepEqual(nextUnlock(1), { tier: 3, after: 1, progress: .5 });
-  assert.deepEqual(nextUnlock(5), { tier: 5, after: 1, progress: .5 });
-  for (let c = 0; c < 6; c++) { const n = nextUnlock(c)!; assert.equal(topTier(c + n.after), n.tier); assert.equal(topTier(c + n.after - 1), n.tier - 1); }
-  assert.equal(topTier(6), MAX_TIER); assert.equal(nextUnlock(6), null);
+  assert.deepEqual([0, 1, 2, 4, 6, 9].map(c => topTier(done(c))), [2, 2, 3, 4, 5, 5]);
+  assert.deepEqual(nextUnlock(done(0)), { tier: 3, points: 4, contracts: 2, progress: 0 });
+  assert.deepEqual(nextUnlock(done(1)), { tier: 3, points: 2, contracts: 1, progress: .5 });
+  assert.deepEqual(nextUnlock(done(5)), { tier: 5, points: 2, contracts: 1, progress: .5 });
+  for (let c = 0; c < 6; c++) { const n = nextUnlock(done(c))!; assert.equal(topTier(done(c + n.contracts)), n.tier); assert.equal(topTier(done(c + n.contracts - 1)), n.tier - 1); }
+  assert.equal(topTier(done(6)), MAX_TIER); assert.equal(nextUnlock(done(6)), null);
+});
+
+test('each badge counts as half a contract toward clearance, but not during the opening', () => {
+  assert.equal(clearancePoints(done(3, 2)), 3 * CONTRACT_POINTS + 2 * BADGE_POINTS);
+  assert.deepEqual(offerTiers(done(1, 5)), [1, 1, 2]);
+  assert.equal(topTier(done(2)), 3); assert.equal(topTier(done(2, 4)), 4);
+  assert.deepEqual(nextUnlock(done(2, 1)), { tier: 4, points: 3, contracts: 2, progress: .25 });
+  // Two badges do what one more contract would.
+  assert.equal(topTier(done(3, 2)), topTier(done(4)));
+});
+
+test('a mission report keeps known badges, ties Ghost to stealth, and rejects anything else', () => {
+  assert.deepEqual(missionReport(true, ['swift', 'swift']), { stealth: true, badges: ['ghost', 'swift'] });
+  assert.deepEqual(missionReport(false, ['ghost', 'purge']), { stealth: false, badges: ['purge'] });
+  assert.deepEqual(missionReport(true), { stealth: true, badges: ['ghost'] });
+  assert.equal(missionReport(true, ['medal']), null);
+  assert.equal(missionReport(true, 'swift'), null);
+  assert.equal(parSeconds('heist', 3), PAR_SECONDS.heist + 2 * PAR_PER_TIER);
+});
+
+test('a payout counts the badges earned', () => {
+  const c = freshCampaign(rng), contract = c.offers[1];
+  const paid = applyPayout(c, contract, { stealth: false, badges: ['untouched', 'swift'] }, rng);
+  assert.equal(paid.badges.untouched, 1); assert.equal(paid.badges.swift, 1); assert.equal(paid.badges.ghost, 0);
+  assert.equal(clearancePoints(paid), CONTRACT_POINTS + 2 * BADGE_POINTS);
+  assert.deepEqual(clampCampaign({ ...paid, badges: { swift: 2, bogus: 9 } }, rng).badges, { ghost: 0, untouched: 0, swift: 2, bloodless: 0, purge: 0 });
 });
 
 test('recruiting costs credits, respects the cap, and dismissal keeps one operative', () => {
@@ -78,7 +107,7 @@ test('a new campaign always offers a Recon or Tech recruit until its first contr
     // Deploying deals the next board before the payout, so the guarantee holds there too: that is the board the first payout can buy from.
     const ledger = startMission({ campaign: fresh, activeMission: null }, 'm', 0, fresh.offers[0].id, ['vex'], r)!;
     assert.ok(silent(ledger.campaign), `seed ${seed}: board dealt by the first deploy`);
-    const paid = completeMission(ledger, 'm', MIN_MISSION_MS, true, rng)!.campaign;
+    const paid = completeMission(ledger, 'm', MIN_MISSION_MS, QUIET, rng)!.campaign;
     assert.ok(paid.cash >= RECRUIT_COST && silent(paid));
     if (!silent(dealBoard(paid, r))) later++;
   }
@@ -89,12 +118,12 @@ test('a mission pays its stored contract once, only for the active id, and never
   const t0 = 1_000_000, campaign = freshCampaign(rng), offer = campaign.offers[2];
   const ledger = startMission({ campaign, activeMission: null }, 'm1', t0, offer.id, ['vex', 'rook'], rng)!;
   assert.ok(!ledger.campaign.offers.some(o => o.id === offer.id), 'deploying rerolls the board');
-  assert.equal(completeMission(ledger, 'm1', t0 + MIN_MISSION_MS - 1, false, rng), null);
-  assert.equal(completeMission(ledger, 'other', t0 + MIN_MISSION_MS, false, rng), null);
-  const paid = completeMission(ledger, 'm1', t0 + MIN_MISSION_MS, false, rng)!;
+  assert.equal(completeMission(ledger, 'm1', t0 + MIN_MISSION_MS - 1, LOUD, rng), null);
+  assert.equal(completeMission(ledger, 'other', t0 + MIN_MISSION_MS, LOUD, rng), null);
+  const paid = completeMission(ledger, 'm1', t0 + MIN_MISSION_MS, LOUD, rng)!;
   assert.equal(paid.campaign.cash, offer.payout); assert.equal(paid.campaign.completed, 1); assert.equal(paid.activeMission, null);
-  assert.equal(completeMission(paid, 'm1', t0 + MIN_MISSION_MS * 2, false, rng), null);
-  const sneaky = completeMission(ledger, 'm1', t0 + MIN_MISSION_MS, true, rng)!;
+  assert.equal(completeMission(paid, 'm1', t0 + MIN_MISSION_MS * 2, LOUD, rng), null);
+  const sneaky = completeMission(ledger, 'm1', t0 + MIN_MISSION_MS, QUIET, rng)!;
   assert.equal(sneaky.campaign.cash, Math.round(offer.payout * 1.25));
 });
 
@@ -135,7 +164,7 @@ test('contract 01 is the same hand-checked heist until a contract is completed',
     // A failed or abandoned first run deals it again; the first payout deals a board without it.
     const ledger = startMission({ campaign: fresh, activeMission: null }, 'm', 0, first.id, ['vex'], mulberry32(seed))!;
     assert.equal(ledger.campaign.offers[0].seed, FIRST_CONTRACT.seed);
-    const paid = completeMission(ledger, 'm', MIN_MISSION_MS, true, rng)!.campaign;
+    const paid = completeMission(ledger, 'm', MIN_MISSION_MS, QUIET, rng)!.campaign;
     assert.deepEqual(paid.offers.map(o => o.tier), [1, 1, 2]);
     assert.deepEqual(paid.recruits, ledger.campaign.recruits);
     assert.ok(paid.offers.every(o => o.seed !== FIRST_CONTRACT.seed && o.patrols === undefined));
@@ -160,6 +189,6 @@ test('upgrading an older ledger keeps the mission in flight and its payout claim
   const up = upgradeLedger(old, rng);
   assert.equal(up.campaign.version, CAMPAIGN_VERSION); assert.deepEqual(up.campaign.loadout, DEFAULT_LOADOUT);
   assert.deepEqual(up.activeMission, { id: 'm1', startedAt: 5, contract: offer });
-  assert.ok(completeMission(up, 'm1', 5 + MIN_MISSION_MS, true, rng));
+  assert.ok(completeMission(up, 'm1', 5 + MIN_MISSION_MS, QUIET, rng));
   assert.equal(upgradeLedger({ ...old, activeMission: { id: 7 } } as unknown as Ledger, rng).activeMission, null);
 });

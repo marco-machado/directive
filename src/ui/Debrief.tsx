@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import type { RefObject } from 'react';
 import type { ClassId } from '../game/classes.ts';
-import { HOSTILE_STATS } from '../game/simulation.ts';
+import { BADGES, parSeconds } from '../game/campaign.ts';
+import { HOSTILE_STATS, isReinforcement } from '../game/simulation.ts';
 import type { AlarmCause, Snapshot, Unit } from '../game/simulation.ts';
-import { Clearance, clock, CONTRACTS, Credits, SaveCode, SaveWarning, threat } from './common.tsx';
+import { BADGE_COPY, Clearance, clock, CONTRACTS, Credits, SaveCode, SaveWarning, threat } from './common.tsx';
 import { Icon, Portrait } from './icons.tsx';
 import type { IconName } from './icons.tsx';
 
@@ -58,6 +59,19 @@ function AlarmReport({ state, cause }: { state: Snapshot; cause: AlarmCause }) {
   </section>;
 }
 
+// Each badge, lit when the contract earned it; a missed one says why.
+function Badges({ state }: { state: Snapshot }) {
+  const c = state.contract!, hostiles = state.units.filter(u => u.faction === 'hostile'), district = hostiles.filter(u => !isReinforcement(u));
+  const missed = {
+    ghost: 'Alarm raised', untouched: `${state.downs} down`, swift: `${clock(state.time)} / ${clock(parSeconds(c.type, c.tier))}`,
+    bloodless: `${hostiles.filter(u => u.hp <= 0 && u.kind !== 'target').length} killed`, purge: `${district.filter(u => u.hp <= 0).length} of ${district.length} down`,
+  };
+  return <ul className="badge-grid debrief-badges" aria-label="Badges">{BADGES.map(b => {
+    const won = state.badges.includes(b);
+    return <li key={b} className={won ? '' : 'missed'}><Icon name={BADGE_COPY[b].icon} /><b>{BADGE_COPY[b].title}</b><small>{won ? 'Earned' : missed[b]}</small></li>;
+  })}</ul>;
+}
+
 export function Debrief({ state, saveCode, titleRef, onBoard, onHeadquarters }: { state: Snapshot; saveCode: string | null; titleRef: RefObject<HTMLHeadingElement | null>; onBoard: () => void; onHeadquarters: () => void }) {
   const success = state.result === 'success', c = state.contract;
   const kills = state.units.filter(u => u.faction === 'hostile' && u.hp <= 0).length;
@@ -85,9 +99,10 @@ export function Debrief({ state, saveCode, titleRef, onBoard, onHeadquarters }: 
           <Portrait cls={u.kind as ClassId} /><span><strong>{u.name}</strong><small>{u.hp <= 0 ? 'Down' : `${Math.ceil(u.hp)} / ${u.maxHp} HP`}</small></span>
         </li>)}</ul>
       </div>
+      {success ? <Badges state={state} /> : <p className="debrief-note">No badges on a lost contract.</p>}
       <div className={`debrief-intel${state.alarmCause ? '' : ' single'}`}>
         {state.alarmCause ? <AlarmReport state={state} cause={state.alarmCause} /> : null}
-        <Clearance campaign={state.campaign} justCompleted={success} />
+        <Clearance campaign={state.campaign} earned={success ? state.badges : null} />
       </div>
       <div className="debrief-actions">
         <button className="btn primary" onClick={onBoard}><span>Next contract</span><Icon name="arrow" /></button>

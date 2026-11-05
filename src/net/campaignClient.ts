@@ -1,5 +1,5 @@
 import { MIN_MISSION_MS, parseCampaign } from '../game/campaign.ts';
-import type { Campaign, Loadout, Upgrade } from '../game/campaign.ts';
+import type { Campaign, Loadout, MissionReport, Upgrade } from '../game/campaign.ts';
 import { generateSaveCode, normalizeSaveCode } from '../game/saveCode.ts';
 import type { CampaignSync, Simulation } from '../game/simulation.ts';
 
@@ -87,7 +87,7 @@ export class CampaignClient implements CampaignSync {
       return campaign;
     });
   }
-  completed(stealth: boolean) {
+  completed(report: MissionReport) {
     const code = this.code; if (!code) return;
     this.enqueue(async () => {
       const { generation, missionId } = this;
@@ -96,7 +96,7 @@ export class CampaignClient implements CampaignSync {
       const wait = this.missionRegisteredAt + MIN_MISSION_MS - performance.now();
       if (wait > 0) await new Promise(resolve => setTimeout(resolve, wait));
       if (generation !== this.generation) return null;
-      const { campaign } = await api<{ campaign: Campaign }>(`campaign/${code}/missions/${missionId}/complete`, 'POST', { stealth });
+      const { campaign } = await api<{ campaign: Campaign }>(`campaign/${code}/missions/${missionId}/complete`, 'POST', report);
       return campaign;
     });
   }

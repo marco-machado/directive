@@ -6,8 +6,8 @@
 //      [--roster starters|four|four+max] [--tiers 1,3] [--types heist,escort] [--quiet-only] [--loadout suppressed/light]
 // With --loadouts it instead plays the fully upgraded four with every loadout (tiers 4 and 5 unless --tiers says).
 import { Simulation } from '../src/game/simulation.ts';
-import { ARMOR_MODES, CONTRACT_TYPES, contractPayout, freshCampaign, isLoadout, MAX_LEVEL, MAX_TIER, WEAPON_MODES } from '../src/game/campaign.ts';
-import type { Campaign, ContractType, Loadout } from '../src/game/campaign.ts';
+import { ARMOR_MODES, BADGES, CONTRACT_TYPES, contractPayout, freshCampaign, isLoadout, MAX_LEVEL, MAX_TIER, WEAPON_MODES } from '../src/game/campaign.ts';
+import type { Badge, Campaign, ContractType, Loadout } from '../src/game/campaign.ts';
 import { mulberry32 } from '../src/game/rng.ts';
 import { noTactics } from './bots.ts';
 import type { Bot } from './bots.ts';
@@ -40,7 +40,7 @@ const TARGETS = [
   { bot: 'tactical', roster: 'starters', tier: 1, min: 90, max: 100 },
 ];
 
-type Run = { win: boolean; alarm: boolean; time: number; hpLost: number; reason: string };
+type Run = { win: boolean; alarm: boolean; time: number; hpLost: number; reason: string; badges: Badge[] };
 
 function play(bot: Bot, type: ContractType, tier: number, seed: number, extra: Partial<Campaign>): Run {
   const contract = { id: 'c', type, tier, seed, payout: contractPayout(tier), district: 'GLASS DISTRICT', sector: 1 };
@@ -54,7 +54,7 @@ function play(bot: Bot, type: ContractType, tier: number, seed: number, extra: P
   }
   const team = sim.units.filter(u => u.faction === 'squad');
   const hpLost = 1 - team.reduce((s, u) => s + u.hp, 0) / team.reduce((s, u) => s + u.maxHp, 0);
-  return { win: sim.result === 'success', alarm: sim.detected, time: sim.time, hpLost, reason: sim.result ? sim.failReason : 'timeout' };
+  return { win: sim.result === 'success', alarm: sim.detected, time: sim.time, hpLost, reason: sim.result ? sim.failReason : 'timeout', badges: sim.getSnapshot().badges };
 }
 
 const withLoadout = (extra: Partial<Campaign>, loadout: Loadout | null = LOADOUT as Loadout | null) => loadout ? { ...extra, loadout } : extra;
@@ -62,6 +62,7 @@ const pct = (n: number, of: number) => `${Math.round(100 * n / of)}%`.padStart(4
 const median = (xs: number[]) => { if (!xs.length) return NaN; const s = [...xs].sort((a, b) => a - b); return s[Math.floor(s.length / 2)]; };
 const seeds = Array.from({ length: SEEDS }, (_, k) => 1000 + k * 7919);
 const wins = new Map<string, number[]>(); // `${bot}|${roster}|${tier}` → win rate per contract type
+const earned = new Map<string, Run[]>(); // `${bot}|${roster}` → its wins, for the badge rates
 
 const typesLabel = TYPES.length === CONTRACT_TYPES.length ? 'the four contract types' : TYPES.join(', ');
 const average = (xs: number[]) => xs.reduce((s, x) => s + x, 0) / xs.length;
@@ -70,10 +71,10 @@ const checkTarget = (t: typeof TARGETS[number], v: number, note = '') =>
 
 function report() {
   console.log(`Balance: ${BOT_NAMES.join(' and ')} bots, ${SEEDS} seeds per cell, ${TIME_LIMIT} s limit${LOADOUT ? `, loadout ${LOADOUT.weapon}/${LOADOUT.armor}` : ''}${QUIET_ONLY ? ', tactical bot never goes loud on its own' : ''}.`);
-  console.log('win = contracts won, quiet = won without an alarm, alarm = runs that raised the alarm, time = median seconds of the wins, hp = mean squad HP lost in the wins, fails = loss reasons.\n');
+  console.log('win = contracts won, quiet = won without an alarm, alarm = runs that raised the alarm, time = median seconds of the wins, swift = wins under par, hp = mean squad HP lost in the wins, fails = loss reasons.\n');
   for (const roster of ROSTERS.filter(r => !option('roster') || r.name === option('roster'))) for (const name of BOT_NAMES) {
     console.log(`## ${roster.name} · ${name}`);
-    console.log('type           tier   win quiet alarm  time    hp  fails');
+    console.log('type           tier   win quiet alarm  time swift    hp  fails');
     for (const type of TYPES) for (const tier of TIERS) {
       const runs = seeds.map(seed => play(BOTS[name], type, tier, seed, withLoadout(roster.extra))), won = runs.filter(r => r.win);
       const reasons = new Map<string, number>();
@@ -81,7 +82,8 @@ function report() {
       const time = median(won.map(r => r.time)), hp = won.length ? won.reduce((s, r) => s + r.hpLost, 0) / won.length : NaN;
       const key = `${name}|${roster.name}|${tier}`;
       wins.set(key, [...wins.get(key) ?? [], 100 * won.length / runs.length]);
-      console.log(`${type.padEnd(14)} ${String(tier).padStart(4)}  ${pct(won.length, runs.length)}  ${pct(won.filter(r => !r.alarm).length, runs.length)}  ${pct(runs.filter(r => r.alarm).length, runs.length)}  ${Number.isNaN(time) ? '   -' : time.toFixed(0).padStart(4)}  ${Number.isNaN(hp) ? '   -' : pct(hp * 100, 100)}  ${[...reasons].map(([r, n]) => `${n}× ${r}`).join('; ')}`);
+      earned.set(`${name}|${roster.name}`, [...earned.get(`${name}|${roster.name}`) ?? [], ...won]);
+      console.log(`${type.padEnd(14)} ${String(tier).padStart(4)}  ${pct(won.length, runs.length)}  ${pct(won.filter(r => !r.alarm).length, runs.length)}  ${pct(runs.filter(r => r.alarm).length, runs.length)}  ${Number.isNaN(time) ? '   -' : time.toFixed(0).padStart(4)}  ${won.length ? pct(won.filter(r => r.badges.includes('swift')).length, won.length) : '   -'}  ${Number.isNaN(hp) ? '   -' : pct(hp * 100, 100)}  ${[...reasons].map(([r, n]) => `${n}× ${r}`).join('; ')}`);
     }
     console.log('');
   }
@@ -92,6 +94,13 @@ function report() {
     const row = TIERS.map(t => mean(`${name}|${roster.name}|${t}`));
     if (row.every(v => v === null)) continue;
     console.log(`${roster.name.padEnd(11)} ${name.padEnd(12)} ${row.map(v => v === null ? '    -' : `${Math.round(v)}%`.padStart(5)).join('')}`);
+  }
+  console.log(`\n## Badges (share of wins over the tiers played)`);
+  console.log(`roster      bot          ${BADGES.map(b => b.padStart(10)).join('')}`);
+  for (const roster of ROSTERS) for (const name of BOT_NAMES) {
+    const won = earned.get(`${name}|${roster.name}`);
+    if (!won?.length) continue;
+    console.log(`${roster.name.padEnd(11)} ${name.padEnd(12)} ${BADGES.map(b => pct(won.filter(r => r.badges.includes(b)).length, won.length).padStart(10)).join('')}`);
   }
   if (TYPES.length !== CONTRACT_TYPES.length || QUIET_ONLY) return;
   console.log(`\n## Targets${LOADOUT ? '' : ' (default loadout; --loadouts checks each bot\'s best one for the fully upgraded four)'}`);
