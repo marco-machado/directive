@@ -13,7 +13,7 @@ import { City, GROUND } from './city.tsx';
 import { Diagnostics } from './diagnostics.tsx';
 import { dressDistrict } from './district.ts';
 import { dragged, trackDrags, trackLongPress } from './drag.ts';
-import { CoverPreview, Effects, Targeting } from './effects.tsx';
+import { CoverPreview, Effects, Targeting, ZoneTether } from './effects.tsx';
 import { cameraKick } from './kick.ts';
 import { focusPoint, followGroup, followStep, MAX_POLAR, MIN_POLAR, MISSION_MIN_ZOOM, overviewZoom, smoothstep, tacticalZoom } from './framing.ts';
 import { AttackHint } from './hint.tsx';
@@ -215,6 +215,7 @@ function World({ sim, reset, focus, overview, layout, attract, frame, labels, mi
       <Pointers sim={sim} labels={labels} insets={insets} />
       <AttackHint sim={sim} labels={labels} hovered={hovered} />
       <CoverPreview sim={sim} pointer={pointer} hovered={hovered} />
+      <ZoneTether sim={sim} pointer={pointer} hovered={hovered} street={STREET} />
       {pending ? <Targeting key={`${pending.unitId}:${pending.ability}`} sim={sim} pending={pending} pointer={pointer} /> : null}
     </> : null}
   </>;

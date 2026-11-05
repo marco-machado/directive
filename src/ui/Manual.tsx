@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { STEALTH_BONUS } from '../game/campaign.ts';
-import { CALM_SECONDS, FIRST_WAVE_SECONDS, REINFORCE_SECONDS, ROUTE_MAX, WAIT_MAX, WAIT_STEP } from '../game/simulation.ts';
-import { Dialog, SaveCode } from './common.tsx';
+import { CALM_SECONDS, CALM_STEP, EXTENDED_RANGE, FIRST_WAVE_SECONDS, HEAVY_HP, LIGHT_CONCEALMENT, PIERCING_BONUS, REINFORCE_CAP, REINFORCE_SECONDS, REPEAT_REINFORCEMENTS, ROUTE_MAX, SUPPRESSOR_STEP, WAIT_MAX, WAIT_STEP } from '../game/simulation.ts';
+import { CM_LEVEL, countermeasuresEffect, Dialog, SaveCode } from './common.tsx';
 import { Icon } from './icons.tsx';
 import type { IconName } from './icons.tsx';
 import { tipStore } from './tipStore.ts';
@@ -31,10 +31,15 @@ const RULES: [IconName, string][] = [
   ['eye', 'Before the alarm, the squad only fires at targets you order, and operatives on one target fire together once all can hit.'],
   ['guard', 'Ordered onto an unaware guard the volley would not kill, the nearest operative circles out of its sight and takes it down in 1.5 s. A heavy needs two. Another hostile seeing it raises the alarm.'],
   ['camera', 'Hostiles and cameras see in vision cones. A ring over a hostile fills as it notices you: "?" means suspicious, "!" the alarm. Up close it takes about 1.5 s, at the edge of a guard\'s cone about 4 s; cameras are quicker. Posted guards glance aside every few seconds.'],
-  ['snipe', 'Sniper shots are silent. Grenades are loud and raise the alarm at once. A hostile that survives a hit raises it too.'],
+  ['snipe', 'Sniper shots are silent. Grenades are loud and raise the alarm at once. A hostile that survives a hit raises it too, unless suppressed rifles hit it.'],
+  ['ammo', `Smart ammunition levels buy damage (piercing, +${PIERCING_BONUS} a level), quiet hits (suppressed: a hostile that survives a rifle hit grows suspicious instead of raising the alarm, ${Math.round(SUPPRESSOR_STEP * 100)}% less each level) or range (extended, +${EXTENDED_RANGE} m a level). Switch freely at headquarters.`],
+  ['plating', `Dermal plating levels buy health (heavy, +${HEAVY_HP} a level) or concealment (light: hostiles take ${Math.round(LIGHT_CONCEALMENT * 100)}% longer a level to notice an operative, though not the VIP).`],
   ['flag', 'Extraction counts only when every operative, downed ones included, is in the zone. Revive the fallen first.'],
   ['alert', `The first reinforcements arrive ${FIRST_WAVE_SECONDS} s after the alarm, entering near extraction, then more every ${REINFORCE_SECONDS} s. Stay out of every hostile's sight and range for ${CALM_SECONDS} s and it stands down.`],
+  ['heavy', `The first alarm brings up to ${REINFORCE_CAP} reinforcements. Each later alarm in the same mission brings ${REPEAT_REINFORCEMENTS} more with heavies leading its waves, one more heavy each time until whole waves are heavies, and takes ${CALM_STEP} s longer to stand down.`],
   ['check', `Extract without ever raising the alarm for +${Math.round(STEALTH_BONUS * 100)}% payout. A stood-down alarm still voids the bonus.`],
+  ['lock', `With every upgrade maxed, Countermeasures open: an opt-in ladder picked on the briefing. ${[1, 2, 3].map(l => `${CM_LEVEL[l]}: ${countermeasuresEffect(l)}`).join(' ')} Win the highest open level with a badge to open the next. It pays no extra credits.`],
+  ['clock', 'A won contract earns badges: Ghost (no alarm), Untouched (nobody went down), Swift (extracted within par, shown on the board), Bloodless (no kills but the target) and Purge (every hostile the district started with down). Each counts half a contract toward the next tier.'],
 ];
 
 export function Manual({ saveCode, onClose }: { saveCode: string | null; onClose: () => void }) {
