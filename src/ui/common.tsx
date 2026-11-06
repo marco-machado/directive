@@ -1,7 +1,7 @@
 import { Component, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { CSSProperties, ErrorInfo, FormEvent, ReactNode, RefObject } from 'react';
 import { client, sim } from '../app.ts';
-import { BADGE_POINTS, BADGES, CONTRACT_POINTS, MAX_TIER, nextUnlock, OPENING_CONTRACTS, parSeconds, topTier } from '../game/campaign.ts';
+import { BADGE_POINTS, BADGES, CONTRACT_POINTS, MAX_TIER, nextTypeUnlock, nextUnlock, OPENING_CONTRACTS, parSeconds, topTier, unlockedTypes } from '../game/campaign.ts';
 import type { Badge, Campaign, Contract, ContractType, Operative } from '../game/campaign.ts';
 import { ABILITY_STATS, CLASS_STATS } from '../game/classes.ts';
 import { formatSaveCode, normalizeSaveCode } from '../game/saveCode.ts';
@@ -11,7 +11,8 @@ import { Icon, Portrait } from './icons.tsx';
 import type { IconName } from './icons.tsx';
 import { sound } from './audio.ts';
 
-export const CONTRACTS: Record<ContractType, { title: string; brief: string }> = {
+// `intro` is the first-time tip the briefing shows for a type that unlocks with clearance.
+export const CONTRACTS: Record<ContractType, { title: string; brief: string; intro?: string }> = {
   assassination: { title: 'Assassination', brief: 'Neutralize the target, then extract. Once the alarm sounds, the target runs for an exit.' },
   heist: { title: 'Data heist', brief: `Hold the vault terminal for ${HACK_SECONDS} seconds to download the data, then extract.` },
   sabotage: { title: 'Sabotage', brief: 'Plant a charge at every site, then extract.' },
@@ -34,6 +35,7 @@ export function countermeasuresEffect(level: number) {
   if (cm.uncapped) parts.push('reinforcements never stop');
   return parts.length ? `${parts.join(', ')}.`.replace(/^./, c => c.toUpperCase()) : 'Standard district security.';
 }
+const list = (items: string[]) => items.length < 2 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`;
 export const pad = (n: number) => String(n).padStart(2, '0');
 export const clock = (seconds: number) => `${pad(Math.floor(seconds / 60))}:${pad(Math.floor(seconds % 60))}`;
 export const secs = (n: number) => `${Number(n.toFixed(1))} s`;
@@ -56,11 +58,16 @@ export function Clearance({ campaign, earned = null, short = false, className = 
   const before = earned && { completed: campaign.completed - 1, badges: Object.fromEntries(BADGES.map(b => [b, campaign.badges[b] - (earned.includes(b) ? 1 : 0)])) as Record<Badge, number> };
   const onBoard = Math.max(0, ...campaign.offers.map(o => o.tier)), unlocked = !!before && before.completed >= 0 && top > topTier(before);
   const left = !next ? '' : opening ? `${next.contracts} more contract${next.contracts === 1 ? '' : 's'}` : `${next.points} more clearance point${next.points === 1 ? '' : 's'}`;
+  // Contract types unlock with the base tier, so they count badges even during the opening.
+  const type = nextTypeUnlock(campaign), fresh = before && before.completed >= 0 ? unlockedTypes(campaign).filter(t => !unlockedTypes(before).includes(t)) : [];
+  const typeLeft = type ? `${type.points} more clearance point${type.points === 1 ? '' : 's'}` : '';
+  const types = fresh.length ? ` ${list(fresh.map(t => CONTRACTS[t].title))} contracts join the next board.`
+    : type ? short ? ` ${CONTRACTS[type.type].title} at Tier ${type.tier}.` : ` ${CONTRACTS[type.type].title} contracts unlock at Tier ${type.tier}, after ${typeLeft}.` : '';
   return <section className={`clearance ${className}`} style={threat(top)} aria-label="Clearance">
-    <header><small>Clearance</small><strong>Tier {top}</strong><Pips value={top} max={MAX_TIER} label="Clearance tier" />{unlocked ? <b className="clearance-new">Unlocked</b> : null}</header>
-    {short ? <p>{top > onBoard ? `Tier ${top} joins the next board.` : next ? `Tier ${next.tier} after ${left}.` : 'Every tier is open.'}</p>
+    <header><small>Clearance</small><strong>Tier {top}</strong><Pips value={top} max={MAX_TIER} label="Clearance tier" />{unlocked || fresh.length ? <b className="clearance-new">Unlocked</b> : null}</header>
+    {short ? <p>{top > onBoard ? `Tier ${top} joins the next board.` : next ? `Tier ${next.tier} after ${left}.` : 'Every tier is open.'}{types}</p>
       : <p>{top > onBoard ? `Tier ${top} offers join the board dealt at your next deployment.` : `Offers up to Tier ${top}.`}
-        {' '}{next ? `Tier ${next.tier} unlocks after ${left}${opening ? '' : `: a contract earns ${CONTRACT_POINTS}, each badge ${BADGE_POINTS}`}.` : 'Every tier is open.'}</p>}
+        {' '}{next ? `Tier ${next.tier} unlocks after ${left}${opening ? '' : `: a contract earns ${CONTRACT_POINTS}, each badge ${BADGE_POINTS}`}.` : 'Every tier is open.'}{types}</p>}
     {next ? <span className="clearance-meter" role="progressbar" aria-label={`Progress to Tier ${next.tier}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(next.progress * 100)}><i style={{ width: `${next.progress * 100}%` }} /></span> : null}
   </section>;
 }

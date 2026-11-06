@@ -478,6 +478,7 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .tip-icon { display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid rgb(98 208 255 / .45); background: rgb(98 208 255 / .1); color: var(--cyan) }
 .tip-icon .icon { width: 17px; height: 17px }
 .tip-copy { display: grid; gap: 3px; min-width: 0 }
+.brief-tip { margin: 2px 0; animation: none }
 .tip-copy small { font: 600 10px var(--f-ui); letter-spacing: .2em; text-transform: uppercase; color: var(--cyan) }
 .tip-copy strong { font: 700 15px/1.1 var(--f-display); letter-spacing: .06em; text-transform: uppercase }
 .tip-copy > span { font: 400 13px/1.45 var(--f-body); color: var(--dim) }

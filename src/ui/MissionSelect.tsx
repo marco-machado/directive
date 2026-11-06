@@ -9,6 +9,7 @@ import type { Snapshot } from '../game/simulation.ts';
 import { BADGE_COPY, Clearance, clock, CM_LEVEL, CONTRACTS, countermeasuresEffect, Credits, pad, Pips, SaveWarning, threat, useScrollEdges } from './common.tsx';
 import { Icon, Portrait } from './icons.tsx';
 import type { IconName } from './icons.tsx';
+import { ContractIntro } from './Tips.tsx';
 
 const INTEL: { kind: EnemyKind; label: string; icon: IconName }[] = [
   { kind: 'target', label: 'Target', icon: 'assassination' }, { kind: 'guard', label: 'Guards', icon: 'guard' }, { kind: 'heavy', label: 'Heavies', icon: 'heavy' },
@@ -55,6 +56,7 @@ export function MissionSelect({ state, titleRef, onChoose, onDeploy, onRecenter,
           <ThreatRead level={threatFor(campaign, contract.tier)} />
           <h3>{CONTRACTS[contract.type].title}</h3>
           <p className="brief-copy">{CONTRACTS[contract.type].brief}</p>
+          <ContractIntro type={contract.type} />
           {state.countermeasuresOpen ? <div className="countermeasures">
             <div className="cm-head"><small>Countermeasures</small><div className="cm-levels" role="group" aria-label="Countermeasures level">{CM_LEVEL.map((name, level) =>
               <button key={name} className="btn ghost small" aria-pressed={state.countermeasures === level} disabled={level > state.countermeasuresOpen} onClick={() => sim.chooseCountermeasures(level)}>{name}</button>)}</div></div>

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyDismiss, applyLoadout, applyPayout, applyPurchase, applyRecruit, BADGE_POINTS, baseTier, CAMPAIGN_VERSION, clampCampaign, clearancePoints, CONTRACT_POINTS, completeMission, contractPayout, dealBoard, DEFAULT_LOADOUT, FIRST_CONTRACT, freshCampaign, isLoadout, MAX_TIER, MAX_COUNTERMEASURES, MAX_LEVEL, MIN_MISSION_MS, missionReport, nextUnlock, offerTiers, OPENING_CONTRACTS, PAR_PER_TIER, PAR_SECONDS, parSeconds, RECRUIT_COST, ROSTER_CAP, SILENT_CLASSES, squadRating, startMission, threatFor, topTier, unlockedCountermeasures, upgradeLedger } from '../src/game/campaign.ts';
-import type { Ledger, MissionReport } from '../src/game/campaign.ts';
+import { applyDismiss, applyLoadout, applyPayout, applyPurchase, applyRecruit, BADGE_POINTS, baseTier, CAMPAIGN_VERSION, clampCampaign, clearancePoints, CONTRACT_POINTS, completeMission, contractPayout, dealBoard, DEFAULT_LOADOUT, FIRST_CONTRACT, freshCampaign, isLoadout, MAX_TIER, MAX_COUNTERMEASURES, MAX_LEVEL, MIN_MISSION_MS, missionReport, nextUnlock, offerTiers, OPENING_CONTRACTS, PAR_PER_TIER, PAR_SECONDS, parSeconds, RECRUIT_COST, ROSTER_CAP, SILENT_CLASSES, squadRating, startMission, threatFor, topTier, unlockedCountermeasures, upgradeLedger, UNLOCK_TIER, unlockedTypes, nextTypeUnlock } from '../src/game/campaign.ts';
+import type { Ledger, MissionReport, UnlockTiers } from '../src/game/campaign.ts';
 import { mulberry32 } from '../src/game/rng.ts';
 import { formatSaveCode, generateSaveCode, normalizeSaveCode } from '../src/game/saveCode.ts';
 
@@ -210,4 +210,35 @@ test('Countermeasures open once fully upgraded, refuse a locked level, and a bad
   // Clearing a lower level than the top open one unlocks nothing.
   const low = startMission({ campaign: { ...maxed, countermeasures: 1 }, activeMission: null }, 'm', 0, offer.id, ['vex'], 1, rng)!;
   assert.equal(completeMission(low, 'm', MIN_MISSION_MS, QUIET, rng)!.campaign.countermeasures, 1);
+});
+
+test('contract types join the board as clearance rises, each guaranteed on the first board after it unlocks', () => {
+  // A table with later types, as new types will have; the four current types all deal from tier 1.
+  assert.deepEqual(Object.values(UNLOCK_TIER), [1, 1, 1, 1]);
+  const unlock: UnlockTiers = { assassination: 1, heist: 1, sabotage: 2, escort: 3 };
+  assert.deepEqual(unlockedTypes(done(0), unlock), ['assassination', 'heist']);
+  assert.deepEqual(unlockedTypes(done(2), unlock), ['assassination', 'heist', 'sabotage']);
+  assert.deepEqual(nextTypeUnlock(done(1), unlock), { type: 'sabotage', tier: 2, points: 2, contracts: 1, progress: .5 });
+  assert.deepEqual(nextTypeUnlock(done(2), unlock), { type: 'escort', tier: 3, points: 4, contracts: 2, progress: 0 });
+  assert.equal(nextTypeUnlock(done(4), unlock), null);
+  assert.equal(nextTypeUnlock(done(0)), null);
+  for (let seed = 1; seed <= 30; seed++) {
+    const r = mulberry32(seed);
+    // Only unlocked types are dealt, with repeats once there are fewer types than offers.
+    const early = dealBoard({ ...freshCampaign(r), completed: 1, dealt: [] }, r, unlock);
+    assert.ok(early.offers.every(o => o.type === 'assassination' || o.type === 'heist'));
+    // The first board after an unlock includes the new type, and later boards deal it like any other.
+    const veteran = { ...early, completed: 2, dealt: early.dealt };
+    assert.ok(!veteran.dealt.includes('sabotage'));
+    const after = dealBoard(veteran, r, unlock);
+    assert.ok(after.offers.some(o => o.type === 'sabotage'), `seed ${seed}`);
+    assert.ok(after.dealt.includes('sabotage'));
+    // Contract 01 stays first until the first win, whatever unlocks.
+    const fresh = dealBoard({ ...freshCampaign(r), dealt: [], badges: { ...freshCampaign(r).badges, ghost: 8 } }, r, unlock);
+    assert.equal(fresh.offers[0].seed, FIRST_CONTRACT.seed);
+    assert.ok(fresh.offers.slice(1).every(o => o.type !== 'heist'));
+  }
+  // A save from before types unlocked counts what its progress unlocks as already dealt.
+  assert.deepEqual(clampCampaign({ completed: 3, offers: [] }, rng).dealt.length, 4);
+  assert.deepEqual(clampCampaign({ dealt: ['heist', 'nope'] }, rng).dealt.includes('nope' as never), false);
 });
