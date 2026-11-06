@@ -1,7 +1,7 @@
 import { Component, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { CSSProperties, ErrorInfo, FormEvent, ReactNode, RefObject } from 'react';
 import { client, sim } from '../app.ts';
-import { BADGE_POINTS, BADGES, CONTRACT_POINTS, LOCKDOWN_SECONDS, MAX_TIER, MODIFIER_PAY, NO_KILL_CUT, NO_KILL_FLOOR, nextTypeUnlock, RECRUIT_COST, REWARDS, nextUnlock, OPENING_CONTRACTS, parSeconds, topTier, unlockedTypes } from '../game/campaign.ts';
+import { BADGE_POINTS, BADGES, CONTRACT_POINTS, IDENTIFY_RANGE, IDENTIFY_SECONDS, LOCKDOWN_SECONDS, MAX_TIER, MODIFIER_PAY, NO_KILL_CUT, NO_KILL_FLOOR, nextTypeUnlock, RECRUIT_COST, REWARDS, nextUnlock, OPENING_CONTRACTS, parSeconds, topTier, unlockedTypes } from '../game/campaign.ts';
 import type { Badge, Campaign, Contract, ContractType, Modifier, Operative, Reward, ResultField } from '../game/campaign.ts';
 import { ABILITY_STATS, CLASS_STATS } from '../game/classes.ts';
 import { formatSaveCode, normalizeSaveCode } from '../game/saveCode.ts';
@@ -53,6 +53,7 @@ export function earnedLines(r: Reward): string[] {
 export const MODIFIER_COPY: Record<Modifier, { title: string; chip: string; effect: string }> = {
   lockdown: { title: 'Lockdown', chip: 'LOCK', effect: `The exits seal ${LOCKDOWN_SECONDS} s after the first alarm, stood down or not. Be out by then.` },
   nokill: { title: 'No-kill clause', chip: 'NO KILL', effect: `Each kill but a target cuts the fee by ${NO_KILL_CUT * 100}%, down to ${NO_KILL_FLOOR * 100}% of it.` },
+  unknown: { title: 'Unknown target', chip: 'UNKNOWN', effect: `The target passes as a guard. Watch it, unaware, from ${IDENTIFY_RANGE} m for ${IDENTIFY_SECONDS} s, or mark it with Recon. A wrong kill is a guard kill.` },
 };
 export const modifierPay = `Each modifier adds ${MODIFIER_PAY * 100}% to the fee.`;
 export const ModifierChips = ({ c }: { c: Contract }) => c.modifiers?.length

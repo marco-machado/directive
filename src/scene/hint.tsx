@@ -23,7 +23,7 @@ export function AttackHint({ sim, labels, hovered }: { sim: Simulation; labels: 
     const u = hovered.current ? sim.units.find(v => v.id === hovered.current) : undefined;
     const preview = u?.faction === 'hostile' && !sim.pending ? sim.attackPreview(u.id) : null;
     if (!u || !preview) { if (!el.hidden) el.hidden = true; return; }
-    at.set(u.x, TOP[u.kind] + .95, u.z).project(camera);
+    at.set(u.x, TOP[u.guise ?? u.kind] + .95, u.z).project(camera);
     el.style.transform = `translate(${(at.x + 1) / 2 * size.width}px, ${(1 - at.y) / 2 * size.height}px) translate(-50%, -100%)`;
     const text = sim.describeAttack(preview);
     if (el.textContent !== text) { el.textContent = text; el.dataset.tone = TONE[preview.outcome]; }

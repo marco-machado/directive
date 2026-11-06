@@ -3,6 +3,7 @@
 // loud when the alarm sounds or when it has made no progress for STALL seconds. It knows only what bots.ts's
 // Knowledge holds and acts only through Orders.
 import { abilityPower, ABILITY_STATS, CLASS_STATS } from '../src/game/classes.ts';
+import { hasModifier } from '../src/game/campaign.ts';
 import { COVER_FACTOR, gearRange, HOSTILE_STATS, posted, ROUTE_MAX, TAKEDOWN_REACH, watchedBy } from '../src/game/simulation.ts';
 import type { AttackPreview, Objective } from '../src/game/simulation.ts';
 import { distance } from '../src/game/world.ts';
@@ -96,13 +97,21 @@ class Tactician {
   private goal(): Goal {
     const k = this.k, o = k.objectives.find(o => !o.done)!;
     if (o.kind === 'target') {
-      const target = k.hostiles.find(h => h.kind === 'target');
+      const target = k.hostiles.find(h => h.kind === 'target') ?? this.suspect();
       // An Intercept courier comes with no target area: the squad scouts for it.
-      return target ? { key: 'target', kind: 'target', point: target, target } : k.targetArea ? { key: 'search', kind: 'search', point: this.street(k.targetArea) } : this.scout();
+      return target ? { key: `target:${target.id}`, kind: 'target', point: target, target } : k.targetArea ? { key: 'search', kind: 'search', point: this.street(k.targetArea) } : this.scout();
     }
     if (o.kind === 'vip') return { key: 'vip', kind: 'vip', point: k.vip! };
     if (o.kind === 'sweep') return this.sweep();
     return { key: `${o.kind}:${o.label}`, kind: o.kind, point: o };
+  }
+  // An unknown target passes as a posted guard in its area: the squad goes for the nearest such guard it knows of, which
+  // either identifies the target on the approach or takes down a guard, and tries the next.
+  private suspect(): Seen | undefined {
+    const k = this.k, a = k.targetArea, lead = this.living[0];
+    if (!a || !lead || !hasModifier(k.contract, 'unknown')) return undefined;
+    return k.hostiles.filter(h => h.kind === 'guard' && h.hp > 0 && posted(h) && distance(h, a) <= a.r + 2)
+      .sort((p, q) => distance(p, lead) - distance(q, lead))[0];
   }
   // Elimination: the nearest of the district's own hostiles the squad knows of; with none known, the squad scouts: the
   // nearest street point no operative has passed within SCOUTED m of yet. Reinforcements don't count, so they are only fought.

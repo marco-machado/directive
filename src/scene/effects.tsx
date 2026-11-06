@@ -91,7 +91,7 @@ function VisionCones({ sim }: { sim: Simulation }) {
     if (world) for (const u of sim.units) {
       if (u.faction !== 'hostile' || u.hp <= 0 || !u.visible || u.stunned > 0) continue;
       const cone = cones.current[n], shape = shapes[n++]; if (!cone) break;
-      const stats = HOSTILE_STATS[u.kind as EnemyKind], [fill, outline] = cone.children as Mesh[];
+      const stats = HOSTILE_STATS[(u.guise ?? u.kind) as EnemyKind], [fill, outline] = cone.children as Mesh[];
       const fillMat = fill.material as MeshBasicMaterial, edgeMat = outline.material as MeshBasicMaterial;
       shapeCone(shape.fill, shape.edge, world, u, stats.vision, stats.fov);
       cone.visible = true; cone.position.set(u.x, .03, u.z);
@@ -187,7 +187,7 @@ function CombatAudio({ sim }: { sim: Simulation }) {
       before.current.set(u.id, { hp: u.hp, detect: u.detect });
       if (!was || sim.phase !== 'mission') continue;
       if (was.hp > 0 && u.hp <= 0) play(u.kind === 'camera' || u.kind === 'turret' ? 'destroy' : 'kill', u);
-      else if (!sim.alarm && u.visible && (u.kind === 'guard' || u.kind === 'heavy') && was.detect <= SUSPICIOUS && u.detect > SUSPICIOUS) play('suspicious', u);
+      else if (!sim.alarm && u.visible && (u.kind === 'guard' || u.kind === 'heavy' || u.guise) && was.detect <= SUSPICIOUS && u.detect > SUSPICIOUS) play('suspicious', u);
     }
   });
   return null;

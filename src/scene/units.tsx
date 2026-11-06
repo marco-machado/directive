@@ -218,7 +218,7 @@ function DetectMarker({ sim, id, top }: { sim: Simulation; id: string; top: numb
     g.visible = show;
     if (!show) return;
     // Anchored on the health bar's top edge (top + .32), then lifted clear of it, and of the target's label, in screen pixels.
-    const px = 1 / camera.zoom, lift = MARK_R + 4 + (u.kind === 'target' ? 24 : 0);
+    const px = 1 / camera.zoom, lift = MARK_R + 4 + (u.kind === 'target' && !u.guise ? 24 : 0);
     g.quaternion.copy(camera.quaternion); g.scale.setScalar(px);
     g.position.set(0, top + .22, 0).addScaledVector(screenUp.set(0, 1, 0).applyQuaternion(camera.quaternion), .1 + lift * px);
     const level = u.detect >= 1 ? 'alarm' : u.detect > SUSPICIOUS ? 'suspicious' : 'noticing';
@@ -298,7 +298,8 @@ const STEP_RATE = 14, AIM_HOLD = 1.6;
 const newestShot = (sim: Simulation) => sim.shots.reduce((n, s) => Math.max(n, s.id), -1);
 
 function Agent({ sim, unit, selected, slot, tagged, labels, hitboxes }: { sim: Simulation; unit: Unit; selected: boolean; slot: number; tagged: boolean; labels: RefObject<HTMLDivElement>; hitboxes: Hitboxes }) {
-  const { id, kind, faction } = unit;
+  // An unknown target is drawn as what it passes for until identified (the key below remounts it then).
+  const { id, faction } = unit, kind = unit.guise ?? unit.kind;
   const root = useRef<Group>(null), model = useRef<Group>(null), pose = useRef<Group>(null), ring = useRef<Group>(null), spin = useRef<Group>(null), look = useRef(new Vector3()).current;
   const bar = useRef<Group>(null), fill = useRef<Mesh>(null);
   const stun = useRef<Group>(null), markRef = useRef<Mesh>(null), revive = useRef<Group>(null), hold = useRef<Group>(null), lit = useRef<Group>(null), disc = useRef<Mesh>(null);
@@ -456,5 +457,5 @@ function Agent({ sim, unit, selected, slot, tagged, labels, hitboxes }: { sim: S
 export function Units({ sim, units, selected, squad, live, labels, hitboxes }: { sim: Simulation; units: Unit[]; selected: string[]; squad: string[]; live: boolean; labels: RefObject<HTMLDivElement>; hitboxes: Hitboxes }) {
   // Hotkey tags mark a partial selection; with the whole squad selected they would only stack up over the group.
   const partial = live && units.some(u => u.faction === 'squad' && u.hp > 0 && !selected.includes(u.id));
-  return <>{units.map(u => <Agent key={`${u.id}:${u.kind}`} sim={sim} unit={u} selected={selected.includes(u.id)} slot={squad.indexOf(u.id)} tagged={partial} labels={labels} hitboxes={hitboxes} />)}</>;
+  return <>{units.map(u => <Agent key={`${u.id}:${u.guise ?? u.kind}`} sim={sim} unit={u} selected={selected.includes(u.id)} slot={squad.indexOf(u.id)} tagged={partial} labels={labels} hitboxes={hitboxes} />)}</>;
 }

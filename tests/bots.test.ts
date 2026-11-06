@@ -67,3 +67,13 @@ test('the tactical bot finds and stops an Intercept courier it was given no area
   const sim = play({ id: 'i', type: 'intercept', tier: 1, seed: 3, payout: contractPayout(1), district: 'GLASS DISTRICT', sector: 1 });
   assert.equal(sim.result, 'success', sim.failReason);
 });
+
+test("the observer reads an unknown target as the guard it passes for, health included", () => {
+  const c: Contract = { id: 'c', type: 'assassination', tier: 4, seed: 77, payout: contractPayout(4, 1), district: 'GLASS DISTRICT', sector: 1, modifiers: ['unknown'] };
+  const sim = new Simulation({ ...freshCampaign(mulberry32(7)), offers: [c] });
+  sim.deploy();
+  const target = sim.units.find(u => u.kind === 'target')!, guard = sim.units.find(u => u.kind === 'guard')!;
+  target.visible = true;
+  const seen = observer(sim)().hostiles.find(h => h.id === target.id)!;
+  assert.equal(seen.kind, 'guard'); assert.equal(seen.maxHp, guard.maxHp); assert.equal(seen.hp, guard.maxHp);
+});

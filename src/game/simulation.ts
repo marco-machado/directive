@@ -1,6 +1,6 @@
 import { abilityCooldown, abilityPower, ABILITY_STATS, CLASS_STATS, effectScale, EMP_CAMERA_SECONDS, MARK_RADIUS, MARK_SECONDS, SQUAD_SPEED } from './classes.ts';
 import type { AbilityId, ClassId } from './classes.ts';
-import { applyDismiss, applyLoadout, applyPayout, applyPurchase, applyRecruit, badgesFor, dealBoard, hasModifier, LOCKDOWN_SECONDS, NO_REWARD, RECRUIT_COST, rewardFor, ROSTER_CAP, freshCampaign, missionPayout, parSeconds, SQUAD_MAX, unlockedCountermeasures } from './campaign.ts';
+import { applyDismiss, applyLoadout, applyPayout, applyPurchase, applyRecruit, badgesFor, dealBoard, hasModifier, IDENTIFY_RANGE, IDENTIFY_SECONDS, LOCKDOWN_SECONDS, NO_REWARD, RECRUIT_COST, rewardFor, ROSTER_CAP, freshCampaign, missionPayout, parSeconds, SQUAD_MAX, unlockedCountermeasures } from './campaign.ts';
 import type { Badge, Campaign, Contract, Loadout, MissionReport, MissionResults, Reward, Upgrade } from './campaign.ts';
 import { COURIER_DELAY, COURIER_PAUSE, COURIER_SPEED, planMission } from './mapgen.ts';
 import type { Area, EnemyKind, MissionPlan } from './mapgen.ts';
@@ -29,6 +29,8 @@ export type Unit = Point & {
   escort: string | null;
   // A posted guard's look-around: seconds into the current cycle, that cycle's length, and its count.
   look: number; lookEvery: number; lookCycle: number;
+  // An unknown target: the kind it passes as until identified, and how long an operative has watched it (seconds).
+  guise: EnemyKind | null; watched: number;
 };
 // Where a hostile was, and which way it faced, when the squad lost sight of it (`at` is mission time).
 export type Sighting = Point & { heading: number; at: number };
@@ -172,8 +174,17 @@ const LANDMARK: Record<Objective['kind'], string> = { target: 'the target', term
 export const sweepLabel = (left: number) => left ? `Down every hostile (${left} left)` : 'Down every hostile';
 // Reinforcements are numbered r0, r1, … as they enter (see reinforce); the district's own hostiles are h0, h1, ….
 export const isReinforcement = (u: Pick<Unit, 'id' | 'faction'>) => u.faction === 'hostile' && /^r\d+$/.test(u.id);
+// What a hostile shows the squad: an unknown target passes for the guard it is disguised as.
+export const seenAs = (u: Pick<Unit, 'kind'> & { guise?: EnemyKind | null }) => HOSTILE_STATS[(u.guise ?? u.kind) as EnemyKind];
+// The health and full health the squad reads off a hostile: an unknown target reads as the guard it passes for, at the
+// same share of its health.
+export const apparentHealth = (u: Pick<Unit, 'hp' | 'maxHp' | 'guise'>, tier: number) => {
+  if (!u.guise) return { hp: u.hp, maxHp: u.maxHp };
+  const maxHp = Math.round(HOSTILE_STATS[u.guise].hp * tierHp(tier));
+  return { hp: maxHp * u.hp / u.maxHp, maxHp };
+};
 const takedownable = (u: Unit) => u.kind === 'guard' || u.kind === 'heavy' || u.kind === 'target';
-export const posted = (u: Pick<Unit, 'kind' | 'patrol'>) => (u.kind === 'guard' || u.kind === 'heavy') && u.patrol.length < 2;
+export const posted = (u: Pick<Unit, 'kind' | 'patrol'> & { guise?: EnemyKind | null }) => (u.kind === 'guard' || u.kind === 'heavy' || !!u.guise) && u.patrol.length < 2;
 const headingTo = (a: Point, b: Point) => Math.atan2(b.x - a.x, b.z - a.z);
 const routeLength = (from: Point, path: Point[]) => path.reduce((sum, p, i) => sum + distance(i ? path[i - 1] : from, p), 0);
 // The point `d` back from the end of a route, walking toward its start.
@@ -188,7 +199,7 @@ const pointBack = (route: Point[], d: number): Point => {
 // Ground a hostile can see, widened by `margin` for planning, wherever it will look: a posted guard's whole look-around
 // and a camera's or turret's whole sweep count, not only the way it faces now.
 export function watchedBy(world: World, v: Pick<Unit, 'x' | 'z' | 'kind' | 'heading' | 'sweep' | 'patrol'>, margin = 1) {
-  const stats = HOSTILE_STATS[v.kind as EnemyKind], range = stats.vision + .8 * margin, fov = stats.fov + .25 * margin;
+  const stats = seenAs(v), range = stats.vision + .8 * margin, fov = stats.fov + .25 * margin;
   const turn = posted(v) ? LOOK_ANGLE : v.kind === 'camera' || v.kind === 'turret' ? SWEEP[v.kind] : null;
   return (p: Point) => {
     if (distance(v, p) > range) return false;
@@ -347,7 +358,7 @@ export class Simulation {
     return {
       id, name, kind, faction, x: p.x, z: p.z, hp: maxHp, maxHp, cooldown: faction === 'hostile' ? 1 : 0, path: [], route: [], targetId: null, heading, moving: false, repath: 0,
       ability: null, abilityCd: 0, reviveTarget: null, revive: 0, hurt: 0, patrol: [], patrolIndex: 0, exit: null, wait: 0, detect: 0, stunned: 0, marked: 0, visible: false, hunting: false, sweep: heading,
-      takedownId: null, held: 0, escort: null, look: 0, lookEvery: 0, lookCycle: 0,
+      takedownId: null, held: 0, escort: null, look: 0, lookEvery: 0, lookCycle: 0, guise: null, watched: 0,
     };
   }
   private resetUnits() {
@@ -372,6 +383,8 @@ export class Simulation {
       if (i === courier) u.wait = COURIER_DELAY;
       // An escort walks the courier's route, so it reads as a walker, not a posted guard.
       if (e.escort) u.escort = `h${courier}`;
+      // An unknown target holds its post as a guard would, under a guard's name, until it is identified.
+      if (e.kind === 'target' && plan.contract.type === 'assassination' && hasModifier(plan.contract, 'unknown')) { u.guise = 'guard'; u.name = HOSTILE_STATS.guard.name; }
     });
     if (plan.vip) this.units.push(this.makeUnit('vip', 'VIP', 'vip', 'vip', plan.vip, VIP_HP, headingTo(plan.vip, plan.extract)));
     this.selected = [...this.squad];
@@ -496,13 +509,16 @@ export class Simulation {
   // Otherwise every selected operative closes in and, before the alarm, they fire together.
   private firepower(u: Unit) { return CLASS_STATS[u.kind as ClassId].damage + gearDamage(this.campaign); }
   private attackPlan(target: Unit, units: Unit[]) {
-    const world = this.plan!.world;
-    const damage = units.reduce((sum, u) => sum + this.firepower(u) * (world.coverBetween(u, target) ? COVER_FACTOR : 1), 0), kills = damage >= target.hp;
+    const world = this.plan!.world, hp = this.apparentHp(target);
+    const damage = units.reduce((sum, u) => sum + this.firepower(u) * (world.coverBetween(u, target) ? COVER_FACTOR : 1), 0), kills = damage >= hp;
     const quiet = !this.alarm && target.detect < SUSPICIOUS && takedownable(target) && !kills, need = target.kind === 'heavy' ? 2 : 1;
     const takedown = quiet && units.length >= need ? [...units].sort((a, b) => distance(a, target) - distance(b, target)).slice(0, need) : [];
     const survives = !this.alarm && !kills, alerts = survives && target.detect + suppressedAlert(this.campaign) >= 1;
-    return { takedown, short: quiet && units.length < need ? need : 0, damage: Math.round(damage), hp: Math.ceil(target.hp), alerts, suspicious: survives && !alerts };
+    return { takedown, short: quiet && units.length < need ? need : 0, damage: Math.round(damage), hp: Math.ceil(hp), alerts, suspicious: survives && !alerts };
   }
+  // The health the squad reads off a hostile: an unknown target reads as the guard it passes for (at the same share of
+  // its health), so an order planned on that, a volley meant to kill a guard, can leave the target standing.
+  private apparentHp(u: Unit) { return apparentHealth(u, this.plan!.contract.tier).hp; }
   private attackable(id: string) {
     const target = this.unit(id), units = this.orderable();
     return this.phase === 'mission' && this.plan && target && target.faction === 'hostile' && target.hp > 0 && target.visible && units.length ? { target, units } : null;
@@ -529,7 +545,7 @@ export class Simulation {
   attack(id: string) {
     const order = this.attackable(id); if (!order) return;
     const { target, units } = order, p = this.attackPlan(target, units), world = this.plan!.world;
-    const who = target.kind === 'target' ? 'Target' : target.name;
+    const who = target.kind === 'target' && !target.guise ? 'Target' : target.name;
     if (p.takedown.length) {
       for (const u of this.units) if (u.takedownId === id) { u.takedownId = null; u.path = []; }
       p.takedown.forEach(u => { this.clearOrders(u); u.takedownId = id; u.repath = .3; });
@@ -542,7 +558,7 @@ export class Simulation {
     }
     units.forEach(u => { this.clearOrders(u); u.targetId = id; u.path = world.findPath(u, target); });
     const fire = units.length > 1 ? 'Firing together once all can hit' : 'Firing once in range';
-    this.message = this.alarm ? (target.kind === 'target' ? 'Target marked. Eliminate the target.' : `${target.name} marked. Concentrate fire.`)
+    this.message = this.alarm ? (target.kind === 'target' && !target.guise ? 'Target marked. Eliminate the target.' : `${target.name} marked. Concentrate fire.`)
       : `${who} marked. Volley ${p.damage} / ${p.hp}, ${p.alerts ? 'will alert' : 'silent kill'}. ${fire}.${p.short ? ` A takedown needs ${p.short} operatives.` : ''}`;
     this.emit();
   }
@@ -776,7 +792,7 @@ export class Simulation {
       const was = u.visible;
       u.visible = u.marked > 0 || (!!world && eyes.some(e => distance(e, u) <= SIGHT_RANGE && world.sightClear(e, u)));
       if (u.visible && u.hp > 0) this.reach('hostileSeen');
-      if (u.kind === 'target' && u.visible && u.hp > 0 && this.targetArea) { this.targetArea.x = u.x; this.targetArea.z = u.z; }
+      if (u.kind === 'target' && !u.guise && u.visible && u.hp > 0 && this.targetArea) { this.targetArea.x = u.x; this.targetArea.z = u.z; }
       if (u.visible || u.hp <= 0) this.lastSeen.delete(u.id);
       else if (was) this.lastSeen.set(u.id, { x: u.x, z: u.z, heading: u.heading, at: this.time });
     }
@@ -790,16 +806,18 @@ export class Simulation {
     if (u.held > 0) return; // pinned by a takedown
     if (u.stunned > 0) { u.stunned -= dt; return; }
     u.cooldown -= dt;
-    const mobile = u.kind === 'guard' || u.kind === 'heavy';
+    const mobile = u.kind === 'guard' || u.kind === 'heavy' || !!u.guise;
     if (u.kind === 'camera' || u.kind === 'turret') u.heading = u.sweep + Math.sin(this.time * .6 + u.x) * SWEEP[u.kind];
-    const seen = intruders.filter(v => distance(u, v) <= stats.vision && angleDiff(headingTo(u, v), u.heading) <= stats.fov && world.sightClear(u, v))
+    // An unknown target sees as the guard it passes for.
+    const eyes = seenAs(u);
+    const seen = intruders.filter(v => distance(u, v) <= eyes.vision && angleDiff(headingTo(u, v), u.heading) <= eyes.fov && world.sightClear(u, v))
       .sort((a, b) => distance(u, a) - distance(u, b))[0];
     if (this.alarm) { if (seen) this.contact(seen); }
     else if (seen) {
       const was = u.detect;
       const time = detectSeconds(u.kind as EnemyKind, distance(u, seen)) * (seen.faction === 'squad' ? concealment(this.campaign) : 1) * COUNTERMEASURES[this.countermeasures].detect;
       u.detect = Math.min(1, u.detect + dt / time);
-      if (u.detect >= 1) { this.raiseAlarm(u, `${stats.name} spotted the squad`, seen, { trigger: 'sighting', by: u, culprit: seen }); return; }
+      if (u.detect >= 1) { this.raiseAlarm(u, `${eyes.name} spotted the squad`, seen, { trigger: 'sighting', by: u, culprit: seen }); return; }
       if (was <= SUSPICIOUS && u.detect > SUSPICIOUS) { this.reach('suspicious'); this.suspicious(u); }
     } else u.detect = Math.max(0, u.detect - DETECT_DRAIN * dt);
     if (!this.alarm && !(u.kind === 'target' && u.exit)) {
@@ -812,6 +830,8 @@ export class Simulation {
     }
     if (u.kind === 'target') {
       if (u.wait > 0 || !u.exit) { u.wait -= dt; return; }
+      // An unknown target gives itself away by running.
+      if (u.guise) this.identify(u, 'The target broke from its post. Target identified.');
       // Re-plan after anything (an EMP) cleared the route.
       if (!u.path.length) u.path = world.findPath(u, u.exit);
       this.walk(u, stats.alertSpeed, dt);
@@ -985,7 +1005,7 @@ export class Simulation {
     return true;
   }
   private sees(h: Unit, p: Point) {
-    const stats = HOSTILE_STATS[h.kind as EnemyKind];
+    const stats = seenAs(h);
     return distance(h, p) <= stats.vision && angleDiff(headingTo(h, p), h.heading) <= stats.fov && this.plan!.world.sightClear(h, p);
   }
   // A takedown starts once its operatives (two for a heavy) all stand in reach and finishes after TAKEDOWN_SECONDS.
@@ -1042,7 +1062,7 @@ export class Simulation {
     const world = this.plan!.world;
     return this.units.filter(h => {
       if (h.faction !== 'hostile' || h.hp <= 0) return false;
-      const stats = HOSTILE_STATS[h.kind as EnemyKind];
+      const stats = seenAs(h);
       if (!stats.damage) return false;
       return this.alarm ? distance(h, u) <= stats.range && world.sightClear(h, u) : h.visible;
     });
@@ -1059,8 +1079,8 @@ export class Simulation {
   // nearest known threat (an armed hostile in sight, else a last-seen marker). Null with no barrier near or no threat known.
   coverSnap(p: Point): CoverSnap | null {
     if (!this.plan) return null;
-    const known: Point[] = this.units.filter(h => h.faction === 'hostile' && h.hp > 0 && h.visible && HOSTILE_STATS[h.kind as EnemyKind].damage > 0);
-    if (!known.length) for (const [id, s] of this.lastSeen) if (HOSTILE_STATS[this.unit(id)?.kind as EnemyKind]?.damage) known.push(s);
+    const known: Point[] = this.units.filter(h => h.faction === 'hostile' && h.hp > 0 && h.visible && seenAs(h).damage > 0);
+    if (!known.length) for (const [id, s] of this.lastSeen) { const h = this.unit(id); if (h && seenAs(h).damage) known.push(s); }
     const threat = known.sort((a, b) => distance(a, p) - distance(b, p))[0];
     const spot = threat && this.plan.world.coverSpot(p, threat);
     return spot ? { ...spot.point, along: spot.along, span: spot.span } : null;
@@ -1080,6 +1100,23 @@ export class Simulation {
       }
     }
     return best;
+  }
+  // An unknown target is identified by Recon's mark, or once an operative has watched it, unaware, from IDENTIFY_RANGE
+  // or closer for IDENTIFY_SECONDS; the watch drains as fast while broken off.
+  private watchForTarget(dt: number, squad: Unit[]) {
+    const world = this.plan!.world;
+    for (const u of this.units) {
+      if (!u.guise || u.hp <= 0) continue;
+      if (u.marked > 0) { this.identify(u, 'Recon marked the target. Target identified.'); continue; }
+      const eye = u.detect <= SUSPICIOUS && squad.find(s => distance(s, u) <= IDENTIFY_RANGE && world.sightClear(s, u));
+      u.watched = eye ? u.watched + dt : Math.max(0, u.watched - dt);
+      if (eye && u.watched >= IDENTIFY_SECONDS) this.identify(u, `${eye.name} identified the target.`);
+    }
+  }
+  private identify(u: Unit, message: string) {
+    u.guise = null; u.watched = 0; u.name = HOSTILE_STATS.target.name; this.message = message;
+    if (this.targetArea) { this.targetArea.x = u.x; this.targetArea.z = u.z; }
+    this.emit();
   }
   private updateObjectives(dt: number, squad: Unit[]) {
     const vip = this.unit('vip');
@@ -1164,6 +1201,7 @@ export class Simulation {
     this.selected = this.selected.filter(id => squad.some(u => u.id === id));
     if (this.pending && !squad.some(u => u.id === this.pending!.unitId)) this.pending = null;
     if (!squad.length) return this.finish(false, 'The squad was wiped out.');
+    this.watchForTarget(dt, squad);
     this.updateObjectives(dt, squad);
     if (this.phase !== 'mission') return;
     // Lockdown: once the first alarm sounds the exits seal after LOCKDOWN_SECONDS, stood down or not.
