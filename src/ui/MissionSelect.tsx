@@ -6,7 +6,7 @@ import { ABILITY_STATS, CLASS_STATS } from '../game/classes.ts';
 import type { Threat } from '../game/campaign.ts';
 import type { EnemyKind } from '../game/mapgen.ts';
 import type { Snapshot } from '../game/simulation.ts';
-import { BADGE_COPY, Clearance, clock, CM_LEVEL, CONTRACTS, countermeasuresEffect, Credits, pad, Pips, SaveWarning, threat, useScrollEdges } from './common.tsx';
+import { BADGE_COPY, Clearance, clock, CM_LEVEL, CONTRACTS, countermeasuresEffect, Credits, pad, Pips, rewardLines, SaveWarning, threat, useScrollEdges } from './common.tsx';
 import { Icon, Portrait } from './icons.tsx';
 import type { IconName } from './icons.tsx';
 import { ContractIntro } from './Tips.tsx';
@@ -77,6 +77,8 @@ export function MissionSelect({ state, titleRef, onChoose, onDeploy, onRecenter,
               <div><small>Payout</small><Credits value={contract.payout} /></div>
               <div className="bonus"><small>No alarm</small><Credits value={missionPayout(contract, true)} /></div>
             </div>
+            {rewardLines(contract).length ? <ul className="brief-rewards" aria-label="Rewards">{rewardLines(contract).map(l => <li key={l}><Icon name="diamond" />{l}</li>)}</ul> : null}
+            {campaign.intel ? <p className="brief-note intel-note"><Icon name="eye" />Intel reward: every patrol route in this district is known from the start.</p> : null}
             <ul className="brief-badges" aria-label="Badges">{badgesFor(contract.type).map(b => <li key={b}><Icon name={BADGE_COPY[b].icon} /><b>{BADGE_COPY[b].title}</b><span>{BADGE_COPY[b].goal(contract, hostiles)}</span></li>)}</ul>
             <p className="brief-note">Each badge counts half a contract toward clearance.</p>
           </div>

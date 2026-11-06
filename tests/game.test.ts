@@ -1416,7 +1416,7 @@ test('a quiet, clean, quick win earns Ghost, Untouched, Swift and Bloodless, and
   hack(sim, squad); extractAll(sim, squad);
   assert.equal(sim.result, 'success');
   assert.deepEqual(sim.getSnapshot().badges, ['ghost', 'untouched', 'swift', 'bloodless']); // no hostiles, so nothing to purge
-  assert.deepEqual(reports, [{ stealth: true, badges: ['ghost', 'untouched', 'swift', 'bloodless'] }]);
+  assert.deepEqual(reports, [{ stealth: true, badges: ['ghost', 'untouched', 'swift', 'bloodless'], results: {} }]);
   assert.equal(sim.campaign.badges.swift, 1);
 });
 
@@ -1471,7 +1471,7 @@ test('Elimination counts down the district it started with; reinforcements never
   extractAll(sim, squad);
   assert.equal(sim.result, 'success');
   assert.deepEqual(sim.getSnapshot().badges, ['ghost', 'untouched', 'swift']);
-  assert.deepEqual(reports, [{ stealth: true, badges: ['ghost', 'untouched', 'swift'] }]);
+  assert.deepEqual(reports, [{ stealth: true, badges: ['ghost', 'untouched', 'swift'], results: {} }]);
   assert.equal(sim.campaign.badges.purge, 0);
 });
 
@@ -1570,6 +1570,20 @@ test('on alarm the courier runs for its own exit at once, and stopping it opens 
   assert.ok(courier.path.length, 'it runs at once, without waiting out its delay');
   courier.hp = 0; sim.update(1 / 60);
   assert.ok(sim.objectives[0].done && sim.extractReady);
+});
+
+test('an intel reward draws every patrol route from the first frame of the next deployment, and only that one', () => {
+  const sim = new Simulation(campaignWith('heist', { intel: true, offers: [contract('heist', 3, 99)] }));
+  sim.deploy();
+  const walkers = sim.units.filter(u => u.faction === 'hostile' && u.patrol.length >= 2);
+  assert.ok(walkers.length > 0);
+  assert.ok(walkers.every(u => sim.intel.has(u.id)));
+  assert.equal(sim.campaign.intel, false); assert.equal(sim.getSnapshot().intelReward, true);
+  sim.restart();
+  assert.ok(walkers.every(u => sim.intel.has(u.id)), 'a restart keeps it');
+  const plain = new Simulation(campaignWith('heist', { offers: [contract('heist', 3, 99)] }));
+  plain.deploy();
+  assert.equal(plain.intel.size, 0);
 });
 
 test('a courier stunned mid-leg finishes that leg before the next, and only escapes at its exit', () => {

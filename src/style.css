@@ -240,6 +240,10 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .brief-badges { list-style: none; display: grid; gap: 6px; margin: 12px 0 0; padding: 0 }
 .brief-badges li { display: grid; grid-template-columns: 18px 84px minmax(0, 1fr); align-items: center; gap: 8px; font: 500 13px var(--f-body); color: var(--dim) }
 .brief-badges .icon { width: 16px; height: 16px; color: var(--mint) }
+.brief-rewards { list-style: none; display: grid; gap: 6px; margin: 12px 0 0; padding: 0 }
+.brief-rewards li { display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: center; gap: 8px; font: 500 13px var(--f-body); color: var(--dim) }
+.brief-rewards .icon, .intel-note .icon { width: 14px; height: 14px; color: var(--amber) }
+.intel-note { display: flex; align-items: center; gap: 6px }
 .brief-badges b { font: 600 12px var(--f-ui); letter-spacing: .1em; text-transform: uppercase; color: var(--text) }
 .countermeasures { margin: 12px 0 0; padding: 10px 12px; border: 1px solid rgb(255 81 72 / .35); background: rgb(40 10 10 / .35) }
 .cm-head { display: flex; align-items: center; justify-content: space-between; gap: 10px }
