@@ -29,7 +29,7 @@ test('a fast win waits for the minimum mission time after the server registers t
   client.attach(sim, 'CODE');
 
   client.deployed('c1', ['vex'], 0);
-  client.completed({ stealth: false, badges: [] });
+  client.completed({ stealth: false, badges: [], results: {} });
   await settle();
   mock.timers.tick(startLatency);
   await settle();
@@ -58,7 +58,7 @@ test('the client reports syncing until a held payout claim lands, so a save code
   client.attach(sim, 'CODE');
 
   client.deployed('c1', ['vex'], 0);
-  client.completed({ stealth: false, badges: [] });
+  client.completed({ stealth: false, badges: [], results: {} });
   await settle();
   assert.equal(syncing, true);
 
@@ -245,7 +245,7 @@ test('a resync drops the old mission id, so winning the next mission cannot clai
   mock.timers.tick(5000);
   await settle();
 
-  client.completed({ stealth: true, badges: ['ghost'] });
+  client.completed({ stealth: true, badges: ['ghost'], results: {} });
   await settle();
   mock.timers.tick(MIN_MISSION_MS);
   await settle();
@@ -289,8 +289,8 @@ test('the deploy carries the countermeasures level, and the payout claim the ste
   const client = new CampaignClient();
   client.attach(sim, 'CODE');
   client.deployed('c1', ['vex'], 2);
-  client.completed({ stealth: true, badges: ['ghost', 'swift'] });
+  client.completed({ stealth: true, badges: ['ghost', 'swift'], results: {} });
   await settle(); mock.timers.tick(MIN_MISSION_MS); await settle();
   assert.deepEqual(bodies.get('/api/campaign/CODE/missions'), { contractId: 'c1', squad: ['vex'], countermeasures: 2 });
-  assert.deepEqual(bodies.get('/api/campaign/CODE/missions/m1/complete'), { stealth: true, badges: ['ghost', 'swift'] });
+  assert.deepEqual(bodies.get('/api/campaign/CODE/missions/m1/complete'), { stealth: true, badges: ['ghost', 'swift'], results: {} });
 });

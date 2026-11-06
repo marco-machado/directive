@@ -1,9 +1,9 @@
 import { DurableObject } from 'cloudflare:workers';
-import { applyDismiss, applyLoadout, applyPurchase, applyRecruit, CAMPAIGN_VERSION, clampCampaign, completeMission, freshCampaign, startMission, upgradeLedger } from '../src/game/campaign.ts';
+import { applyDismiss, applyLoadout, applyPurchase, applyRecruit, CAMPAIGN_VERSION, clampCampaign, completeMission, freshCampaign, resultsFit, startMission, upgradeLedger } from '../src/game/campaign.ts';
 import type { Campaign, Ledger, Loadout, MissionReport, Upgrade } from '../src/game/campaign.ts';
 import type { Rng } from '../src/game/rng.ts';
 
-export type Result = { ok: true; campaign: Campaign } | { ok: false; status: 404 | 409; error: string };
+export type Result = { ok: true; campaign: Campaign } | { ok: false; status: 400 | 404 | 409; error: string };
 const KEY = 'ledger';
 const random: Rng = () => crypto.getRandomValues(new Uint32Array(1))[0] / 2 ** 32;
 const unknown = { ok: false, status: 404, error: 'Unknown save code.' } as const;
@@ -48,6 +48,8 @@ export class PlayerCampaign extends DurableObject<Env> {
   }
   async completeMission(missionId: string, report: MissionReport): Promise<Result> {
     const ledger = await this.load(); if (!ledger) return unknown;
+    // Results the active contract cannot hold (another type's field, or more than it has) are a bad request.
+    if (ledger.activeMission?.id === missionId && !resultsFit(ledger.activeMission.contract, report.results)) return { ok: false, status: 400, error: 'Those results do not fit the contract.' };
     const next = completeMission(ledger, missionId, Date.now(), report, random);
     return next ? this.save(next) : { ok: false, status: 409, error: 'Mission is not active or ended too soon.' };
   }

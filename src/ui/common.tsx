@@ -1,8 +1,8 @@
 import { Component, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { CSSProperties, ErrorInfo, FormEvent, ReactNode, RefObject } from 'react';
 import { client, sim } from '../app.ts';
-import { BADGE_POINTS, BADGES, CONTRACT_POINTS, MAX_TIER, nextTypeUnlock, nextUnlock, OPENING_CONTRACTS, parSeconds, topTier, unlockedTypes } from '../game/campaign.ts';
-import type { Badge, Campaign, Contract, ContractType, Operative } from '../game/campaign.ts';
+import { BADGE_POINTS, BADGES, CONTRACT_POINTS, MAX_TIER, nextTypeUnlock, RECRUIT_COST, REWARDS, nextUnlock, OPENING_CONTRACTS, parSeconds, topTier, unlockedTypes } from '../game/campaign.ts';
+import type { Badge, Campaign, Contract, ContractType, Operative, Reward, ResultField } from '../game/campaign.ts';
 import { ABILITY_STATS, CLASS_STATS } from '../game/classes.ts';
 import { formatSaveCode, normalizeSaveCode } from '../game/saveCode.ts';
 import { COUNTERMEASURES, HACK_SECONDS, VIP_SECURE_SECONDS } from '../game/simulation.ts';
@@ -35,6 +35,20 @@ export const BADGE_COPY: Record<Badge, { title: string; icon: IconName; goal: (c
   bloodless: { title: 'Bloodless', icon: 'heal', goal: c => c.type === 'assassination' ? 'Kill no one but the target' : c.type === 'intercept' ? 'Kill no one but the courier' : 'Kill no one' },
   purge: { title: 'Purge', icon: 'kills', goal: (_, n) => `Down all ${n} hostile${n === 1 ? '' : 's'} in the district` },
 };
+// What a contract can pay beyond its credits, for the board and the briefing, and what a won one earned, for the report.
+const RESULT_NOUN: Record<ResultField, [string, string]> = { caches: ['cache', 'caches'], prisoners: ['prisoner', 'prisoners'], tagged: ['executive tagged', 'executives tagged'] };
+const count = (n: number, f: ResultField) => `${n} ${RESULT_NOUN[f][n === 1 ? 0 : 1]}`;
+export function rewardLines(c: Contract): string[] {
+  const spec = REWARDS[c.type]; if (!spec) return [];
+  const lines: string[] = [], one = RESULT_NOUN[spec.field][0];
+  if (spec.bonus) lines.push(`${credits(spec.bonus)} for each ${one}${spec.free ? ` past the first${spec.free > 1 ? ` ${spec.free}` : ''}` : ''}`);
+  if (spec.operative !== undefined) lines.push(`An operative joins the roster at ${count(spec.operative, spec.field)} (${credits(RECRUIT_COST)} if the roster is full)`);
+  if (spec.intel !== undefined) lines.push(`Intel at ${count(spec.intel, spec.field)}: the next contract's patrol routes, known from the start`);
+  return lines;
+}
+export function earnedLines(r: Reward): string[] {
+  return [r.operative ? 'An operative joined the roster.' : '', r.intel ? 'Intel: the next contract\'s patrol routes are known from the start.' : ''].filter(Boolean);
+}
 // Countermeasures levels by name, and what a level does (each adds to the ones below it).
 export const CM_LEVEL = ['Off', 'I', 'II', 'III'];
 export function countermeasuresEffect(level: number) {

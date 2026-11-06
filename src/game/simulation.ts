@@ -1,7 +1,7 @@
 import { abilityCooldown, abilityPower, ABILITY_STATS, CLASS_STATS, effectScale, EMP_CAMERA_SECONDS, MARK_RADIUS, MARK_SECONDS, SQUAD_SPEED } from './classes.ts';
 import type { AbilityId, ClassId } from './classes.ts';
-import { applyDismiss, applyLoadout, applyPayout, applyPurchase, applyRecruit, badgesFor, dealBoard, freshCampaign, missionPayout, parSeconds, SQUAD_MAX, unlockedCountermeasures } from './campaign.ts';
-import type { Badge, Campaign, Contract, Loadout, MissionReport, Upgrade } from './campaign.ts';
+import { applyDismiss, applyLoadout, applyPayout, applyPurchase, applyRecruit, badgesFor, dealBoard, NO_REWARD, RECRUIT_COST, rewardFor, ROSTER_CAP, freshCampaign, missionPayout, parSeconds, SQUAD_MAX, unlockedCountermeasures } from './campaign.ts';
+import type { Badge, Campaign, Contract, Loadout, MissionReport, MissionResults, Reward, Upgrade } from './campaign.ts';
 import { COURIER_DELAY, COURIER_PAUSE, COURIER_SPEED, planMission } from './mapgen.ts';
 import type { Area, EnemyKind, MissionPlan } from './mapgen.ts';
 import { mulberry32 } from './rng.ts';
@@ -57,6 +57,8 @@ export type Snapshot = {
   saveUnavailable: boolean; syncing: boolean; pending: Pending; cover: Record<string, Shield>; milestones: Milestone[];
   // The badges a won contract earned, and how many times an operative went down.
   badges: Badge[]; downs: number;
+  // What a won contract earned beyond its payout, and whether the mission started with an intel reward's routes.
+  reward: Reward; intelReward: boolean;
   // The Countermeasures level picked for (or fixed by) the mission, and the highest one open.
   countermeasures: number; countermeasuresOpen: number;
 };
@@ -237,6 +239,8 @@ export class Simulation {
   milestones: Milestone[] = [];
   private reinforced = 0;
   private badges: Badge[] = [];
+  private reward: Reward = NO_REWARD;
+  private intelReward = false;
   private downs = 0;
   private alarms = 0;
   private reinforceCap = REINFORCE_CAP;
@@ -269,7 +273,7 @@ export class Simulation {
       objectives: this.objectives.map(o => ({ ...o })), alarm: this.alarm, calmIn: this.calmIn, reinforceIn: this.reinforceIn, reinforced: this.reinforced, result: this.result,
       alarms: this.alarms, reinforceCap: this.reinforceCap, calmFor: this.calmFor, nextAlarm: this.escalate(this.alarms + 1),
       failReason: this.failReason, payout: this.payout, stealth: !this.detected, alarmCause: this.alarmCause, time: this.time, message: this.message,
-      saveUnavailable: this.saveUnavailable, syncing: this.syncing, pending: this.pending, badges: this.badges, downs: this.downs, countermeasures: this.countermeasures, countermeasuresOpen: unlockedCountermeasures(this.campaign),
+      saveUnavailable: this.saveUnavailable, syncing: this.syncing, pending: this.pending, badges: this.badges, reward: this.reward, intelReward: this.intelReward, downs: this.downs, countermeasures: this.countermeasures, countermeasuresOpen: unlockedCountermeasures(this.campaign),
       milestones: this.milestones,
       cover: Object.fromEntries(this.phase === 'mission' && this.plan ? this.livingSquad().map(u => [u.id, this.coverStatus(u).shield]) : []),
     };
@@ -347,7 +351,7 @@ export class Simulation {
     const plan = this.plan;
     this.units = []; this.objectives = []; this.shots = []; this.blasts = []; this.casts = []; this.hitThisFrame.clear(); this.volleyReady.clear(); this.autoPaused.clear();
     this.alarm = false; this.detected = false; this.alarmCause = null; this.calmIn = 0; this.lastKnown = null; this.lastSeen = new Map(); this.intel = new Map(); this.milestones = [];
-    this.reinforceIn = 0; this.reinforced = 0; this.badges = []; this.downs = 0; this.alarms = 0; this.reinforceCap = REINFORCE_CAP; this.calmFor = CALM_SECONDS; this.waves = 0; this.vipJoined = false; this.vipThreat = null; this.holdup = ''; this.pending = null; this.commandPoint = null;
+    this.reinforceIn = 0; this.reinforced = 0; this.badges = []; this.reward = NO_REWARD; this.downs = 0; this.alarms = 0; this.reinforceCap = REINFORCE_CAP; this.calmFor = CALM_SECONDS; this.waves = 0; this.vipJoined = false; this.vipThreat = null; this.holdup = ''; this.pending = null; this.commandPoint = null;
     this.targetArea = plan?.targetArea ? { ...plan.targetArea } : null;
     if (!plan) { this.squad = []; this.selected = []; return; }
     this.rng = mulberry32(plan.contract.seed ^ 0x5bd1e995);
@@ -377,6 +381,11 @@ export class Simulation {
     if (t === 'escort' && plan.vip) this.objectives.push(o('vip', 'Free the VIP', plan.vip));
     if (t === 'elimination') this.objectives.push(o('sweep', sweepLabel(plan.enemies.length), { x: 0, z: 0 }));
     this.objectives.push(o('extract', t === 'escort' ? 'Escort the VIP and the whole squad to extraction' : 'Get the whole squad to extraction', plan.extract));
+    // An intel reward spent on this deployment: every route is known from the start, as if each had been watched.
+    if (this.intelReward) for (const u of this.units) {
+      if (u.faction !== 'hostile' || u.patrol.length < 2 || u.escort) continue;
+      this.intel.set(u.id, u.kind === 'target' ? this.oneWay(u.patrol) : this.route(u.patrol));
+    }
     this.updateVisibility();
   }
   // While a save is in flight the board may be one the client dealt itself (the first payout replaces contract 01),
@@ -384,8 +393,9 @@ export class Simulation {
   deploy = () => {
     if (this.phase !== 'briefing' || this.syncing || !this.contract || !this.campaign.offers.some(o => o.id === this.contract!.id)) return;
     const contract = this.contract;
-    // Mirrors the server: deploying deals the next board, so offers reroll whatever the outcome.
-    this.campaign = dealBoard(this.campaign, Math.random);
+    // Mirrors the server: deploying deals the next board, so offers reroll whatever the outcome, and spends an intel reward.
+    this.intelReward = this.campaign.intel;
+    this.campaign = { ...dealBoard(this.campaign, Math.random), intel: false };
     this.begin(contract);
   };
   restart = () => { if (this.phase === 'mission' && this.contract) this.begin(this.contract); };
@@ -722,11 +732,18 @@ export class Simulation {
     if (this.phase !== 'mission' || !this.contract) return;
     this.phase = 'headquarters'; this.result = success ? 'success' : 'failure'; this.failReason = reason; this.pending = null;
     if (success) {
-      const report = { stealth: !this.detected, badges: this.earnedBadges() };
-      this.badges = report.badges; this.payout = missionPayout(this.contract, report.stealth);
+      const report = { stealth: !this.detected, badges: this.earnedBadges(), results: this.results() };
+      this.badges = report.badges; this.payout = missionPayout(this.contract, report.stealth); this.reward = this.earnedReward(rewardFor(this.contract, report.results));
       this.campaign = applyPayout(this.campaign, this.contract, this.countermeasures, report, Math.random); this.report(s => s.completed(report));
     }
     this.emit();
+  }
+  // The per-contract results a won contract reports (see RewardSpec in campaign.ts), from the types that have any.
+  private results(): MissionResults { return {}; }
+  // As applyPayout pays it: an operative for a full roster comes as RECRUIT_COST credits.
+  private earnedReward(r: Reward): Reward {
+    const full = this.campaign.roster.length >= ROSTER_CAP;
+    return { ...r, credits: r.credits + (r.operative && full ? RECRUIT_COST : 0), operative: r.operative && !full };
   }
   // The badges a won contract earns (see Badge in campaign.ts). Purge counts the hostiles the district started with, not
   // reinforcements, which an alarm can keep sending.

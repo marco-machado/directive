@@ -26,17 +26,33 @@ export const BADGES: readonly Badge[] = ['ghost', 'untouched', 'swift', 'bloodle
 export const isBadge = (v: unknown): v is Badge => BADGES.includes(v as Badge);
 // The badges a contract type can earn. Elimination's goal is Purge, and it can never be Bloodless, so it has neither.
 export const badgesFor = (type: ContractType): readonly Badge[] => type === 'elimination' ? BADGES.filter(b => b !== 'bloodless' && b !== 'purge') : BADGES;
+// Per-contract results a won contract can report beyond the badges: caches taken, prisoners rescued, executives tagged.
+export type ResultField = 'caches' | 'prisoners' | 'tagged';
+export const RESULT_FIELDS: readonly ResultField[] = ['caches', 'prisoners', 'tagged'];
+export type MissionResults = Partial<Record<ResultField, number>>;
 // What the client reports when a contract is won.
-export type MissionReport = { stealth: boolean; badges: Badge[] };
+export type MissionReport = { stealth: boolean; badges: Badge[]; results: MissionResults };
+// What a contract type pays beyond its credits, from the one result it reports (`field`, at most `max(contract)`):
+// `bonus` credits for each count past `free`, an operative who joins the roster once the count reaches `operative`
+// (RECRUIT_COST credits instead when the roster is full), and intel on the next contract once it reaches `intel`.
+export type RewardSpec = { field: ResultField; max: (c: Contract) => number; free?: number; bonus?: number; operative?: number; intel?: number };
+export type RewardTable = Partial<Record<ContractType, RewardSpec>>;
+// Filled in by the contract types that report results.
+export const REWARDS: RewardTable = {};
+// What a won contract earned beyond its payout.
+export type Reward = { credits: number; operative: boolean; intel: boolean };
+export const NO_REWARD: Reward = { credits: 0, operative: false, intel: false };
 // The campaign's shape; the Durable Object upgrades a ledger saved in an older one when it reads it (upgradeLedger).
-export const CAMPAIGN_VERSION = 7;
+export const CAMPAIGN_VERSION = 8;
 export type Campaign = {
   version: typeof CAMPAIGN_VERSION; cash: number; weapon: number; armor: number; completed: number; loadout: Loadout; badges: Record<Badge, number>;
   countermeasures: number; // the highest Countermeasures level cleared with a badge
   abilities: Record<ClassId, number>; roster: Operative[]; recruits: Operative[]; offers: Contract[];
   dealt: ContractType[]; // the contract types that have appeared on a board, so a newly unlocked one is guaranteed a place
+  intel: boolean; // a reward waiting for the next deployment: its district's patrol routes are known from the start
 };
-export type ActiveMission = { id: string; startedAt: number; contract: Contract; countermeasures: number } | null;
+// `intel`: the deployment spent an intel reward, so a restart keeps the routes known.
+export type ActiveMission = { id: string; startedAt: number; contract: Contract; countermeasures: number; intel?: boolean } | null;
 export type Ledger = { campaign: Campaign; activeMission: ActiveMission };
 
 export const CONTRACT_TYPES: readonly ContractType[] = ['assassination', 'heist', 'sabotage', 'escort', 'elimination', 'intercept'];
@@ -65,6 +81,20 @@ export const isLoadout = (v: unknown): v is Loadout => {
   return !!l && typeof l === 'object' && WEAPON_MODES.includes(l.weapon!) && ARMOR_MODES.includes(l.armor!);
 };
 export const isContractType = (v: unknown): v is ContractType => CONTRACT_TYPES.includes(v as ContractType);
+// Whether a report's results fit the contract: only its type's field, and never more than the contract holds.
+export function resultsFit(contract: Contract, results: MissionResults, rewards: RewardTable = REWARDS) {
+  const spec = rewards[contract.type];
+  return RESULT_FIELDS.every(f => results[f] === undefined || (spec?.field === f && results[f]! <= spec.max(contract)));
+}
+// What the results earn (nothing for a type without rewards, or an older client that sends none).
+export function rewardFor(contract: Contract, results: MissionResults, rewards: RewardTable = REWARDS): Reward {
+  const spec = rewards[contract.type], count = spec ? results[spec.field] ?? 0 : 0;
+  if (!spec) return NO_REWARD;
+  return {
+    credits: Math.max(0, count - (spec.free ?? 0)) * (spec.bonus ?? 0),
+    operative: spec.operative !== undefined && count >= spec.operative, intel: spec.intel !== undefined && count >= spec.intel,
+  };
+}
 
 export const contractPayout = (tier: number) => 500 + (tier - 1) * 250;
 // Clearance: each completed contract earns CONTRACT_POINTS and each badge BADGE_POINTS (half a contract); the base
@@ -78,11 +108,15 @@ export const PAR_SECONDS: Record<ContractType, number> = { assassination: 18, he
 export const PAR_PER_TIER = 12;
 export const parSeconds = (type: ContractType, tier: number) => PAR_SECONDS[type] + PAR_PER_TIER * (tier - 1);
 // A client's report of a won contract, checked: only known badges, and Ghost exactly when the alarm never sounded (so an
-// older client that reports no badges still earns it). Null when it is malformed.
-export function missionReport(stealth: unknown, badges: unknown = []): MissionReport | null {
+// older client that reports no badges still earns it); results only in known fields, as whole counts. Null when it is
+// malformed. Whether the results fit the contract is checked against it (resultsFit).
+export function missionReport(stealth: unknown, badges: unknown = [], results: unknown = {}): MissionReport | null {
   if (!Array.isArray(badges) || !badges.every(isBadge)) return null;
+  if (!results || typeof results !== 'object' || Array.isArray(results)) return null;
+  const entries = Object.entries(results);
+  if (!entries.every(([k, v]) => RESULT_FIELDS.includes(k as ResultField) && Number.isInteger(v) && (v as number) >= 0 && (v as number) <= 99)) return null;
   const quiet = stealth === true;
-  return { stealth: quiet, badges: BADGES.filter(b => b === 'ghost' ? quiet : badges.includes(b)) };
+  return { stealth: quiet, badges: BADGES.filter(b => b === 'ghost' ? quiet : badges.includes(b)), results: Object.fromEntries(entries) as MissionResults };
 }
 // How hard a tier is for this campaign's squad. Four operatives count for about one tier and the six
 // weapon and armor levels for a little over one more (see scripts/balance.ts); ability levels of the classes on the
@@ -171,6 +205,11 @@ function dealOffers(p: Dealing, rng: Rng, unlock: UnlockTiers = UNLOCK_TIER): Co
 export const SILENT_CLASSES: readonly ClassId[] = ['recon', 'tech'];
 // Until the first contract is completed, the first recruit is always a Recon or a Tech. That covers the
 // new campaign's board and the boards dealt by its first deployments, the first ones a payout can afford.
+// An operative who joins without being hired (a rescued prisoner), with a name nobody on the roster or the board has.
+function freeOperative(c: Campaign, rng: Rng): Operative {
+  const taken = [...c.roster, ...c.recruits].map(o => o.name), name = pick(rng, NAMES.filter(n => !taken.includes(n))) ?? pick(rng, NAMES);
+  return { id: `p-${token(rng)}`, name, cls: pick(rng, CLASSES) };
+}
 function dealRecruits(c: Campaign, rng: Rng): Operative[] {
   const free = shuffle(rng, NAMES.filter(n => !c.roster.some(o => o.name === n)));
   return free.slice(0, RECRUIT_OFFERS).map((name, i) => ({ id: `r-${token(rng)}`, name, cls: pick(rng, i === 0 && !c.completed ? SILENT_CLASSES : CLASSES) }));
@@ -181,7 +220,7 @@ export const dealBoard = (c: Campaign, rng: Rng, unlock: UnlockTiers = UNLOCK_TI
 
 const noBadges = () => Object.fromEntries(BADGES.map(b => [b, 0])) as Record<Badge, number>;
 export function freshCampaign(rng: Rng = Math.random): Campaign {
-  return dealBoard({ version: CAMPAIGN_VERSION, cash: 0, weapon: 0, armor: 0, completed: 0, loadout: { ...DEFAULT_LOADOUT }, badges: noBadges(), countermeasures: 0, abilities: { assault: 0, support: 0, recon: 0, tech: 0 }, roster: STARTERS.map(o => ({ ...o })), recruits: [], offers: [], dealt: [] }, rng);
+  return dealBoard({ version: CAMPAIGN_VERSION, cash: 0, weapon: 0, armor: 0, completed: 0, loadout: { ...DEFAULT_LOADOUT }, badges: noBadges(), countermeasures: 0, abilities: { assault: 0, support: 0, recon: 0, tech: 0 }, roster: STARTERS.map(o => ({ ...o })), recruits: [], offers: [], dealt: [], intel: false }, rng);
 }
 
 export function parseCampaign(text: string | null): Campaign {
@@ -207,7 +246,7 @@ function clampContract(c: any): Contract | null {
   const contract: Contract = { id, type: c.type, tier, seed: n(c.seed, 2 ** 31), payout: contractPayout(tier), district, sector: Math.max(1, n(c.sector, 99)) };
   return c.patrols === undefined ? contract : { ...contract, patrols: n(c.patrols, 3 + MAX_TIER) };
 }
-// Accepts v1 (`mission`) to v7 saves. A save from before v7 has no `dealt`, so the types its progress unlocks count as
+// Accepts v1 (`mission`) to v8 saves. A save from before v7 has no `dealt`, so the types its progress unlocks count as
 // dealt: only a type unlocked later is guaranteed a place on a board.
 export function clampCampaign(data: any, rng: Rng = Math.random): Campaign {
   if (!data || typeof data !== 'object') return freshCampaign(rng);
@@ -223,7 +262,7 @@ export function clampCampaign(data: any, rng: Rng = Math.random): Campaign {
   const campaign: Campaign = {
     version: CAMPAIGN_VERSION, cash: n(data.cash, 1e8), weapon: n(data.weapon, MAX_LEVEL), armor: n(data.armor, MAX_LEVEL), loadout,
     badges: progress.badges, countermeasures: n(data.countermeasures, MAX_COUNTERMEASURES), completed: progress.completed, abilities,
-    roster: roster.length ? roster : STARTERS.map(o => ({ ...o })), recruits: clampOperatives(data.recruits, RECRUIT_OFFERS), offers, dealt,
+    roster: roster.length ? roster : STARTERS.map(o => ({ ...o })), recruits: clampOperatives(data.recruits, RECRUIT_OFFERS), offers, dealt, intel: data.intel === true,
   };
   return offers.length ? campaign : dealBoard(campaign, rng);
 }
@@ -232,7 +271,8 @@ export function clampCampaign(data: any, rng: Rng = Math.random): Campaign {
 export function upgradeLedger(ledger: Ledger, rng: Rng): Ledger {
   const m = ledger.activeMission as any, contract = m && clampContract(m.contract);
   const keep = contract && typeof m.id === 'string' && Number.isFinite(m.startedAt);
-  return { campaign: clampCampaign(ledger.campaign, rng), activeMission: keep ? { id: m.id, startedAt: m.startedAt, contract, countermeasures: n(m.countermeasures, MAX_COUNTERMEASURES) } : null };
+  const active = keep ? { id: m.id, startedAt: m.startedAt, contract, countermeasures: n(m.countermeasures, MAX_COUNTERMEASURES) } : null;
+  return { campaign: clampCampaign(ledger.campaign, rng), activeMission: active && m.intel === true ? { ...active, intel: true } : active };
 }
 
 // Switching how the gear is spent is free.
@@ -256,7 +296,12 @@ const isFirstContract = (o: Contract) => o.seed === FIRST_CONTRACT.seed && o.pat
 // The board was dealt at deploy, before this payout counted, so the first payout deals new offers in place of one that
 // still holds contract 01. Recruits stay: they are what the first payout can buy.
 // Clearing the highest open Countermeasures level (`countermeasures`, 0 for none) with a badge opens the next.
-export function applyPayout(c: Campaign, contract: Contract, countermeasures: number, report: MissionReport, rng: Rng): Campaign {
+// Rewards beyond credits come from the report's results (rewardFor); an operative is a new recruit, or RECRUIT_COST
+// credits when the roster is full.
+export function applyPayout(c: Campaign, contract: Contract, countermeasures: number, report: MissionReport, rng: Rng, rewards: RewardTable = REWARDS): Campaign {
+  const reward = rewardFor(contract, report.results, rewards), full = c.roster.length >= ROSTER_CAP;
+  const joined = reward.operative && !full ? freeOperative(c, rng) : null;
+  c = { ...c, cash: c.cash + reward.credits + (reward.operative && full ? RECRUIT_COST : 0), roster: joined ? [...c.roster, joined] : c.roster, intel: c.intel || reward.intel };
   const badges = { ...c.badges };
   const earned = report.badges.filter(b => badgesFor(contract.type).includes(b));
   for (const b of earned) badges[b]++;
@@ -270,16 +315,17 @@ export const validSquad = (c: Campaign, squad: readonly string[]) =>
 
 // Deploying an offer deals a new board, so offers reroll whether the mission is won or lost.
 // Restarting the active contract keeps the board as it is. Either way the Countermeasures level must be open.
+// An intel reward is spent by the next deployment, and a restart of it keeps the intel.
 export function startMission(state: Ledger, id: string, now: number, contractId: string, squad: readonly string[], countermeasures: number, rng: Rng): Ledger | null {
   if (!validSquad(state.campaign, squad) || countermeasures > unlockedCountermeasures(state.campaign)) return null;
-  const offer = state.campaign.offers.find(o => o.id === contractId);
-  if (offer) return { campaign: dealBoard(state.campaign, rng), activeMission: { id, startedAt: now, contract: offer, countermeasures } };
+  const offer = state.campaign.offers.find(o => o.id === contractId), intel = (on: boolean) => on ? { intel: true } : {};
+  if (offer) return { campaign: { ...dealBoard(state.campaign, rng), intel: false }, activeMission: { id, startedAt: now, contract: offer, countermeasures, ...intel(state.campaign.intel) } };
   const active = state.activeMission?.contract;
-  if (active?.id === contractId) return { ...state, activeMission: { id, startedAt: now, contract: active, countermeasures } };
+  if (active?.id === contractId) return { ...state, activeMission: { id, startedAt: now, contract: active, countermeasures, ...intel(!!state.activeMission?.intel) } };
   return null;
 }
-export function completeMission(state: Ledger, id: string, now: number, report: MissionReport, rng: Rng): Ledger | null {
+export function completeMission(state: Ledger, id: string, now: number, report: MissionReport, rng: Rng, rewards: RewardTable = REWARDS): Ledger | null {
   const m = state.activeMission;
-  if (!m || m.id !== id || now - m.startedAt < MIN_MISSION_MS) return null;
-  return { campaign: applyPayout(state.campaign, m.contract, m.countermeasures, report, rng), activeMission: null };
+  if (!m || m.id !== id || now - m.startedAt < MIN_MISSION_MS || !resultsFit(m.contract, report.results, rewards)) return null;
+  return { campaign: applyPayout(state.campaign, m.contract, m.countermeasures, report, rng, rewards), activeMission: null };
 }
