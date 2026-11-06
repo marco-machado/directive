@@ -14,18 +14,23 @@ export type Contract = { id: string; type: ContractType; tier: number; seed: num
 // or Recon marks it; under carry, a heist's prize is a package an operative carries out at CARRY_SPEED of a walk, hands
 // full (no firing, no ability). Each offer after the opening carries one with MODIFIER_CHANCE, of those that fit its type and are
 // open at its tier (MODIFIER_UNLOCK, from MODIFIER_TIER); each raises the fee by MODIFIER_PAY.
-export type Modifier = 'lockdown' | 'nokill' | 'unknown' | 'carry';
-export const MODIFIERS: readonly Modifier[] = ['lockdown', 'nokill', 'unknown', 'carry'];
+export type Modifier = 'lockdown' | 'nokill' | 'unknown' | 'carry' | 'through' | 'called';
+export const MODIFIERS: readonly Modifier[] = ['lockdown', 'nokill', 'unknown', 'carry', 'through', 'called'];
 export const MODIFIER_FITS: Record<Modifier, readonly ContractType[]> = {
   lockdown: ['assassination', 'heist', 'sabotage', 'escort', 'elimination', 'intercept'],
   nokill: ['assassination', 'heist', 'sabotage', 'escort', 'intercept'], // Elimination is all kills
   unknown: ['assassination'],
   carry: ['heist'],
+  // Two endings: a through-run extracts at the corner opposite the start (an intercept's courier route is planned
+  // around the start); a called extraction has none until the squad calls a pickup, PICKUP_SECONDS out.
+  through: ['assassination', 'heist', 'sabotage', 'escort', 'elimination'],
+  called: ['assassination', 'heist', 'sabotage', 'escort', 'elimination', 'intercept'],
 };
-export const MODIFIER_UNLOCK: Record<Modifier, number> = { lockdown: 2, nokill: 2, unknown: 3, carry: 2 };
+export const MODIFIER_UNLOCK: Record<Modifier, number> = { lockdown: 2, nokill: 2, unknown: 3, carry: 2, through: 2, called: 2 };
 export const IDENTIFY_RANGE = 5, IDENTIFY_SECONDS = 2;
 // Carry: the carrier's share of a walk; a squadmate sent on its own to stand within HANDOVER_REACH of a standing carrier
 // takes the package after HANDOVER_SECONDS; a dropped one is picked up by standing within PICKUP_REACH of it.
+export const PICKUP_SECONDS = 10;
 export const CARRY_SPEED = .75, HANDOVER_REACH = 1, HANDOVER_SECONDS = 1.5, PICKUP_REACH = .8;
 export const MODIFIER_TIER = 2, MODIFIER_CHANCE = 1 / 3, MODIFIER_PAY = .2, MAX_MODIFIERS = 2;
 export const LOCKDOWN_SECONDS = 45;

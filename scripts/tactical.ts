@@ -77,6 +77,11 @@ class Tactician {
     if (k.pending) this.o.cancelAbility();
     this.living = k.squad.filter(op => op.hp > 0);
     if (!this.living.length) return;
+    // A called extraction: with the objectives done, the squad calls its pickup where its lead stands (or by the start).
+    if (hasModifier(k.contract, 'called') && !k.pickup && k.objectives.every(o => o.kind === 'extract' || o.done)) {
+      const spot = [this.living[0], k.extract].find(p => k.world.walkable(p, .6)) ?? k.extract;
+      this.o.armPickup(); this.o.groundClick(spot);
+    }
     this.watchers = k.hostiles.filter(h => h.stunned < 1 && h.held <= 0)
       .map(h => ({ h, plan: sight(k.world, h, 1), now: sight(k.world, h, 0), ever: watchedBy(k.world, h, 0) }));
     const goal = this.goal();

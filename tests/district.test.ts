@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CONTRACT_TYPES, contractPayout, MAX_TIER } from '../src/game/campaign.ts';
+import { CONTRACT_TYPES, contractPayout, MAX_TIER, MODIFIER_FITS } from '../src/game/campaign.ts';
 import type { ContractType } from '../src/game/campaign.ts';
 import { planMission } from '../src/game/mapgen.ts';
 import type { MissionPlan } from '../src/game/mapgen.ts';
@@ -10,7 +10,9 @@ import type { District, Part } from '../src/scene/district.ts';
 import { buildingTop, hides, PLINTH } from '../src/scene/view.ts';
 
 const contract = (type: ContractType, tier: number, seed: number) => ({ id: `c-${seed}`, type, tier, seed, payout: contractPayout(tier), district: 'GLASS DISTRICT', sector: 4 });
-const cases = CONTRACT_TYPES.flatMap(type => Array.from({ length: MAX_TIER }, (_, i) => [7, 31337].map(seed => contract(type, i + 1, seed + i * 101)))).flat();
+// Every type and tier, plus through-runs, whose start and extraction sit at opposite corners.
+const through = MODIFIER_FITS.through.flatMap(type => [2, 4].map(tier => ({ ...contract(type, tier, 4242 + tier), modifiers: ['through' as const] })));
+const cases = [...CONTRACT_TYPES.flatMap(type => Array.from({ length: MAX_TIER }, (_, i) => [7, 31337].map(seed => contract(type, i + 1, seed + i * 101)))).flat(), ...through];
 const overlaps = (a: Rect, b: Rect) => Math.abs(a.x - b.x) < (a.w + b.w) / 2 && Math.abs(a.z - b.z) < (a.d + b.d) / 2;
 const layout = (plan: MissionPlan) => JSON.stringify({ ...plan, world: { bounds: plan.world.bounds, buildings: plan.world.buildings, cover: plan.world.cover } });
 const lit = (d: District): Part[] => [...d.solid, ...d.cylinders, ...d.facade, ...d.neon, ...d.signs];

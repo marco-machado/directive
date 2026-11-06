@@ -2,9 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Simulation, parseCampaign, SQUAD_SPEED, FLEE_DELAY, HOSTILE_STATS, posted, CALM_SECONDS, COUNTERMEASURES, EXTENDED_RANGE, HEAVY_HP, LIGHT_CONCEALMENT, PIERCING_BONUS, SUPPRESSOR_STEP, CALM_STEP, escalation, FIRST_WAVE_SECONDS, waveSize, REPEAT_REINFORCEMENTS, VIP_DAMAGE_TAKEN, VIP_SECURE_SECONDS, CAMERA_DETECT, COVER_FACTOR, DETECT_DRAIN, detectSeconds, GHOST_SECONDS, HACK_SECONDS, LOOK_ANGLE, LOOK_EVERY, LOOK_PAUSE, QUEUE_SPACING, REINFORCE_CAP, ROUTE_MAX, SUSPICIOUS, REINFORCE_SECONDS, REVIVE_SECONDS, SIGHT_RANGE, TAKEDOWN_REACH, TAKEDOWN_SECONDS, tierDamage, tierHp, WAIT_MAX, WAIT_STEP } from '../src/game/simulation.ts';
 import type { CampaignSync, Unit, Upgrade } from '../src/game/simulation.ts';
-import { CAMPAIGN_VERSION, CARRY_SPEED, CONTRACT_TYPES, contractPayout, HANDOVER_SECONDS, IDENTIFY_RANGE, IDENTIFY_SECONDS, LOCKDOWN_SECONDS, FIRST_CONTRACT, freshCampaign, MAX_LEVEL, MAX_TIER, parSeconds } from '../src/game/campaign.ts';
+import { CAMPAIGN_VERSION, CARRY_SPEED, CONTRACT_TYPES, MODIFIER_FITS, PICKUP_SECONDS, contractPayout, HANDOVER_SECONDS, IDENTIFY_RANGE, IDENTIFY_SECONDS, LOCKDOWN_SECONDS, FIRST_CONTRACT, freshCampaign, MAX_LEVEL, MAX_TIER, parSeconds } from '../src/game/campaign.ts';
 import type { ArmorMode, Campaign, ContractType, MissionReport, WeaponMode } from '../src/game/campaign.ts';
-import { abilityCooldown, CLASS_STATS } from '../src/game/classes.ts';
+import { ABILITY_STATS, abilityCooldown, CLASS_STATS } from '../src/game/classes.ts';
 import { COURIER_DELAY, COURIER_MIN_RUN, interceptable, mapSize, planMission, TARGET_AREA_OFFSET, TARGET_AREA_RADIUS } from '../src/game/mapgen.ts';
 import type { EnemyKind } from '../src/game/mapgen.ts';
 import { mulberry32 } from '../src/game/rng.ts';
@@ -1767,4 +1767,115 @@ test('extraction under carry needs the package in the zone', () => {
   sim.cargo!.x = zone.x; sim.cargo!.z = zone.z;
   step(sim, 1);
   assert.equal(sim.result, 'success');
+});
+
+// The two endings (#53).
+const ending = (type: ContractType, modifier: 'through' | 'called', tier = 2, seed = 4242) => ({ ...contract(type, tier, seed), payout: contractPayout(tier, 1), modifiers: [modifier] });
+
+test('a through-run starts at one corner and extracts at the opposite one, with hostiles and exits clear of the start', () => {
+  for (const type of MODIFIER_FITS.through) for (let seed = 1; seed <= 12; seed++) {
+    const plan = planMission(ending(type, 'through', 1 + seed % 5, seed * 977)), b = plan.world.bounds;
+    assert.ok(distance(plan.start, plan.extract) > .8 * Math.hypot(b.maxX - b.minX, b.maxZ - b.minZ), `${type} ${seed}: corners ${distance(plan.start, plan.extract).toFixed(1)} m apart`);
+    assert.ok(plan.enemies.every(e => distance(e, plan.start) > 9), `${type} ${seed}: a hostile starts by the squad`);
+    assert.ok(plan.exits.length && plan.exits.every(e => distance(e, plan.start) > 14 && distance(e, plan.extract) > 14));
+    assert.ok(plan.spawn.every(p => distance(p, plan.start) < 3));
+  }
+  const plain = planMission(contract('heist', 2, 4242));
+  assert.deepEqual(plain.start, plain.extract);
+  const first = planMission({ ...FIRST_CONTRACT, id: 'c', payout: contractPayout(FIRST_CONTRACT.tier) });
+  assert.deepEqual(first.start, first.extract, 'contract 01 stays out-and-back');
+});
+
+test("a through-run's squad extracts at the far corner, and the alarm's first wave enters nearest it", () => {
+  const sim = new Simulation(campaignWith('heist', { offers: [ending('heist', 'through')] }));
+  sim.deploy();
+  const plan = sim.plan!, squad = sim.units.filter(u => u.faction === 'squad'), zone = sim.objectives.at(-1)!;
+  assert.deepEqual({ x: zone.x, z: zone.z }, plan.extract);
+  assert.ok(squad.every(u => distance(u, plan.start) < 3 && distance(u, plan.extract) > 20));
+  (sim as unknown as { raiseAlarm(at: Point, reason: string): void }).raiseAlarm(plan.start, 'test');
+  sim.units.filter(u => u.faction === 'hostile').forEach(u => { u.stunned = 1e9; });
+  squad.forEach(u => { u.hp = u.maxHp = 1e9; });
+  step(sim, FIRST_WAVE_SECONDS + .1);
+  const wave = sim.units.find(u => u.id === 'r0')!, nearest = plan.exits.reduce((a, b) => distance(b, plan.extract) < distance(a, plan.extract) ? b : a);
+  assert.ok(distance(wave, nearest) < 3, 'entered at the exit nearest extraction, ahead of the squad');
+  sim.objectives[0].done = true;
+  squad.forEach(u => { u.x = plan.extract.x; u.z = plan.extract.z; u.path = []; });
+  step(sim, .5);
+  assert.equal(sim.result, 'success');
+});
+
+test('a called extraction has no zone until the squad calls a pickup, which lands later and takes the whole squad', () => {
+  const sim = new Simulation(campaignWith('heist', { offers: [ending('heist', 'called')] }));
+  sim.deploy();
+  const plan = sim.plan!, squad = sim.units.filter(u => u.faction === 'squad');
+  sim.units.filter(u => u.faction === 'hostile').forEach(u => { u.stunned = 1e9; });
+  sim.armPickup();
+  assert.equal(sim.calling, false, 'not before the objectives are done');
+  sim.objectives[0].done = true;
+  step(sim, 1);
+  assert.equal(sim.phase, 'mission', 'standing at the start does not extract');
+  sim.armPickup();
+  assert.ok(sim.calling);
+  const building = plan.world.buildings[0];
+  sim.groundClick({ x: building.x, z: building.z });
+  assert.equal(sim.pickup, null); assert.match(sim.message, /open street/);
+  const spot = plan.exits[0];
+  sim.groundClick(spot);
+  assert.ok(sim.pickup && !sim.calling); assert.equal(sim.getSnapshot().pickup?.in, PICKUP_SECONDS);
+  assert.deepEqual({ x: sim.objectives.at(-1)!.x, z: sim.objectives.at(-1)!.z }, { x: spot.x, z: spot.z });
+  squad.forEach(u => { u.x = spot.x; u.z = spot.z; u.path = []; });
+  step(sim, PICKUP_SECONDS - 1);
+  assert.equal(sim.phase, 'mission', 'the pickup has not landed yet');
+  step(sim, 1.5);
+  assert.equal(sim.result, 'success');
+});
+
+test('Esc cancels a pickup call, and reinforcements come in nearest a called pickup', () => {
+  const sim = new Simulation(campaignWith('heist', { offers: [ending('heist', 'called')] }));
+  sim.deploy();
+  const plan = sim.plan!, squad = sim.units.filter(u => u.faction === 'squad');
+  sim.objectives[0].done = true;
+  sim.armPickup(); assert.ok(sim.cancelAbility()); assert.equal(sim.calling, false);
+  sim.units.filter(u => u.faction === 'hostile').forEach(u => { u.stunned = 1e9; });
+  squad.forEach(u => { u.hp = u.maxHp = 1e9; });
+  const far = [...plan.exits].sort((a, b) => distance(b, plan.start) - distance(a, plan.start))[0];
+  sim.armPickup(); sim.groundClick(far);
+  (sim as unknown as { raiseAlarm(at: Point, reason: string): void }).raiseAlarm(plan.start, 'test');
+  const waves = () => sim.units.filter(u => /^r\d+$/.test(u.id));
+  step(sim, FIRST_WAVE_SECONDS + .05);
+  const first = waves().length;
+  assert.ok(first > 0 && waves().every(u => distance(u, far) < 2), 'the first wave entered by the pickup');
+  step(sim, REINFORCE_SECONDS);
+  assert.ok(waves().length > first && waves().slice(first).every(u => distance(u, far) < 2), 'and so did the next');
+});
+
+test('activating an ability ends a pickup call, so the next click casts it instead of calling the pickup', () => {
+  const sim = new Simulation(campaignWith('heist', { offers: [ending('heist', 'called')] }));
+  sim.deploy();
+  sim.objectives[0].done = true;
+  const slot = sim.squad.findIndex(id => { const a = sim.units.find(u => u.id === id)?.ability; return !!a && ABILITY_STATS[a].targeted; });
+  assert.ok(slot >= 0, 'the squad has a targeted ability');
+  sim.armPickup(); assert.ok(sim.calling);
+  sim.ability(slot);
+  assert.equal(sim.calling, false); assert.ok(sim.pending);
+  const caster = sim.units.find(u => u.id === sim.squad[slot])!;
+  sim.groundClick({ x: caster.x + 1, z: caster.z });
+  assert.equal(sim.pickup, null, 'the click did not call the pickup');
+});
+
+test('before a pickup is called, reinforcement waves enter at random edge exits', () => {
+  const entries = [1, 2, 3, 4, 5, 6, 7, 8].map(seed => {
+    const sim = new Simulation(campaignWith('heist', { offers: [ending('heist', 'called', 2, 4242 + seed)] }));
+    sim.deploy();
+    const plan = sim.plan!, squad = sim.units.filter(u => u.faction === 'squad');
+    sim.units.filter(u => u.faction === 'hostile').forEach(u => { u.stunned = 1e9; });
+    squad.forEach(u => { u.hp = u.maxHp = 1e9; });
+    (sim as unknown as { raiseAlarm(at: Point, reason: string): void }).raiseAlarm(plan.start, 'test');
+    step(sim, FIRST_WAVE_SECONDS + .05);
+    const wave = sim.units.find(u => u.id === 'r0')!, at = plan.exits.find(e => distance(e, wave) < 2);
+    assert.ok(at, 'the wave entered at an edge exit');
+    const nearest = plan.exits.reduce((a, b) => distance(b, plan.start) < distance(a, plan.start) ? b : a);
+    return at === nearest;
+  });
+  assert.ok(entries.some(near => !near), 'not always the exit nearest the start');
 });

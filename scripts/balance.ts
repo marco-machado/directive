@@ -19,7 +19,7 @@ const SEEDS = Number(option('seeds') ?? 12);
 const TIERS = option('tiers')?.split(',').map(Number) ?? Array.from({ length: MAX_TIER }, (_, i) => i + 1);
 const TYPES = (option('types')?.split(',') ?? CONTRACT_TYPES) as ContractType[];
 const QUIET_ONLY = process.argv.includes('--quiet-only');
-// `--modifier lockdown` (or nokill, or unknown) plays every contract with that modifier, on the types it fits.
+// `--modifier lockdown` (or nokill, unknown, carry, through, called) plays every contract with that modifier, on the types it fits.
 const MODIFIER = option('modifier') as Modifier | undefined;
 if (MODIFIER && !isModifier(MODIFIER)) throw new Error(`Unknown modifier ${MODIFIER}: give one of ${MODIFIERS.join(', ')}.`);
 const [weapon, armor] = option('loadout')?.split('/') ?? [], LOADOUT = option('loadout') ? { weapon, armor } : null;

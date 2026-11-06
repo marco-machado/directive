@@ -1,6 +1,6 @@
 import { abilityCooldown, abilityPower, ABILITY_STATS, CLASS_STATS, effectScale, EMP_CAMERA_SECONDS, MARK_RADIUS, MARK_SECONDS, SQUAD_SPEED } from './classes.ts';
 import type { AbilityId, ClassId } from './classes.ts';
-import { applyDismiss, applyLoadout, applyPayout, applyPurchase, applyRecruit, badgesFor, CARRY_SPEED, dealBoard, HANDOVER_REACH, HANDOVER_SECONDS, hasModifier, IDENTIFY_RANGE, PICKUP_REACH, IDENTIFY_SECONDS, LOCKDOWN_SECONDS, NO_REWARD, RECRUIT_COST, rewardFor, ROSTER_CAP, freshCampaign, missionPayout, parSeconds, SQUAD_MAX, unlockedCountermeasures } from './campaign.ts';
+import { applyDismiss, applyLoadout, applyPayout, applyPurchase, applyRecruit, badgesFor, CARRY_SPEED, dealBoard, HANDOVER_REACH, HANDOVER_SECONDS, hasModifier, IDENTIFY_RANGE, PICKUP_REACH, IDENTIFY_SECONDS, LOCKDOWN_SECONDS, PICKUP_SECONDS, NO_REWARD, RECRUIT_COST, rewardFor, ROSTER_CAP, freshCampaign, missionPayout, parSeconds, SQUAD_MAX, unlockedCountermeasures } from './campaign.ts';
 import type { Badge, Campaign, Contract, Loadout, MissionReport, MissionResults, Reward, Upgrade } from './campaign.ts';
 import { COURIER_DELAY, COURIER_PAUSE, COURIER_SPEED, planMission } from './mapgen.ts';
 import type { Area, EnemyKind, MissionPlan } from './mapgen.ts';
@@ -36,6 +36,7 @@ export type Unit = Point & {
 };
 // A carry contract's package: where it is, who carries it (null once dropped), and the squadmate taking it over and for how long.
 export type Cargo = Point & { carrier: string | null; to: string | null; hand: number };
+export type Pickup = Point & { in: number };
 // Where a hostile was, and which way it faced, when the squad lost sight of it (`at` is mission time).
 export type Sighting = Point & { heading: number; at: number };
 export type Shot = { id: number; from: Point; to: Point; faction: Faction; shooter: UnitKind; kind: 'bullet' | 'snipe'; ttl: number };
@@ -66,6 +67,8 @@ export type Snapshot = {
   // What a won contract earned beyond its payout, and whether the mission started with an intel reward's routes.
   reward: Reward; intelReward: boolean;
   cargo: Cargo | null; // a carry contract's package, once the vault gives it up
+  // A called extraction: where the pickup was called and the seconds until it lands, and whether the squad is choosing where.
+  pickup: Pickup | null; calling: boolean;
   lockdownIn: number | null; // seconds until a Lockdown contract's exits seal, once its first alarm has sounded
   // The Countermeasures level picked for (or fixed by) the mission, and the highest one open.
   countermeasures: number; countermeasuresOpen: number;
@@ -147,6 +150,7 @@ export const gearRange = (c: Campaign) => c.loadout.weapon === 'extended' ? c.we
 export const suppressedAlert = (c: Campaign) => c.loadout.weapon === 'suppressed' ? 1 - SUPPRESSOR_STEP * c.weapon : 1;
 export const gearHp = (c: Campaign) => c.loadout.armor === 'heavy' ? c.armor * HEAVY_HP : 0;
 export const concealment = (c: Campaign) => c.loadout.armor === 'light' ? 1 + LIGHT_CONCEALMENT * c.armor : 1;
+export const PICKUP_RADIUS = 3;     // a called pickup's zone (a fixed extraction's is 2 m)
 export const QUEUE_SPACING = .9;    // gap between operatives, side by side or in single file
 export const ROUTE_MAX = 8;         // waypoints an operative's route can hold, the one it is walking to included
 export const WAIT_STEP = 2;         // each wait order adds this many seconds at the last waypoint
@@ -260,6 +264,8 @@ export class Simulation {
   // Seconds until a Lockdown contract's exits seal; null until its first alarm (and on any other contract).
   lockdownIn: number | null = null;
   cargo: Cargo | null = null;
+  pickup: Pickup | null = null;
+  calling = false;
   private intelReward = false;
   private downs = 0;
   private alarms = 0;
@@ -293,7 +299,7 @@ export class Simulation {
       objectives: this.objectives.map(o => ({ ...o })), alarm: this.alarm, calmIn: this.calmIn, reinforceIn: this.reinforceIn, reinforced: this.reinforced, result: this.result,
       alarms: this.alarms, reinforceCap: this.reinforceCap, calmFor: this.calmFor, nextAlarm: this.escalate(this.alarms + 1),
       failReason: this.failReason, payout: this.payout, stealth: !this.detected, alarmCause: this.alarmCause, time: this.time, message: this.message,
-      saveUnavailable: this.saveUnavailable, syncing: this.syncing, pending: this.pending, badges: this.badges, reward: this.reward, intelReward: this.intelReward, lockdownIn: this.lockdownIn, cargo: this.cargo && { ...this.cargo }, downs: this.downs, countermeasures: this.countermeasures, countermeasuresOpen: unlockedCountermeasures(this.campaign),
+      saveUnavailable: this.saveUnavailable, syncing: this.syncing, pending: this.pending, badges: this.badges, reward: this.reward, intelReward: this.intelReward, lockdownIn: this.lockdownIn, cargo: this.cargo && { ...this.cargo }, pickup: this.pickup && { ...this.pickup }, calling: this.calling, downs: this.downs, countermeasures: this.countermeasures, countermeasuresOpen: unlockedCountermeasures(this.campaign),
       milestones: this.milestones,
       cover: Object.fromEntries(this.phase === 'mission' && this.plan ? this.livingSquad().map(u => [u.id, this.coverStatus(u).shield]) : []),
     };
@@ -371,14 +377,14 @@ export class Simulation {
     const plan = this.plan;
     this.units = []; this.objectives = []; this.shots = []; this.blasts = []; this.casts = []; this.hitThisFrame.clear(); this.volleyReady.clear(); this.autoPaused.clear();
     this.alarm = false; this.detected = false; this.alarmCause = null; this.calmIn = 0; this.lastKnown = null; this.lastSeen = new Map(); this.intel = new Map(); this.milestones = [];
-    this.reinforceIn = 0; this.reinforced = 0; this.badges = []; this.reward = NO_REWARD; this.lockdownIn = null; this.cargo = null; this.downs = 0; this.alarms = 0; this.reinforceCap = REINFORCE_CAP; this.calmFor = CALM_SECONDS; this.waves = 0; this.vipJoined = false; this.vipThreat = null; this.holdup = ''; this.pending = null; this.commandPoint = null;
+    this.reinforceIn = 0; this.reinforced = 0; this.badges = []; this.reward = NO_REWARD; this.lockdownIn = null; this.cargo = null; this.pickup = null; this.calling = false; this.downs = 0; this.alarms = 0; this.reinforceCap = REINFORCE_CAP; this.calmFor = CALM_SECONDS; this.waves = 0; this.vipJoined = false; this.vipThreat = null; this.holdup = ''; this.pending = null; this.commandPoint = null;
     this.targetArea = plan?.targetArea ? { ...plan.targetArea } : null;
     if (!plan) { this.squad = []; this.selected = []; return; }
     this.rng = mulberry32(plan.contract.seed ^ 0x5bd1e995);
     this.squad = this.squadPick.filter(id => this.campaign.roster.some(o => o.id === id));
     this.squad.forEach((id, i) => {
       const op = this.campaign.roster.find(o => o.id === id)!, stats = CLASS_STATS[op.cls];
-      const u = this.makeUnit(id, op.name, op.cls, 'squad', plan.spawn[i % plan.spawn.length], stats.hp + gearHp(this.campaign), headingTo(plan.extract, { x: 0, z: 0 }));
+      const u = this.makeUnit(id, op.name, op.cls, 'squad', plan.spawn[i % plan.spawn.length], stats.hp + gearHp(this.campaign), headingTo(plan.start, { x: 0, z: 0 }));
       u.ability = stats.ability; this.units.push(u);
     });
     const courier = plan.contract.type === 'intercept' ? plan.enemies.findIndex(e => e.kind === 'target') : -1;
@@ -402,7 +408,9 @@ export class Simulation {
     if (t === 'sabotage') plan.sites.forEach((s, i) => this.objectives.push(o('charge', `Plant charge ${'AB'[i]}`, s)));
     if (t === 'escort' && plan.vip) this.objectives.push(o('vip', 'Free the VIP', plan.vip));
     if (t === 'elimination') this.objectives.push(o('sweep', sweepLabel(plan.enemies.length), { x: 0, z: 0 }));
-    this.objectives.push(o('extract', t === 'escort' ? 'Escort the VIP and the whole squad to extraction' : 'Get the whole squad to extraction', plan.extract));
+    // A called extraction's zone sits at the start until the pickup is called, and nothing shows or points at it till then.
+    const who = t === 'escort' ? 'the VIP and the whole squad' : 'the whole squad';
+    this.objectives.push(o('extract', hasModifier(plan.contract, 'called') ? `Call a pickup, then get ${who} to it` : t === 'escort' ? 'Escort the VIP and the whole squad to extraction' : 'Get the whole squad to extraction', plan.extract));
     // An intel reward spent on this deployment: every route is known from the start, as if each had been watched.
     if (this.intelReward) for (const u of this.units) {
       if (u.faction !== 'hostile' || u.patrol.length < 2 || u.escort) continue;
@@ -618,13 +626,28 @@ export class Simulation {
     if (!u || u.hp <= 0 || !u.ability) return;
     const stats = ABILITY_STATS[u.ability];
     if (this.carrying(u)) { this.message = `${u.name} has their hands full with the package.`; this.emit(); return; }
+    this.calling = false;
     if (u.abilityCd > 0) { this.message = `${u.name}: ${stats.name} recharging (${Math.ceil(u.abilityCd)} s).`; this.emit(); return; }
     if (!stats.targeted) { this.casts.push({ unitId: u.id, ability: u.ability, point: { x: u.x, z: u.z }, targetId: null }); u.abilityCd = this.cooldownFor(u); this.pending = null; this.message = `${u.name}: ${stats.name}.`; this.emit(); return; }
     this.pending = { unitId: u.id, ability: u.ability };
     this.message = u.ability === 'snipe' ? `${u.name}: choose a visible hostile within ${stats.reach} m. Esc cancels.` : `${u.name}: choose where to throw the ${stats.name.toLowerCase()} (${stats.reach} m). Esc cancels.`;
     this.emit();
   }
+  // A called extraction: once the objectives are done, the next ground click (or tap) calls the pickup there.
+  get calledExtraction() { return !!this.plan && hasModifier(this.plan.contract, 'called'); }
+  armPickup = () => {
+    if (this.phase !== 'mission' || !this.calledExtraction || !this.extractReady || this.pickup) return;
+    this.pending = null; this.calling = true; this.message = 'Choose an open street for the pickup. Esc cancels.'; this.emit();
+  };
+  private callPickup(p: Point) {
+    const world = this.plan!.world;
+    if (!world.inBounds(p) || !world.walkable(p, .6)) { this.message = 'The pickup needs open street.'; this.emit(); return; }
+    this.calling = false; this.pickup = { x: p.x, z: p.z, in: PICKUP_SECONDS };
+    const zone = this.objectives.at(-1)!; zone.x = p.x; zone.z = p.z;
+    this.message = `Pickup called. It lands in ${PICKUP_SECONDS} s; get everyone into the zone.`; this.emit();
+  }
   cancelAbility(): boolean {
+    if (this.calling) { this.calling = false; this.message = 'Pickup call canceled.'; this.emit(); return true; }
     if (!this.pending) return false;
     this.pending = null; this.message = 'Ability canceled.'; this.emit(); return true;
   }
@@ -644,9 +667,10 @@ export class Simulation {
   get extractReady() { return this.objectives.every(o => o.kind === 'extract' || o.done); }
   // Pointer entry points for the scene. `additive` (Shift, or a long press on touch) appends a waypoint on the
   // street and toggles an operative in the selection.
-  groundClick(point: Point, additive = false) { if (this.pending) this.aim(point, null); else this.move(point, additive); }
+  groundClick(point: Point, additive = false) { if (this.calling) this.callPickup(point); else if (this.pending) this.aim(point, null); else this.move(point, additive); }
   unitClick(id: string, additive = false) {
     const u = this.unit(id); if (!u) return;
+    if (this.calling) { this.callPickup(u); return; }
     if (this.pending) { if (u.faction === 'hostile') this.aim(u, id); else { this.cancelAbility(); this.select(id, additive); } return; }
     if (u.faction === 'hostile') this.attack(id);
     else if (u.faction === 'squad' && u.hp <= 0) this.revive(id);
@@ -1181,11 +1205,14 @@ export class Simulation {
     }
     // Extraction counts only with every deployed operative standing in the zone; the downed must be revived first.
     const extract = this.objectives.at(-1)!, team = this.units.filter(u => u.faction === 'squad');
-    const inZone = (s: Unit) => distance(s, extract) < 2;
+    // A called pickup's zone is wider: it lands on an open street, where a squad sent to it lines up in single file.
+    const reach = this.calledExtraction ? PICKUP_RADIUS : 2, inZone = (s: Unit) => distance(s, extract) < reach;
     extract.progress = team.filter(s => s.hp > 0 && inZone(s)).length / team.length;
     if (!this.extractReady) return;
     this.reach('extractOpen');
-    const vipIn = !vip || distance(vip, extract) < 2.4, cargoIn = !this.cargo || distance(this.cargo, extract) < 2;
+    // A called pickup lifts off with the squad only once it has landed.
+    if (this.calledExtraction && !(this.pickup && this.pickup.in <= 0)) return;
+    const vipIn = !vip || distance(vip, extract) < reach + .4, cargoIn = !this.cargo || distance(this.cargo, extract) < reach;
     if (extract.progress === 1 && vipIn && cargoIn) { extract.done = true; this.finish(true); return; }
     const down = team.find(s => s.hp <= 0);
     const holdup = !squad.every(inZone) ? '' : down ? `${down.name} is down. Revive them before extracting.` : !vipIn ? 'Bring the VIP into the zone.' : cargoIn ? '' : 'Bring the package into the zone.';
@@ -1197,9 +1224,13 @@ export class Simulation {
     this.reinforceIn -= dt;
     if (this.reinforceIn > 0) return;
     this.reinforceIn = REINFORCE_SECONDS;
-    // An alarm's first wave flanks: it enters at the exit nearest extraction, between the squad and its way out.
-    const exits = this.plan.exits, extract = this.plan.extract, tier = this.plan.contract.tier;
-    const exit = this.waves++ ? exits[Math.floor(this.rng() * exits.length)] : exits.reduce((a, b) => distance(b, extract) < distance(a, extract) ? b : a);
+    // An alarm's first wave flanks: it enters at the exit nearest extraction, between the squad and its way out; later
+    // waves enter at a random edge exit. A called extraction has no way out to flank until the pickup is called, so
+    // every wave until then enters at a random exit, and every wave after it comes in nearest the pickup.
+    const exits = this.plan.exits, extract = this.pickup ?? this.plan.extract, tier = this.plan.contract.tier;
+    const nearest = () => exits.reduce((a, b) => distance(b, extract) < distance(a, extract) ? b : a);
+    const first = this.waves++ === 0, random = () => exits[Math.floor(this.rng() * exits.length)];
+    const exit = this.pickup ? nearest() : this.calledExtraction || !first ? random() : nearest();
     const count = Math.min(waveSize(tier), this.reinforceCap - this.reinforced), heavies = this.escalate(this.alarms).heavies;
     for (let k = 0; k < count; k++) {
       const kind = k < heavies ? 'heavy' : 'guard', stats = HOSTILE_STATS[kind];
@@ -1252,6 +1283,7 @@ export class Simulation {
     this.reinforce(dt);
     if (this.alarm && (this.calmIn -= dt) <= 0) this.standDown();
     this.updateVisibility();
+    if (this.pickup && this.pickup.in > 0 && (this.pickup.in -= dt) <= 0) { this.pickup.in = 0; this.message = 'Pickup on the ground. Everyone into the zone.'; this.emit(); }
     this.uiTimer += dt;
     if (this.uiTimer >= .1 || this.alarm !== wasAlarm || this.paused) { this.uiTimer = 0; this.emit(); }
   }

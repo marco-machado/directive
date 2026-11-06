@@ -172,7 +172,7 @@ function World({ sim, reset, focus, overview, layout, attract, frame, labels, mi
   }, [gl]);
   useFrame(({ pointer: ndc, camera, size }) => {
     let next = '', over: string | null = null;
-    if (sim.pending) next = 'crosshair';
+    if (sim.pending || sim.calling) next = 'crosshair';
     else if (inside.current && (over = nearestClickable(sim, hitboxes, camera, size.width, size.height, (ndc.x + 1) / 2 * size.width, (1 - ndc.y) / 2 * size.height))) next = 'pointer';
     hovered.current = over;
     if (next !== cursor.current) gl.domElement.style.cursor = cursor.current = next;

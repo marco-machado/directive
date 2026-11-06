@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { CSSProperties, MouseEvent } from 'react';
 import { sim } from '../app.ts';
-import { missionPayout } from '../game/campaign.ts';
+import { hasModifier, missionPayout, PICKUP_SECONDS } from '../game/campaign.ts';
 import type { Campaign } from '../game/campaign.ts';
 import { abilityCooldown, ABILITY_STATS, CLASS_STATS } from '../game/classes.ts';
 import type { ClassId } from '../game/classes.ts';
@@ -108,6 +108,26 @@ function Targeting({ pending }: { pending: NonNullable<Pending> }) {
   </div>;
 }
 
+// A called extraction: the order to call the pickup once the objectives are done, the choice of where, then its countdown.
+function CallPickup({ state }: { state: Snapshot }) {
+  if (state.phase !== 'mission' || state.pending || !hasModifier(state.contract, 'called') || !state.objectives.every(o => o.kind === 'extract' || o.done)) return null;
+  const p = state.pickup;
+  if (state.calling) return <div className="targeting call-pickup">
+    <Icon name="flag" />
+    <span><strong>Call pickup</strong><small>Click or tap an open street · <kbd>Esc</kbd> cancels</small></span>
+    <button className="btn ghost small" onClick={() => sim.cancelAbility()}>Cancel</button>
+  </div>;
+  if (p) return <div className="targeting call-pickup" role="status">
+    <Icon name="clock" />
+    <span><strong>{p.in > 0 ? `Pickup in ${Math.ceil(p.in)} s` : 'Pickup on the ground'}</strong><small>The whole squad must be in the zone</small></span>
+  </div>;
+  return <div className="targeting call-pickup">
+    <Icon name="flag" />
+    <span><strong>Objectives done</strong><small>Pick where to disappear: the pickup lands {PICKUP_SECONDS} s after the call</small></span>
+    <button className="btn small" onClick={sim.armPickup}>Call pickup</button>
+  </div>;
+}
+
 // Who is noticing the squad before the alarm: the hostile closest to raising it, by name, with its detection.
 // Its marker sits over it on the map, or an edge arrow points to it when it is off screen.
 const WATCHER: Partial<Record<Unit['kind'], string>> = { guard: 'Guard', heavy: 'Heavy', camera: 'Camera', turret: 'Turret', target: 'Target' };
@@ -131,6 +151,7 @@ export function Hud({ state, overview, onFocusSelection, onToggleOverview }: { s
     <aside id="mission-drawer" className={`hud-left${drawer ? ' open' : ''}`}><Tracker state={state} open={drawer} onToggle={() => setDrawer(v => !v)} /><TipDock milestones={state.milestones} /><Comms state={state} /></aside>
     <Spotted state={state} />
     {state.pending ? <Targeting pending={state.pending} /> : null}
+    <CallPickup state={state} />
     {state.paused ? <div className="pause-banner"><Icon name="pause" /><span><strong>Tactical pause</strong><small><kbd>Shift</kbd>+click or long-press: add a waypoint · <kbd>W</kbd>: wait there</small></span>
       <button className="btn small" onClick={sim.togglePause}><Icon name="play" />Resume <kbd>Space</kbd></button></div> : null}
     <p className="sr-only" role="status">{state.message}</p>

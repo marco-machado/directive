@@ -4,7 +4,7 @@ import { useFrame } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
 import { AdditiveBlending, CylinderGeometry, DoubleSide } from 'three';
 import type { Group, Mesh } from 'three';
-import { VIP_REACH } from '../game/simulation.ts';
+import { PICKUP_RADIUS, VIP_REACH } from '../game/simulation.ts';
 import type { Objective, Simulation } from '../game/simulation.ts';
 import { Box, ProgressRing, STILL } from './parts.tsx';
 
@@ -75,15 +75,25 @@ function VipHold({ sim, index, o }: Props) {
   return <group ref={ref} position={[o.x, 0, o.z]}><ProgressRing radius={VIP_REACH} color="#ffe7a8" value={progress(sim, index)} segments={48} /></group>;
 }
 
+// A called extraction's zone appears only once the pickup is called, where it was called, with its countdown.
 function Extraction({ sim, o, labels }: Props) {
-  const ring = useRef<Mesh>(null);
-  useFrame(({ clock }) => { if (ring.current) ring.current.rotation.z = clock.elapsedTime * .15; });
-  const ready = () => sim.phase === 'mission' && sim.extractReady;
-  return <group position={[o.x, .05, o.z]}>
+  const ring = useRef<Mesh>(null), root = useRef<Group>(null), disk = useRef<Group>(null), label = useRef<HTMLSpanElement>(null);
+  useFrame(({ clock }) => {
+    if (ring.current) ring.current.rotation.z = clock.elapsedTime * .15;
+    const zone = sim.objectives.at(-1), called = sim.calledExtraction, p = sim.pickup;
+    if (root.current) { root.current.visible = !called || !!p; if (zone) root.current.position.set(zone.x, .05, zone.z); }
+    if (disk.current) disk.current.scale.setScalar(called ? PICKUP_RADIUS / 2 : 1);
+    const text = !called ? 'EXTRACTION' : p && p.in > 0 ? `PICKUP ${Math.ceil(p.in)} s` : 'PICKUP';
+    if (label.current && label.current.textContent !== text) label.current.textContent = text;
+  });
+  const ready = () => sim.phase === 'mission' && sim.extractReady && (!sim.calledExtraction || !!sim.pickup && sim.pickup.in <= 0);
+  return <group ref={root} position={[o.x, .05, o.z]}>
     <Beacon color="#5ef2c0" active={ready} />
-    <mesh ref={ring} rotation={[-Math.PI / 2, 0, 0]}><ringGeometry args={[1.7, 1.77, 6]} /><meshBasicMaterial color="#83e5c4" transparent opacity={.8} /></mesh>
-    <mesh rotation={[-Math.PI / 2, 0, 0]}><circleGeometry args={[1.7, 40]} /><meshBasicMaterial color="#68e7bf" transparent opacity={.06} depthWrite={false} /></mesh>
-    <Html portal={labels} center position={[0, .05, 1.9]} style={{ pointerEvents: 'none' }}><span className="extract-label">EXTRACTION</span></Html>
+    <group ref={disk}>
+      <mesh ref={ring} rotation={[-Math.PI / 2, 0, 0]}><ringGeometry args={[1.7, 1.77, 6]} /><meshBasicMaterial color="#83e5c4" transparent opacity={.8} /></mesh>
+      <mesh rotation={[-Math.PI / 2, 0, 0]}><circleGeometry args={[1.7, 40]} /><meshBasicMaterial color="#68e7bf" transparent opacity={.06} depthWrite={false} /></mesh>
+    </group>
+    <Html portal={labels} center position={[0, .05, 1.9]} style={{ pointerEvents: 'none' }}><span ref={label} className="extract-label">EXTRACTION</span></Html>
   </group>;
 }
 
