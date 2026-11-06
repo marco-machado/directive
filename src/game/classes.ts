@@ -2,6 +2,7 @@ export type ClassId = 'assault' | 'support' | 'recon' | 'tech';
 export type AbilityId = 'grenade' | 'heal' | 'snipe' | 'emp';
 export const CLASSES: readonly ClassId[] = ['assault', 'support', 'recon', 'tech'];
 export const isClass = (v: unknown): v is ClassId => CLASSES.includes(v as ClassId);
+export const SQUAD_SPEED = 3.4; // m/s, every class alike
 
 export type ClassStats = { title: string; hp: number; damage: number; range: number; fireCooldown: number; ability: AbilityId };
 export const CLASS_STATS: Record<ClassId, ClassStats> = {

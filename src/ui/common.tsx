@@ -6,6 +6,7 @@ import type { Badge, Campaign, Contract, ContractType, Operative } from '../game
 import { ABILITY_STATS, CLASS_STATS } from '../game/classes.ts';
 import { formatSaveCode, normalizeSaveCode } from '../game/saveCode.ts';
 import { COUNTERMEASURES, HACK_SECONDS, VIP_SECURE_SECONDS } from '../game/simulation.ts';
+import { COURIER_DELAY } from '../game/mapgen.ts';
 import { ApiError, fetchCampaign, rememberSaveCode } from '../net/campaignClient.ts';
 import { Icon, Portrait } from './icons.tsx';
 import type { IconName } from './icons.tsx';
@@ -20,6 +21,10 @@ export const CONTRACTS: Record<ContractType, { title: string; brief: string; int
     title: 'Elimination', brief: 'Down every hostile the district started with, then extract. Reinforcements don\'t count, but an alarm sends them into your way.',
     intro: 'Every hostile on the briefing has to go down; the tracker counts the ones left. Takedowns and volleys that kill keep it quiet. Purge and Bloodless are not on offer here.',
   },
+  intercept: {
+    title: 'Intercept', brief: 'A courier and two escorts cross the district from one edge exit to another. Stop the courier before it leaves, then extract. Once the alarm sounds, it runs for its exit.',
+    intro: `The courier sets off ${COURIER_DELAY} s after you deploy. Watch it reach a street corner and its whole route is drawn, like a patrol's. Pick the ground and the moment: a volley that kills drops an escort quietly.`,
+  },
   escort: { title: 'Escort', brief: `Stay beside the VIP for ${VIP_SECURE_SECONDS} seconds to free them, then escort them to extraction. Under fire, the VIP ducks behind cover near the squad; if they die, the contract fails.` },
 };
 // What each badge is called, its icon, and what earns it on a contract (its district holding `hostiles` hostiles).
@@ -27,7 +32,7 @@ export const BADGE_COPY: Record<Badge, { title: string; icon: IconName; goal: (c
   ghost: { title: 'Ghost', icon: 'eye', goal: () => 'Never raise the alarm' },
   untouched: { title: 'Untouched', icon: 'cover', goal: () => 'No operative goes down' },
   swift: { title: 'Swift', icon: 'clock', goal: c => `Extract within ${clock(parSeconds(c.type, c.tier))}` },
-  bloodless: { title: 'Bloodless', icon: 'heal', goal: c => c.type === 'assassination' ? 'Kill no one but the target' : 'Kill no one' },
+  bloodless: { title: 'Bloodless', icon: 'heal', goal: c => c.type === 'assassination' ? 'Kill no one but the target' : c.type === 'intercept' ? 'Kill no one but the courier' : 'Kill no one' },
   purge: { title: 'Purge', icon: 'kills', goal: (_, n) => `Down all ${n} hostile${n === 1 ? '' : 's'} in the district` },
 };
 // Countermeasures levels by name, and what a level does (each adds to the ones below it).
