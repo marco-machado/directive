@@ -1,7 +1,9 @@
 import { useSyncExternalStore } from 'react';
 import type { ReactNode } from 'react';
 import { CALM_SECONDS, FIRST_WAVE_SECONDS, REVIVE_SECONDS } from '../game/simulation.ts';
+import type { ContractType } from '../game/campaign.ts';
 import type { Milestone } from '../game/simulation.ts';
+import { CONTRACTS } from './common.tsx';
 import { Icon } from './icons.tsx';
 import type { IconName } from './icons.tsx';
 import { tipStore } from './tipStore.ts';
@@ -27,4 +29,16 @@ export function TipDock({ milestones }: { milestones: Milestone[] }) {
     <span className="tip-copy"><small>Tip</small><strong>{title}</strong><span>{body}</span></span>
     <button className="tip-close icon-button" aria-label="Dismiss tip" onClick={() => tipStore.dismiss(id)}><Icon name="close" /></button>
   </section></div>;
+}
+
+// In the briefing, the first time a contract type that unlocks with clearance is on offer: what is new about it.
+export function ContractIntro({ type }: { type: ContractType }) {
+  const { enabled, seen } = useSyncExternalStore(tipStore.subscribe, tipStore.get);
+  const { title, intro } = CONTRACTS[type], id = `contract:${type}` as const;
+  if (!enabled || !intro || seen.includes(id)) return null;
+  return <section className="tip panel brief-tip" aria-label="Tip">
+    <span className="tip-icon"><Icon name={type} /></span>
+    <span className="tip-copy"><small>New contract</small><strong>{title}</strong><span>{intro}</span></span>
+    <button className="tip-close icon-button" aria-label="Dismiss tip" onClick={() => tipStore.dismiss(id)}><Icon name="close" /></button>
+  </section>;
 }
