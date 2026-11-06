@@ -96,6 +96,7 @@ class Tactician {
   // ---- Where the squad is going ----
   private goal(): Goal {
     const k = this.k, o = k.objectives.find(o => !o.done)!;
+    if (k.cargo && !k.cargo.carrier) return { key: 'package', kind: 'search', point: k.cargo };
     if (o.kind === 'target') {
       const target = k.hostiles.find(h => h.kind === 'target') ?? this.suspect();
       // An Intercept courier comes with no target area: the squad scouts for it.

@@ -3,7 +3,7 @@ import type { Campaign, Contract } from '../src/game/campaign.ts';
 import type { AbilityId, ClassId } from '../src/game/classes.ts';
 import type { Area, EnemyKind } from '../src/game/mapgen.ts';
 import { apparentHealth, GHOST_SECONDS, isReinforcement } from '../src/game/simulation.ts';
-import type { Objective, Pending, Simulation, Unit } from '../src/game/simulation.ts';
+import type { Cargo, Objective, Pending, Simulation, Unit } from '../src/game/simulation.ts';
 import { distance } from '../src/game/world.ts';
 import type { Point, World } from '../src/game/world.ts';
 
@@ -23,6 +23,8 @@ export const noTactics: Bot = sim => {
     const goal = sim.objectives.find(o => !o.done)!;
     // A downed operative is revived before anything else; a move order would cancel the revive.
     if (down) { if (!living.some(u => u.reviveTarget)) { sim.selectAll(); sim.revive(down.id); order = ''; } }
+    // A dropped package is fetched before anything else but a revive.
+    else if (sim.cargo && !sim.cargo.carrier) { if (order !== 'package' || idle) go('package', sim.cargo); }
     else if (goal.kind === 'target' || goal.kind === 'sweep') {
       // Elimination: the nearest of the district's own hostiles still standing.
       const lead = living[0], left = sim.units.filter(u => u.faction === 'hostile' && u.hp > 0 && !isReinforcement(u));
@@ -55,7 +57,7 @@ export type Op = {
 };
 export type Knowledge = {
   time: number; alarm: boolean; detected: boolean; world: World; contract: Contract; campaign: Campaign; extract: Point; kills: number;
-  squad: Op[]; hostiles: Seen[]; objectives: Objective[]; targetArea: Area | null; vip: (Point & { joined: boolean }) | null; pending: Pending;
+  squad: Op[]; hostiles: Seen[]; objectives: Objective[]; targetArea: Area | null; cargo: Cargo | null; vip: (Point & { joined: boolean }) | null; pending: Pending;
 };
 // The orders a player can give, and the hover preview of an attack.
 export type Orders = Pick<Simulation, 'select' | 'selectAll' | 'move' | 'addWait' | 'hold' | 'attack' | 'attackPreview' | 'revive' | 'ability' | 'unitClick' | 'groundClick' | 'cancelAbility'>;
@@ -96,7 +98,7 @@ export function observer(sim: Simulation): () => Knowledge {
     });
     return {
       time: sim.time, alarm: sim.alarm, detected: sim.detected, world: plan.world, contract: plan.contract, campaign: sim.campaign, extract: plan.extract, kills: dead.size,
-      squad, hostiles: [...known.values()], objectives: sim.objectives, targetArea: sim.targetArea, pending: sim.pending,
+      squad, hostiles: [...known.values()], objectives: sim.objectives, targetArea: sim.targetArea, cargo: sim.cargo, pending: sim.pending,
       vip: vip ? { x: vip.x, z: vip.z, joined: sim.objectives.some(o => o.kind === 'vip' && o.done) } : null,
     };
   };
