@@ -101,6 +101,17 @@ function Tag({ sim, index, o, labels }: Props) {
   </group>;
 }
 
+// A Jailbreak cell: the VIP's ring around its prisoner, with the cell's letter, until the prisoner is freed or lost.
+function Cell({ sim, index, o, labels }: Props) {
+  const ref = useRef<Group>(null);
+  useFrame(() => { const live = sim.objectives[index]; if (ref.current) ref.current.visible = !!live && !live.done && !live.lost; });
+  return <group ref={ref} position={[o.x, 0, o.z]}>
+    <ProgressRing radius={VIP_REACH} color="#ffe7a8" value={progress(sim, index)} segments={48} />
+    <Beacon color="#ffe7a8" active={open(sim, index)} />
+    <Label labels={labels} text={`CELL ${cacheLetter(o)}`} done={false} y={2.1} />
+  </group>;
+}
+
 // The VIP's hold: the ring fills while an operative stands within reach, and goes once they are free.
 function VipHold({ sim, index, o }: Props) {
   const ref = useRef<Group>(null);
@@ -211,6 +222,7 @@ export function Objectives({ sim, objectives, labels }: { sim: Simulation; objec
     if (o.kind === 'extract') return <Extraction key={key} {...props} />;
     if (o.kind === 'vip') return <VipHold key={key} {...props} />;
     if (o.kind === 'tag') return <Tag key={key} {...props} />;
+    if (o.kind === 'cell') return <Cell key={key} {...props} />;
     return null;
   })}</>;
 }

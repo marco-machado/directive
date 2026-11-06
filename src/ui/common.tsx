@@ -1,7 +1,7 @@
 import { Component, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { CSSProperties, ErrorInfo, FormEvent, ReactNode, RefObject } from 'react';
 import { client, sim } from '../app.ts';
-import { BADGE_POINTS, BADGES, CACHE_BONUS, CACHES, CARRY_SPEED, EXECUTIVES, EXECUTIVES_NEEDED, PICKUP_SECONDS, TAG_RANGE, TAG_SECONDS, CONTRACT_POINTS, IDENTIFY_RANGE, IDENTIFY_SECONDS, LOCKDOWN_SECONDS, MAX_TIER, MODIFIER_PAY, NO_KILL_CUT, NO_KILL_FLOOR, nextTypeUnlock, RECRUIT_COST, REWARDS, nextUnlock, OPENING_CONTRACTS, parSeconds, topTier, unlockedTypes } from '../game/campaign.ts';
+import { BADGE_POINTS, BADGES, CACHE_BONUS, CACHES, CARRY_SPEED, EXECUTIVES, PRISONER_BONUS, EXECUTIVES_NEEDED, PICKUP_SECONDS, TAG_RANGE, TAG_SECONDS, CONTRACT_POINTS, IDENTIFY_RANGE, IDENTIFY_SECONDS, LOCKDOWN_SECONDS, MAX_TIER, MODIFIER_PAY, NO_KILL_CUT, NO_KILL_FLOOR, nextTypeUnlock, RECRUIT_COST, REWARDS, nextUnlock, thresholdFor, OPENING_CONTRACTS, parSeconds, topTier, unlockedTypes } from '../game/campaign.ts';
 import type { Badge, Campaign, Contract, ContractType, Modifier, Operative, Reward, ResultField } from '../game/campaign.ts';
 import { ABILITY_STATS, CLASS_STATS } from '../game/classes.ts';
 import { formatSaveCode, normalizeSaveCode } from '../game/saveCode.ts';
@@ -33,6 +33,10 @@ export const CONTRACTS: Record<ContractType, { title: string; brief: string; int
     title: 'Surveillance', brief: `Tag ${EXECUTIVES_NEEDED} of ${EXECUTIVES} executives: keep one in sight within ${TAG_RANGE} m for ${TAG_SECONDS} s without being noticed, or mark it with Recon. Then extract. Once the alarm sounds, the untagged run for exits. Tag all ${EXECUTIVES} for intel on the next contract.`,
     intro: 'Executives walk their own beats and carry no weapon. A killed executive is lost, not tagged; lose two and the contract is blown. Stay out of sight and let the watch fill.',
   },
+  jailbreak: {
+    title: 'Jailbreak', brief: `Free the prisoners held in separate cells: stay beside one for ${VIP_SECURE_SECONDS} seconds, then bring it out. One at extraction is the contract; each one past it pays ${PRISONER_BONUS} credits, and the last cell holds an operative who joins the roster if every prisoner gets out. The contract fails if every prisoner dies.`,
+    intro: 'A freed prisoner follows the nearest operative and ducks behind cover under fire, but wears no armor, and hostiles can spot it. Every follower makes the group harder to hide: take the next cell only if you can still slip back out.',
+  },
   escort: { title: 'Escort', brief: `Stay beside the VIP for ${VIP_SECURE_SECONDS} seconds to free them, then escort them to extraction. Under fire, the VIP ducks behind cover near the squad; if they die, the contract fails.` },
 };
 // What each badge is called, its icon, and what earns it on a contract (its district holding `hostiles` hostiles).
@@ -50,8 +54,8 @@ export function rewardLines(c: Contract): string[] {
   const spec = REWARDS[c.type]; if (!spec) return [];
   const lines: string[] = [], one = RESULT_NOUN[spec.field][0];
   if (spec.bonus) lines.push(`${credits(spec.bonus)} for each ${one}${spec.free ? ` past the first${spec.free > 1 ? ` ${spec.free}` : ''}` : ''}`);
-  if (spec.operative !== undefined) lines.push(`An operative joins the roster at ${count(spec.operative, spec.field)} (${credits(RECRUIT_COST)} if the roster is full)`);
-  if (spec.intel !== undefined) lines.push(`Intel at ${count(spec.intel, spec.field)}: the next contract's patrol routes, known from the start`);
+  if (spec.operative !== undefined) lines.push(`An operative joins the roster at ${count(thresholdFor(spec.operative, c), spec.field)} (${credits(RECRUIT_COST)} if the roster is full)`);
+  if (spec.intel !== undefined) lines.push(`Intel at ${count(thresholdFor(spec.intel, c), spec.field)}: the next contract's patrol routes, known from the start`);
   return lines;
 }
 export function earnedLines(r: Reward): string[] {

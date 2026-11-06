@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Simulation, parseCampaign, CACHE_SECONDS, SQUAD_SPEED, FLEE_DELAY, HOSTILE_STATS, posted, CALM_SECONDS, COUNTERMEASURES, EXTENDED_RANGE, HEAVY_HP, LIGHT_CONCEALMENT, PIERCING_BONUS, SUPPRESSOR_STEP, CALM_STEP, escalation, FIRST_WAVE_SECONDS, waveSize, REPEAT_REINFORCEMENTS, VIP_DAMAGE_TAKEN, VIP_SECURE_SECONDS, CAMERA_DETECT, COVER_FACTOR, DETECT_DRAIN, detectSeconds, GHOST_SECONDS, HACK_SECONDS, LOOK_ANGLE, LOOK_EVERY, LOOK_PAUSE, QUEUE_SPACING, REINFORCE_CAP, ROUTE_MAX, SUSPICIOUS, REINFORCE_SECONDS, REVIVE_SECONDS, SIGHT_RANGE, TAKEDOWN_REACH, TAKEDOWN_SECONDS, tierDamage, tierHp, WAIT_MAX, WAIT_STEP } from '../src/game/simulation.ts';
 import type { CampaignSync, Unit, Upgrade } from '../src/game/simulation.ts';
-import { CACHE_BONUS, EXECUTIVES, TAG_RANGE, TAG_SECONDS, CAMPAIGN_VERSION, CARRY_SPEED, smashSeconds, CONTRACT_TYPES, MODIFIER_FITS, PICKUP_SECONDS, contractPayout, HANDOVER_SECONDS, IDENTIFY_RANGE, IDENTIFY_SECONDS, LOCKDOWN_SECONDS, FIRST_CONTRACT, freshCampaign, MAX_LEVEL, MAX_TIER, parSeconds } from '../src/game/campaign.ts';
+import { CACHE_BONUS, EXECUTIVES, PRISONER_BONUS, prisonerCount, TAG_RANGE, TAG_SECONDS, CAMPAIGN_VERSION, CARRY_SPEED, smashSeconds, CONTRACT_TYPES, MODIFIER_FITS, PICKUP_SECONDS, contractPayout, HANDOVER_SECONDS, IDENTIFY_RANGE, IDENTIFY_SECONDS, LOCKDOWN_SECONDS, FIRST_CONTRACT, freshCampaign, MAX_LEVEL, MAX_TIER, parSeconds } from '../src/game/campaign.ts';
 import type { ArmorMode, Campaign, ContractType, MissionReport, WeaponMode } from '../src/game/campaign.ts';
 import { ABILITY_STATS, abilityCooldown, CLASS_STATS, MARK_SECONDS } from '../src/game/classes.ts';
 import { COURIER_DELAY, COURIER_MIN_RUN, interceptable, mapSize, planMission, TARGET_AREA_OFFSET, TARGET_AREA_RADIUS } from '../src/game/mapgen.ts';
@@ -1994,6 +1994,68 @@ test('under the alarm the squad never fires on an executive unordered', () => {
   assert.equal(execs[0].hp, execs[0].maxHp);
   sim.selectAll(); sim.attack(execs[0].id); step(sim, 3);
   assert.ok(execs[0].hp < execs[0].maxHp, 'an ordered attack still fires');
+});
+
+// Jailbreak (#51).
+test('Jailbreak plans two cells, three from tier 5, well apart and each held by a posted guard', () => {
+  for (let seed = 1; seed <= 20; seed++) {
+    const tier = 4 + seed % 2, plan = planMission(contract('jailbreak', tier, seed * 197)), cells = plan.sites.filter(s => s.kind === 'cell');
+    assert.equal(cells.length, prisonerCount(tier));
+    cells.forEach((c, i) => cells.slice(i + 1).forEach(d => assert.ok(distance(c, d) >= 8)));
+    assert.ok(cells.every(c => plan.enemies.some(e => e.kind === 'guard' && e.patrol.length < 2 && distance(e, c) <= 8)), `seed ${seed}: an unguarded cell`);
+  }
+});
+
+function jailbreak(tier = 5) {
+  const { sim, squad, hostile } = arena('jailbreak', { offers: [contract('jailbreak', tier)] });
+  const prisoners = sim.units.filter(u => u.faction === 'vip'), cells = sim.objectives.filter(o => o.kind === 'cell');
+  prisoners.forEach((u, i) => { u.x = cells[i].x = 12; u.z = cells[i].z = -12 + i * 12; });
+  return { sim, squad, hostile, prisoners, cells };
+}
+const free = (sim: Simulation, squad: Unit[], p: Unit) => { squad[0].x = p.x - 1; squad[0].z = p.z; squad[0].path = []; step(sim, VIP_SECURE_SECONDS + .1); };
+const extractWith = (sim: Simulation, squad: Unit[], followers: Unit[]) => { [...squad, ...followers].forEach(u => { u.x = -18; u.z = -18; u.path = []; }); step(sim, .5); };
+
+test('a prisoner is freed beside an operative, follows it, and the other cells turn optional with a bonus', () => {
+  const { sim, squad, prisoners, cells } = jailbreak();
+  assert.equal(cells.length, 3); assert.equal(sim.extractReady, false);
+  free(sim, squad, prisoners[1]);
+  assert.ok(cells[1].done && sim.following(prisoners[1]) && !sim.following(prisoners[0]));
+  assert.ok(sim.extractReady && cells[0].optional && cells[2].optional && cells[0].label.includes(`+${PRISONER_BONUS}`));
+  squad.forEach(u => { u.x = -12; u.z = 6; u.path = []; }); step(sim, 10);
+  assert.ok(distance(prisoners[1], squad[0]) < 3, 'the freed prisoner followed the squad');
+  assert.ok(distance(prisoners[0], cells[0]) < .01, 'a prisoner still in its cell stays there');
+});
+
+test('one prisoner out is a win; the extraction waits for every freed prisoner', () => {
+  const { sim, squad, prisoners } = jailbreak();
+  free(sim, squad, prisoners[0]);
+  squad.forEach(u => { u.x = -18; u.z = -18; u.path = []; }); step(sim, .5);
+  assert.equal(sim.phase, 'mission', 'the freed prisoner is not in the zone yet');
+  extractWith(sim, squad, [prisoners[0]]);
+  assert.equal(sim.result, 'success');
+  assert.deepEqual(sim.getSnapshot().reward, { credits: 0, operative: false, intel: false });
+});
+
+test('every prisoner out pays a bonus for each past the first, and the operative from the last cell joins', () => {
+  const { sim, squad, prisoners } = jailbreak();
+  prisoners.forEach(p => free(sim, squad, p));
+  extractWith(sim, squad, prisoners);
+  assert.equal(sim.result, 'success');
+  assert.deepEqual(sim.getSnapshot().reward, { credits: 2 * PRISONER_BONUS, operative: true, intel: false });
+});
+
+test('prisoners wear no armor; a freed one killed reopens the cells, and every prisoner dead fails the contract', () => {
+  const { sim, squad, prisoners, cells } = jailbreak();
+  free(sim, squad, prisoners[0]);
+  const before = prisoners[0].hp;
+  (sim as unknown as { damage(t: Unit, n: number, from: Unit | null): void }).damage(prisoners[0], 20, null);
+  assert.equal(before - prisoners[0].hp, 20);
+  prisoners[0].hp = 0; step(sim, .1);
+  assert.ok(cells[0].lost && !sim.extractReady && !cells[1].optional, 'with no freed prisoner alive, the cells are required again');
+  prisoners[1].hp = 0; step(sim, .1);
+  assert.equal(sim.phase, 'mission');
+  prisoners[2].hp = 0; step(sim, .1);
+  assert.equal(sim.result, 'failure'); assert.equal(sim.failReason, 'Every prisoner was killed.');
 });
 
 test('two executives tagged in the same update open extraction', () => {

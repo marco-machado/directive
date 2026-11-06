@@ -16,7 +16,7 @@ const PATIENCE = 8;    // s to wait for a patrol to walk out of the way before d
 const SHADOW = 4;      // m behind a Surveillance executive the squad follows it from
 const REPLAN = 1;      // s a job keeps its spot before the bot looks for a better one
 const SCOUTED = 5;     // m: Elimination's search counts a street point seen once an operative passes this close
-const SITE_REACH: Partial<Record<Objective['kind'], number>> = { terminal: 1.5, charge: 1.2, tag: 1.5 };
+const SITE_REACH: Partial<Record<Objective['kind'], number>> = { terminal: 1.5, charge: 1.2, tag: 1.5, cell: 1.5 };
 
 const angleDiff = (a: number, b: number) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
 const headingTo = (a: Point, b: Point) => Math.atan2(b.x - a.x, b.z - a.z);
@@ -112,7 +112,8 @@ class Tactician {
     if (o.kind === 'tag') return this.shadow(o);
     if (o.kind === 'vip') return { key: 'vip', kind: 'vip', point: k.vip! };
     if (o.kind === 'sweep') return this.sweep();
-    return { key: `${o.kind}:${o.label}`, kind: o.kind, point: o };
+    // A cell's label gains its bonus once a prisoner is out; the key keeps to the cell.
+    return { key: o.kind === 'cell' ? `cell:${o.unit}` : `${o.kind}:${o.label}`, kind: o.kind, point: o };
   }
   // Surveillance: the squad shadows an executive from SHADOW m behind it, out of its sight, until the watch fills; with
   // the executive out of sight, it heads for where it was last seen.

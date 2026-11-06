@@ -1,4 +1,4 @@
-import { EXECUTIVES, hasModifier } from './campaign.ts';
+import { EXECUTIVES, hasModifier, prisonerCount } from './campaign.ts';
 import type { Contract } from './campaign.ts';
 import { SQUAD_SPEED } from './classes.ts';
 import { between, mulberry32, pick, shuffle } from './rng.ts';
@@ -9,7 +9,7 @@ import type { Bounds, Building, Point, Rect } from './world.ts';
 export type EnemyKind = 'guard' | 'heavy' | 'camera' | 'turret' | 'target';
 // `escort` marks a guard that walks beside an Intercept courier (the plan's target) instead of keeping a patrol or a post.
 export type EnemySpawn = Point & { kind: EnemyKind; heading: number; patrol: Point[]; escort?: true };
-export type ObjectiveSite = Point & { kind: 'terminal' | 'charge' | 'cache' };
+export type ObjectiveSite = Point & { kind: 'terminal' | 'charge' | 'cache' | 'cell' };
 export type Area = Point & { r: number };
 export type MissionPlan = {
   contract: Contract; world: World; label: string;
@@ -171,12 +171,12 @@ function attempt(contract: Contract, rng: Rng, withCover: boolean): MissionPlan 
     if (!second) return null;
     sites.push({ ...primary, kind: 'charge' }, { ...second, kind: 'charge' });
   }
-  // Smash and grab: three caches spread over the far side, each at least 8 m from the others.
-  if (type === 'smash') {
-    const caches = [primary];
-    for (const pool of [shuffle(rng, farthest), far]) for (const p of pool) if (caches.length < 3 && caches.every(c => distance(c, p) >= 8)) caches.push(p);
-    if (caches.length < 3) return null;
-    sites.push(...caches.map(p => ({ ...p, kind: 'cache' as const })));
+  // Smash and grab: three caches spread over the far side, each at least 8 m from the others; Jailbreak's cells likewise.
+  if (type === 'smash' || type === 'jailbreak') {
+    const n = type === 'smash' ? 3 : prisonerCount(contract.tier), spots = [primary];
+    for (const pool of [shuffle(rng, farthest), far]) for (const p of pool) if (spots.length < n && spots.every(c => distance(c, p) >= 8)) spots.push(p);
+    if (spots.length < n) return null;
+    sites.push(...spots.map(p => ({ ...p, kind: type === 'smash' ? 'cache' as const : 'cell' as const })));
   }
   // Surveillance: three executives walk their own beats on the far side, each starting at least 8 m from the others.
   if (type === 'surveillance') {
@@ -219,11 +219,11 @@ function attempt(contract: Contract, rng: Rng, withCover: boolean): MissionPlan 
   for (const p of escorts) enemies.push({ ...p, kind: 'guard', heading: enemies[0].heading, patrol: enemies[0].patrol, escort: true });
   // Two posted guards hold every objective; the rest walk the streets. The courier's escorts stand in for Intercept's;
   // Surveillance's executives walk, so no post holds them.
-  if (type !== 'intercept' && type !== 'surveillance') for (const site of (sites.length ? sites : [primary]).slice(0, type === 'smash' ? 3 : 2)) {
+  if (type !== 'intercept' && type !== 'surveillance') for (const site of (sites.length ? sites : [primary]).slice(0, type === 'smash' || type === 'jailbreak' ? 3 : 2)) {
     for (let k = 0; k < (sites.length > 1 ? 1 : 2); k++) {
       const p = post(site);
-      // Every Smash and grab cache is held; a layout with no post by one is tried again.
-      if (p) add('guard', p, []); else if (type === 'smash') return null;
+      // Every Smash and grab cache and Jailbreak cell is held; a layout with no post by one is tried again.
+      if (p) add('guard', p, []); else if (type === 'smash' || type === 'jailbreak') return null;
     }
   }
   const guarding = () => enemies.filter(e => e.kind === 'guard' && !e.escort).length;

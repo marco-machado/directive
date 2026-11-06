@@ -15,15 +15,16 @@ export type Bot = (sim: Simulation, options: { quietOnly: boolean }) => () => vo
 // (it walks to the target's true position), as it always has, so its numbers stay comparable with older runs.
 // The objective a bot goes for next. Smash and grab's optional caches are taken, nearest first, only while the lockdown
 // clock leaves time to walk there, open it, and walk on to extraction with `margin` seconds to spare; Surveillance's
-// third executive is tried whenever there is no clock.
+// third executive and Jailbreak's other cells are tried whenever there is no clock.
 const walk = (world: World, a: Point, b: Point) => { const path = world.findPath(a, b); return path.reduce((sum, q, i) => sum + distance(i ? path[i - 1] : a, q), 0); };
 export function nextObjective(objectives: readonly Objective[], from: Point, world: World, lockdownIn: number | null, margin: number): Objective {
   const required = objectives.find(o => !o.done && !o.optional && o.kind !== 'extract'), zone = objectives.at(-1)!;
   if (required) return required;
   const time = (o: Objective) => (walk(world, from, o) + walk(world, o, zone)) / SQUAD_SPEED + CACHE_SECONDS + margin;
-  // A Surveillance executive past the second is always worth a try without a lockdown clock; a lost one never is.
+  // A Surveillance executive past the second, or another Jailbreak cell, is always worth a try without a lockdown clock;
+  // a lost one never is.
   const extra = objectives.filter(o => !o.done && o.optional && !o.lost).sort((a, b) => distance(a, from) - distance(b, from))
-    .find(o => lockdownIn !== null ? time(o) <= lockdownIn : o.kind === 'tag');
+    .find(o => lockdownIn !== null ? time(o) <= lockdownIn : o.kind === 'tag' || o.kind === 'cell');
   return extra ?? zone;
 }
 export const noTactics: Bot = sim => {
@@ -104,7 +105,8 @@ export function observer(sim: Simulation): () => Knowledge {
         if (s.patrol.length >= 2 && sim.time - s.at >= GHOST_SECONDS) known.delete(u.id);
       }
     }
-    const plan = sim.plan!, vip = sim.units.find(u => u.faction === 'vip');
+    // The VIP, or the first freed prisoner still alive (Jailbreak's others behave the same way).
+    const plan = sim.plan!, vip = sim.units.find(u => u.faction === 'vip' && (u.id === 'vip' || (u.hp > 0 && sim.following(u))));
     const squad = sim.squad.map((id, slot): Op => {
       const u = sim.units.find(v => v.id === id)!, op = sim.campaign.roster.find(o => o.id === id)!;
       return {
@@ -115,7 +117,7 @@ export function observer(sim: Simulation): () => Knowledge {
     return {
       time: sim.time, alarm: sim.alarm, detected: sim.detected, world: plan.world, contract: plan.contract, campaign: sim.campaign, extract: plan.extract, kills: dead.size,
       squad, hostiles: [...known.values()], objectives: sim.objectives, targetArea: sim.targetArea, cargo: sim.cargo, pickup: sim.pickup, lockdownIn: sim.lockdownIn, pending: sim.pending,
-      vip: vip ? { x: vip.x, z: vip.z, joined: sim.objectives.some(o => o.kind === 'vip' && o.done) } : null,
+      vip: vip ? { x: vip.x, z: vip.z, joined: sim.following(vip) } : null,
     };
   };
 }
