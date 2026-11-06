@@ -43,6 +43,11 @@ surveillance      2   25%    0%  100%    54   33%   48%  9× Too many executives
 surveillance      3   33%    0%  100%    48  100%   34%  7× Too many executives lost. The contract is blown.; 1× The squad was wiped out.
 surveillance      4    8%    8%   92%    19  100%    0%  7× The squad was wiped out.; 4× Too many executives lost. The contract is blown.
 surveillance      5    0%    0%  100%     -     -     -  11× The squad was wiped out.; 1× Too many executives lost. The contract is blown.
+jailbreak         1  100%    0%  100%    32  100%   33%  
+jailbreak         2   83%    0%  100%    34  100%   47%  2× The squad was wiped out.
+jailbreak         3   50%    0%  100%    39  100%   43%  6× The squad was wiped out.
+jailbreak         4    8%    0%  100%    42  100%   14%  10× The squad was wiped out.; 1× Every prisoner was killed.
+jailbreak         5    0%    0%  100%     -     -     -  12× The squad was wiped out.
 
 ## starters · tactical
 type           tier   win quiet alarm  time swift    hp  fails
@@ -86,6 +91,11 @@ surveillance      2   83%   67%   33%    66   40%    4%  2× Too many executives
 surveillance      3   50%   50%   50%    60   33%    0%  6× Too many executives lost. The contract is blown.
 surveillance      4   25%    8%   92%   151   33%   12%  5× The squad was wiped out.; 4× Too many executives lost. The contract is blown.
 surveillance      5   17%    8%   92%   129   50%    6%  4× Too many executives lost. The contract is blown.; 6× The squad was wiped out.
+jailbreak         1  100%   67%   33%    60    8%    4%  
+jailbreak         2   92%   25%   75%    69    0%   13%  1× The squad was wiped out.
+jailbreak         3   92%    8%   92%    72   27%   11%  1× The squad was wiped out.
+jailbreak         4   17%    0%  100%   143    0%   14%  7× The squad was wiped out.; 3× Every prisoner was killed.
+jailbreak         5    0%    0%  100%     -     -     -  12× The squad was wiped out.
 
 ## four · no-tactics
 type           tier   win quiet alarm  time swift    hp  fails
@@ -129,6 +139,11 @@ surveillance      2    8%    0%  100%    37  100%   22%  11× Too many executive
 surveillance      3    0%    0%  100%     -     -     -  12× Too many executives lost. The contract is blown.
 surveillance      4    0%    0%  100%     -     -     -  10× Too many executives lost. The contract is blown.; 2× The squad was wiped out.
 surveillance      5    0%    0%  100%     -     -     -  7× The squad was wiped out.; 5× Too many executives lost. The contract is blown.
+jailbreak         1  100%    0%  100%    32  100%   13%  
+jailbreak         2  100%    0%  100%    35  100%   22%  
+jailbreak         3   83%    0%  100%    38  100%   21%  2× The squad was wiped out.
+jailbreak         4   67%    0%  100%    41  100%   45%  4× The squad was wiped out.
+jailbreak         5    0%    0%  100%     -     -     -  12× The squad was wiped out.
 
 ## four · tactical
 type           tier   win quiet alarm  time swift    hp  fails
@@ -172,6 +187,11 @@ surveillance      2  100%   92%    8%    57   17%    1%
 surveillance      3   92%   92%    8%    53   55%    0%  1× Too many executives lost. The contract is blown.
 surveillance      4   75%   58%   42%    74   44%    4%  3× Too many executives lost. The contract is blown.
 surveillance      5   67%   67%   25%    71   63%    0%  2× Too many executives lost. The contract is blown.; 1× timeout; 1× The squad was wiped out.
+jailbreak         1  100%  100%    0%    46    8%    0%  
+jailbreak         2  100%   83%   17%    55   50%    3%  
+jailbreak         3  100%   50%   50%    56   67%    5%  
+jailbreak         4   92%   33%   67%   100   36%    7%  1× The squad was wiped out.
+jailbreak         5   58%    0%  100%   129   29%   11%  2× Every prisoner was killed.; 2× The squad was wiped out.; 1× timeout
 
 ## four+max · no-tactics
 type           tier   win quiet alarm  time swift    hp  fails
@@ -215,6 +235,11 @@ surveillance      2    8%    0%  100%    37  100%   15%  11× Too many executive
 surveillance      3    0%    0%  100%     -     -     -  12× Too many executives lost. The contract is blown.
 surveillance      4    0%    0%  100%     -     -     -  12× Too many executives lost. The contract is blown.
 surveillance      5    0%    0%  100%     -     -     -  11× Too many executives lost. The contract is blown.; 1× The squad was wiped out.
+jailbreak         1  100%    0%  100%    32  100%    7%  
+jailbreak         2  100%    0%  100%    34  100%   11%  
+jailbreak         3  100%    0%  100%    37  100%   16%  
+jailbreak         4   83%    0%  100%    38  100%   29%  1× Every prisoner was killed.; 1× The squad was wiped out.
+jailbreak         5   67%    0%  100%    51  100%   58%  4× The squad was wiped out.
 
 ## four+max · tactical
 type           tier   win quiet alarm  time swift    hp  fails
@@ -258,24 +283,29 @@ surveillance      2  100%  100%    0%    57   25%    0%
 surveillance      3  100%  100%    0%    55   50%    0%  
 surveillance      4   75%   58%   42%    71   33%    0%  3× Too many executives lost. The contract is blown.
 surveillance      5   92%   83%   17%    72   55%    1%  1× Too many executives lost. The contract is blown.
+jailbreak         1  100%  100%    0%    48    8%    0%  
+jailbreak         2  100%   92%    8%    50   58%    0%  
+jailbreak         3  100%   92%    8%    64   50%    1%  
+jailbreak         4  100%   67%   33%    80   50%    3%  
+jailbreak         5   92%   17%   83%   110   27%    9%  1× timeout
 
 ## Mean win rate over every contract type
 roster      bot             T1   T2   T3   T4   T5
-starters    no-tactics     75%  60%  45%   8%   4%
-starters    tactical       96%  92%  80%  32%   8%
-four        no-tactics     90%  83%  79%  46%  11%
-four        tactical      100%  97%  95%  84%  76%
-four+max    no-tactics     90%  89%  88%  78%  49%
-four+max    tactical       99%  98%  95%  89%  95%
+starters    no-tactics     78%  63%  45%   8%   4%
+starters    tactical       96%  92%  81%  31%   7%
+four        no-tactics     91%  85%  80%  48%  10%
+four        tactical      100%  97%  95%  85%  74%
+four+max    no-tactics     91%  90%  89%  79%  51%
+four+max    tactical       99%  98%  95%  90%  94%
 
 ## Badges (share of wins over the tiers played)
 roster      bot               ghost untouched     swift bloodless     purge
-starters    no-tactics           5%       98%       83%        5%        8%
-starters    tactical            39%      100%       29%       21%        3%
-four        no-tactics           5%       92%       90%        1%       10%
-four        tactical            64%       97%       45%       11%        1%
-four+max    no-tactics          11%       93%       94%        7%        8%
-four+max    tactical            78%      100%       51%       11%        0%
+starters    no-tactics           4%       98%       86%        5%        9%
+starters    tactical            38%      100%       27%       19%        3%
+four        no-tactics           4%       91%       91%        1%       11%
+four        tactical            64%       97%       44%       10%        1%
+four+max    no-tactics           9%       92%       95%        6%        9%
+four+max    tactical            77%      100%       50%        9%        0%
 
 ## Smash and grab: caches taken (share of wins over the tiers played)
 roster      bot               1         2         3
@@ -295,50 +325,59 @@ four        tactical             0%        6%       94%
 four+max    no-tactics           0%       33%       67%
 four+max    tactical             0%        5%       95%
 
+## Jailbreak: prisoners freed (share of wins over the tiers played)
+roster      bot               1         2         3
+starters    no-tactics          31%       69%        0%
+starters    tactical            11%       89%        0%
+four        no-tactics          12%       88%        0%
+four        tactical             0%       91%        9%
+four+max    no-tactics          13%       80%        7%
+four+max    tactical             2%       81%       17%
+
 ## Targets (default loadout; --loadouts checks each bot's best one for the fully upgraded four)
-PASS  no-tactics  four+max  tier 5: 49% (target 40–60%)
-PASS  tactical    four+max  tier 5: 95% (target 85% or more)
+PASS  no-tactics  four+max  tier 5: 51% (target 40–60%)
+PASS  tactical    four+max  tier 5: 94% (target 85% or more)
 PASS  no-tactics  starters  tier 1: 82% (target 78–88%)
 PASS  tactical    starters  tier 1: 97% (target 90% or more)
 
 Loadouts: no-tactics and tactical bots with the fully upgraded four, 12 seeds per cell; mean over every contract type of contracts won / won without an alarm.
 
 loadout              bot                  T4        T5
-piercing/heavy       no-tactics       78%/6%    49%/1%
-piercing/heavy       tactical        89%/59%   95%/44%
-piercing/light       no-tactics       71%/7%    28%/2%
-piercing/light       tactical        90%/65%   95%/47%
-suppressed/heavy     no-tactics       69%/1%    16%/1%
-suppressed/heavy     tactical        89%/61%   90%/32%
-suppressed/light     no-tactics       52%/3%    10%/2%
-suppressed/light     tactical        92%/65%   86%/34%
-extended/heavy       no-tactics       75%/0%    38%/1%
-extended/heavy       tactical        90%/55%   90%/29%
-extended/light       no-tactics       59%/1%    17%/2%
-extended/light       tactical        93%/65%   92%/35%
+piercing/heavy       no-tactics       79%/6%    51%/1%
+piercing/heavy       tactical        90%/60%   94%/41%
+piercing/light       no-tactics       73%/6%    29%/2%
+piercing/light       tactical        91%/65%   95%/44%
+suppressed/heavy     no-tactics       70%/1%    15%/1%
+suppressed/heavy     tactical        90%/61%   91%/29%
+suppressed/light     no-tactics       55%/3%    11%/2%
+suppressed/light     tactical        93%/64%   88%/31%
+extended/heavy       no-tactics       76%/0%    37%/1%
+extended/heavy       tactical        91%/54%   91%/27%
+extended/light       no-tactics       61%/1%    17%/2%
+extended/light       tactical        94%/63%   93%/33%
 
 ## Best loadout
-no-tactics   T4 wins :  78% with piercing/heavy
-no-tactics   T4 quiet:   7% with piercing/light
-no-tactics   T5 wins :  49% with piercing/heavy
+no-tactics   T4 wins :  79% with piercing/heavy
+no-tactics   T4 quiet:   6% with piercing/light
+no-tactics   T5 wins :  51% with piercing/heavy
 no-tactics   T5 quiet:   2% with piercing/light
-tactical     T4 wins :  93% with extended/light
-tactical     T4 quiet:  65% with suppressed/light
-tactical     T5 wins :  95% with piercing/heavy
-tactical     T5 quiet:  47% with piercing/light
+tactical     T4 wins :  94% with extended/light
+tactical     T4 quiet:  65% with piercing/light
+tactical     T5 wins :  95% with piercing/light
+tactical     T5 quiet:  44% with piercing/light
 
 ## Targets (each bot's best loadout for winning)
-PASS  no-tactics  four+max  tier 5: 49% with piercing/heavy (target 40–60%)
-PASS  tactical    four+max  tier 5: 95% with piercing/heavy (target 85% or more)
+PASS  no-tactics  four+max  tier 5: 51% with piercing/heavy (target 40–60%)
+PASS  tactical    four+max  tier 5: 95% with piercing/light (target 85% or more)
 
 Countermeasures: no-tactics and tactical bots with the fully upgraded four, 12 seeds per cell; mean over every contract type of contracts won / won without an alarm.
 
 level  bot                  T5
-0      no-tactics       49%/1%
-0      tactical        95%/44%
-1      no-tactics       49%/1%
-1      tactical        96%/36%
-2      no-tactics       49%/1%
-2      tactical        96%/36%
-3      no-tactics       49%/1%
-3      tactical        77%/36%
+0      no-tactics       51%/1%
+0      tactical        94%/41%
+1      no-tactics       48%/1%
+1      tactical        96%/34%
+2      no-tactics       48%/1%
+2      tactical        96%/34%
+3      no-tactics       48%/1%
+3      tactical        74%/34%

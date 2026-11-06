@@ -1,6 +1,6 @@
 import { abilityCooldown, abilityPower, ABILITY_STATS, CLASS_STATS, effectScale, EMP_CAMERA_SECONDS, MARK_RADIUS, MARK_SECONDS, SQUAD_SPEED } from './classes.ts';
 import type { AbilityId, ClassId } from './classes.ts';
-import { applyDismiss, applyLoadout, applyPayout, applyPurchase, applyRecruit, badgesFor, CARRY_SPEED, dealBoard, HANDOVER_REACH, HANDOVER_SECONDS, hasModifier, CACHE_BONUS, EXECUTIVES_NEEDED, smashSeconds, TAG_RANGE, TAG_SECONDS, IDENTIFY_RANGE, PICKUP_REACH, IDENTIFY_SECONDS, LOCKDOWN_SECONDS, PICKUP_SECONDS, NO_REWARD, RECRUIT_COST, rewardFor, ROSTER_CAP, freshCampaign, missionPayout, parSeconds, SQUAD_MAX, unlockedCountermeasures } from './campaign.ts';
+import { applyDismiss, applyLoadout, applyPayout, applyPurchase, applyRecruit, badgesFor, CARRY_SPEED, dealBoard, HANDOVER_REACH, HANDOVER_SECONDS, hasModifier, CACHE_BONUS, EXECUTIVES_NEEDED, PRISONER_BONUS, smashSeconds, TAG_RANGE, TAG_SECONDS, IDENTIFY_RANGE, PICKUP_REACH, IDENTIFY_SECONDS, LOCKDOWN_SECONDS, PICKUP_SECONDS, NO_REWARD, RECRUIT_COST, rewardFor, ROSTER_CAP, freshCampaign, missionPayout, parSeconds, SQUAD_MAX, unlockedCountermeasures } from './campaign.ts';
 import type { Badge, Campaign, Contract, ContractType, Loadout, MissionReport, MissionResults, Reward, Upgrade } from './campaign.ts';
 import { COURIER_DELAY, COURIER_PAUSE, COURIER_SPEED, planMission } from './mapgen.ts';
 import type { Area, EnemyKind, MissionPlan } from './mapgen.ts';
@@ -43,11 +43,12 @@ export type Sighting = Point & { heading: number; at: number };
 export type Shot = { id: number; from: Point; to: Point; faction: Faction; shooter: UnitKind; kind: 'bullet' | 'snipe'; ttl: number };
 export type Blast = { id: number; kind: 'grenade' | 'heal' | 'emp'; x: number; z: number; radius: number; ttl: number };
 // A 'sweep' (Elimination) has no place of its own: its point is the district's center, and nothing draws or points at it.
-// An `optional` objective (Smash and grab's caches past the first, a Surveillance executive past the second or lost)
-// never holds extraction back. A 'tag' objective follows its executive (`unit`) while the squad can see it, and is
-// `lost` once that executive is killed or gets away.
-export type Objective = Point & { kind: 'target' | 'terminal' | 'charge' | 'cache' | 'vip' | 'sweep' | 'tag' | 'extract'; label: string; progress: number; done: boolean; optional: boolean; unit?: string; lost?: boolean };
-export const cacheLetter = (o: Objective) => /(?:cache|executive) ([A-Z])/i.exec(o.label)?.[1] ?? '';
+// An `optional` objective (Smash and grab's caches past the first, a Surveillance executive past the second or lost, a
+// Jailbreak cell once a freed prisoner lives) never holds extraction back. A 'tag' objective follows its executive
+// (`unit`) while the squad can see it, and is `lost` once that executive is killed or gets away; a 'cell' holds its
+// prisoner (`unit`), and is `lost` once that prisoner is killed.
+export type Objective = Point & { kind: 'target' | 'terminal' | 'charge' | 'cache' | 'vip' | 'cell' | 'sweep' | 'tag' | 'extract'; label: string; progress: number; done: boolean; optional: boolean; unit?: string; lost?: boolean };
+export const cacheLetter = (o: Objective) => /(?:cache|executive|prisoner) ([A-Z])/i.exec(o.label)?.[1] ?? '';
 // Whether extraction is open: every objective but extraction is done or optional.
 export const objectivesMet = (objectives: readonly Objective[]) => objectives.every(o => o.kind === 'extract' || o.done || o.optional);
 export type Phase = 'briefing' | 'mission' | 'headquarters';
@@ -105,6 +106,7 @@ export const VIP_REACH = 3;           // an operative this close to the VIP
 export const VIP_SECURE_SECONDS = 5; // takes this long to free them
 export const VIP_DAMAGE_TAKEN = .5; // the VIP wears body armor: hostile fire does half damage
 export const VIP_COVER_REACH = 4;   // under fire, the VIP ducks behind cover this close to its operative
+export const PRISONER_HP = 100;     // a Jailbreak prisoner: freed like the VIP, but with no body armor
 export const FLEE_DELAY = 5;        // the target hesitates before running for an exit
 export const FLEE_MIN_EXIT = 16;    // and picks an exit at least this far away
 export const EXECUTIVE_SPEED = 1.2; // a Surveillance executive strolls its beat
@@ -187,7 +189,7 @@ const hashed = (seed: number, id: string, n: number) => {
   return mulberry32((h ^ Math.imul(n + 1, 0x9e3779b1)) >>> 0)();
 };
 // How the debrief names each objective as a landmark (charges carry their letter from the label).
-const LANDMARK: Record<Objective['kind'], string> = { target: 'the target', terminal: 'the vault terminal', charge: 'a charge site', cache: 'a cache', tag: 'an executive', vip: 'the VIP', sweep: 'the district', extract: 'extraction' };
+const LANDMARK: Record<Objective['kind'], string> = { target: 'the target', terminal: 'the vault terminal', charge: 'a charge site', cache: 'a cache', tag: 'an executive', vip: 'the VIP', cell: 'a cell', sweep: 'the district', extract: 'extraction' };
 // Elimination's objective, with how many of the district's own hostiles are still standing.
 export const sweepLabel = (left: number) => left ? `Down every hostile (${left} left)` : 'Down every hostile';
 // Reinforcements are numbered r0, r1, … as they enter (see reinforce); the district's own hostiles are h0, h1, ….
@@ -285,8 +287,9 @@ export class Simulation {
   private reinforceCap = REINFORCE_CAP;
   private calmFor = CALM_SECONDS;
   private waves = 0; // waves the current alarm has sent
-  private vipJoined = false;
-  private vipThreat: Point | null = null; // where the last shot at the VIP came from
+  // Followers: the escort VIP and Jailbreak's prisoners (faction 'vip'), freed one by one; `joined` holds the freed.
+  private joined = new Set<string>();
+  private vipThreat: Point | null = null; // where the last shot at a follower came from
   private lastKnown: Point | null = null;
   private holdup = '';
   private casts: { unitId: string; ability: AbilityId; point: Point; targetId: string | null }[] = [];
@@ -390,7 +393,7 @@ export class Simulation {
     const plan = this.plan;
     this.units = []; this.objectives = []; this.shots = []; this.blasts = []; this.casts = []; this.hitThisFrame.clear(); this.volleyReady.clear(); this.autoPaused.clear();
     this.alarm = false; this.detected = false; this.alarmCause = null; this.calmIn = 0; this.lastKnown = null; this.lastSeen = new Map(); this.intel = new Map(); this.milestones = [];
-    this.reinforceIn = 0; this.reinforced = 0; this.badges = []; this.reward = NO_REWARD; this.lockdownIn = null; this.escaped = new Set(); this.cargo = null; this.pickup = null; this.calling = false; this.downs = 0; this.alarms = 0; this.reinforceCap = REINFORCE_CAP; this.calmFor = CALM_SECONDS; this.waves = 0; this.vipJoined = false; this.vipThreat = null; this.holdup = ''; this.pending = null; this.commandPoint = null;
+    this.reinforceIn = 0; this.reinforced = 0; this.badges = []; this.reward = NO_REWARD; this.lockdownIn = null; this.escaped = new Set(); this.cargo = null; this.pickup = null; this.calling = false; this.downs = 0; this.alarms = 0; this.reinforceCap = REINFORCE_CAP; this.calmFor = CALM_SECONDS; this.waves = 0; this.joined = new Set(); this.vipThreat = null; this.holdup = ''; this.pending = null; this.commandPoint = null;
     this.targetArea = plan?.targetArea ? { ...plan.targetArea } : null;
     if (!plan) { this.squad = []; this.selected = []; return; }
     this.rng = mulberry32(plan.contract.seed ^ 0x5bd1e995);
@@ -413,6 +416,7 @@ export class Simulation {
       if (e.kind === 'target' && plan.contract.type === 'surveillance') u.name = 'EXECUTIVE';
     });
     if (plan.vip) this.units.push(this.makeUnit('vip', 'VIP', 'vip', 'vip', plan.vip, VIP_HP, headingTo(plan.vip, plan.extract)));
+    plan.sites.filter(s => s.kind === 'cell').forEach((s, i) => this.units.push(this.makeUnit(`p${i}`, 'PRISONER', 'vip', 'vip', s, PRISONER_HP, headingTo(s, plan.extract))));
     this.selected = [...this.squad];
     const o = (kind: Objective['kind'], label: string, p: Point): Objective => ({ kind, label, x: p.x, z: p.z, progress: 0, done: false, optional: false });
     const t = plan.contract.type, target = plan.enemies.find(e => e.kind === 'target');
@@ -422,11 +426,12 @@ export class Simulation {
     if (t === 'sabotage') plan.sites.forEach((s, i) => this.objectives.push(o('charge', `Plant charge ${'AB'[i]}`, s)));
     if (t === 'smash') plan.sites.forEach((s, i) => this.objectives.push(o('cache', `Open cache ${'ABC'[i]}`, s)));
     if (t === 'surveillance') this.units.filter(u => u.kind === 'target').forEach((u, i) => this.objectives.push({ ...o('tag', `Tag executive ${'ABC'[i]}`, u), unit: u.id }));
-    if (t === 'escort' && plan.vip) this.objectives.push(o('vip', 'Free the VIP', plan.vip));
+    if (t === 'escort' && plan.vip) this.objectives.push({ ...o('vip', 'Free the VIP', plan.vip), unit: 'vip' });
+    if (t === 'jailbreak') plan.sites.filter(s => s.kind === 'cell').forEach((s, i) => this.objectives.push({ ...o('cell', `Free prisoner ${'ABC'[i]}`, s), unit: `p${i}` }));
     if (t === 'elimination') this.objectives.push(o('sweep', sweepLabel(plan.enemies.length), { x: 0, z: 0 }));
     // A called extraction's zone sits at the start until the pickup is called, and nothing shows or points at it till then.
-    const who = t === 'escort' ? 'the VIP and the whole squad' : 'the whole squad';
-    this.objectives.push(o('extract', hasModifier(plan.contract, 'called') ? `Call a pickup, then get ${who} to it` : t === 'escort' ? 'Escort the VIP and the whole squad to extraction' : 'Get the whole squad to extraction', plan.extract));
+    const who = t === 'escort' ? 'the VIP and the whole squad' : t === 'jailbreak' ? 'the freed prisoners and the whole squad' : 'the whole squad';
+    this.objectives.push(o('extract', hasModifier(plan.contract, 'called') ? `Call a pickup, then get ${who} to it` : t === 'escort' ? 'Escort the VIP and the whole squad to extraction' : `Get ${who} to extraction`, plan.extract));
     // An intel reward spent on this deployment: every route is known from the start, as if each had been watched.
     if (this.intelReward) for (const u of this.units) {
       if (u.faction !== 'hostile' || u.patrol.length < 2 || u.escort) continue;
@@ -758,7 +763,7 @@ export class Simulation {
   private damage(target: Unit, amount: number, from: Unit | null, rifle = false) {
     if (target.hp <= 0) return;
     const covered = from && this.plan?.world.coverBetween(from, target);
-    if (target.faction === 'vip') { amount *= VIP_DAMAGE_TAKEN; if (from) this.vipThreat = { x: from.x, z: from.z }; }
+    if (target.faction === 'vip') { if (target.id === 'vip') amount *= VIP_DAMAGE_TAKEN; if (from) this.vipThreat = { x: from.x, z: from.z }; }
     target.hp = Math.max(0, target.hp - amount * (covered ? COVER_FACTOR : 1));
     if (target.faction === 'hostile') this.hitThisFrame.set(target, { by: from, rifle: rifle && (this.hitThisFrame.get(target)?.rifle ?? true) });
     else {
@@ -813,6 +818,7 @@ export class Simulation {
     const type = this.plan?.contract.type;
     if (type === 'smash') return { caches: this.objectives.filter(o => o.kind === 'cache' && o.done).length };
     if (type === 'surveillance') return { tagged: this.objectives.filter(o => o.kind === 'tag' && o.done).length };
+    if (type === 'jailbreak') return { prisoners: this.rescued().length };
     return {};
   }
   // As applyPayout pays it: an operative for a full roster comes as RECRUIT_COST credits.
@@ -830,7 +836,11 @@ export class Simulation {
     };
     return badgesFor(c.type).filter(b => earned[b]);
   }
-  private intruders() { return this.units.filter(u => u.hp > 0 && (u.faction === 'squad' || (u.faction === 'vip' && this.vipJoined))); }
+  private intruders() { return this.units.filter(u => u.hp > 0 && (u.faction === 'squad' || (u.faction === 'vip' && this.joined.has(u.id)))); }
+  // Whether a follower (the VIP or a prisoner) has been freed and walks with the squad.
+  following(u: Pick<Unit, 'id'>) { return this.joined.has(u.id); }
+  // Jailbreak's freed prisoners still alive.
+  private rescued() { return this.units.filter(u => u.faction === 'vip' && u.id !== 'vip' && u.hp > 0 && this.joined.has(u.id)); }
   private walk(u: Unit, speed: number, dt: number) {
     const next = u.path[0]; if (!next) return;
     const d = distance(u, next);
@@ -1119,18 +1129,21 @@ export class Simulation {
       }
     }
   }
-  private updateVip(u: Unit, dt: number, squad: Unit[]) {
+  private updateFollower(u: Unit, dt: number, squad: Unit[]) {
     u.moving = false; u.hurt = Math.max(0, u.hurt - dt);
     const leader = [...squad].sort((a, b) => distance(u, a) - distance(u, b))[0];
     if (!leader) return;
-    if (!this.vipJoined) {
-      const secure = this.objectives.find(o => o.kind === 'vip')!;
-      if (distance(u, leader) > VIP_REACH) return;
+    if (!this.joined.has(u.id)) {
+      const secure = this.objectives.find(o => o.unit === u.id);
+      if (!secure || distance(u, leader) > VIP_REACH) return;
       secure.progress = Math.min(1, secure.progress + dt / VIP_SECURE_SECONDS);
       if (secure.progress < 1) return;
-      this.vipJoined = true; this.message = 'VIP secured. Escort them to extraction.';
+      this.joined.add(u.id);
+      const left = this.objectives.filter(o => o.kind === 'cell' && o.unit !== u.id && !this.joined.has(o.unit!) && !o.lost).length;
+      this.message = u.id === 'vip' ? 'VIP secured. Escort them to extraction.'
+        : `Prisoner ${cacheLetter(secure)} freed. ${left ? `Extraction is open; ${left === 1 ? 'one more cell' : `${left} more cells`} for a bonus.` : 'Bring everyone out.'}`;
     }
-    // The VIP follows the nearest operative; under fire it ducks behind cover near that operative instead.
+    // A follower walks with the nearest operative; under fire it ducks behind cover near that operative instead.
     // At an open extraction it walks into the zone.
     const extract = this.objectives.at(-1)!;
     const shelter = u.hurt > 0 && this.vipThreat ? this.shelter(u, leader, this.vipThreat) : null;
@@ -1253,14 +1266,28 @@ export class Simulation {
       this.message = `Cache ${letter} open. Lockdown: the exits seal in ${this.lockdownIn} s.`;
     } else this.message = `Cache ${letter} open (${open} of ${caches.length}).`;
   }
+  // Jailbreak: a cell is done once its prisoner is freed and alive, and lost once that prisoner is killed. While a freed
+  // prisoner lives, the other cells are optional and pay a bonus; the contract fails once every prisoner is dead.
+  private updateCells() {
+    const cells = this.objectives.filter(o => o.kind === 'cell');
+    if (!cells.length) return;
+    const out = this.rescued().length;
+    for (const o of cells) {
+      const u = this.unit(o.unit!), base = `prisoner ${cacheLetter(o)}`;
+      if (!u || u.hp <= 0) { o.lost = true; o.done = false; o.optional = true; o.progress = 0; o.label = `Prisoner ${cacheLetter(o)} killed`; continue; }
+      o.done = this.joined.has(u.id); o.optional = !o.done && out > 0;
+      o.label = `Free ${base}${o.optional ? ` (+${PRISONER_BONUS} cr)` : ''}`;
+    }
+    if (cells.every(o => o.lost)) this.finish(false, 'Every prisoner was killed.');
+  }
   private updateObjectives(dt: number, squad: Unit[]) {
-    const vip = this.unit('vip');
     this.updateTags();
+    this.updateCells();
     if (this.phase !== 'mission') return;
     for (const o of this.objectives) {
       if (o.done) continue;
       if (o.kind === 'target') o.done = this.units.some(u => u.kind === 'target' && u.hp <= 0);
-      if (o.kind === 'vip') o.done = this.vipJoined;
+      if (o.kind === 'vip') o.done = this.joined.has('vip');
       // Elimination counts the hostiles the district started with, as Purge does; reinforcements never count.
       if (o.kind === 'sweep') {
         const district = this.units.filter(u => u.faction === 'hostile' && !isReinforcement(u)), left = district.filter(u => u.hp > 0).length;
@@ -1290,10 +1317,12 @@ export class Simulation {
     this.reach('extractOpen');
     // A called pickup lifts off with the squad only once it has landed.
     if (this.calledExtraction && !(this.pickup && this.pickup.in <= 0)) return;
-    const vipIn = !vip || distance(vip, extract) < reach + .4, cargoIn = !this.cargo || distance(this.cargo, extract) < reach;
+    // Every freed follower still alive has to be in the zone too; a prisoner left in its cell stays behind.
+    const followers = this.units.filter(u => u.faction === 'vip' && u.hp > 0 && this.joined.has(u.id));
+    const vipIn = followers.every(u => distance(u, extract) < reach + .4), cargoIn = !this.cargo || distance(this.cargo, extract) < reach;
     if (extract.progress === 1 && vipIn && cargoIn) { extract.done = true; this.finish(true); return; }
     const down = team.find(s => s.hp <= 0);
-    const holdup = !squad.every(inZone) ? '' : down ? `${down.name} is down. Revive them before extracting.` : !vipIn ? 'Bring the VIP into the zone.' : cargoIn ? '' : 'Bring the package into the zone.';
+    const holdup = !squad.every(inZone) ? '' : down ? `${down.name} is down. Revive them before extracting.` : !vipIn ? (followers.some(u => u.id === 'vip') ? 'Bring the VIP into the zone.' : 'Bring the freed prisoners into the zone.') : cargoIn ? '' : 'Bring the package into the zone.';
     if (holdup && holdup !== this.holdup) this.message = holdup;
     this.holdup = holdup;
   }
@@ -1348,8 +1377,10 @@ export class Simulation {
     }
     for (const u of this.units) if (u.faction === 'hostile' && u.hp <= 0) { u.path = []; u.moving = false; }
     const squad = this.livingSquad();
-    const vip = this.unit('vip');
-    if (vip) { if (vip.hp <= 0) return this.finish(false, 'The VIP was killed.'); this.updateVip(vip, dt, squad); }
+    for (const f of this.units.filter(u => u.faction === 'vip')) {
+      if (f.hp <= 0) { if (f.id === 'vip') return this.finish(false, 'The VIP was killed.'); continue; }
+      this.updateFollower(f, dt, squad);
+    }
     this.selected = this.selected.filter(id => squad.some(u => u.id === id));
     if (this.pending && !squad.some(u => u.id === this.pending!.unitId)) this.pending = null;
     if (!squad.length) return this.finish(false, 'The squad was wiped out.');

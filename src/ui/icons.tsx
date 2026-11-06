@@ -46,6 +46,7 @@ const PATHS = {
   flag: <><path d="M5.5 21V3.5h12l-2.5 4 2.5 4h-12" /></>,
   diamond: <path d="M12 3l7 9-7 9-7-9z" />,
   surveillance: <><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z" /><circle cx="12" cy="12" r="2.5" /><path d="M3 3l3 3M21 3l-3 3" /></>,
+  jailbreak: <><path d="M5 3h14v18H5z" /><path d="M9 3v18M15 3v18" /><path d="M5 12h4" /></>,
   smash: <><path d="M4 9h16v11H4z" /><path d="M4 9l3-5h10l3 5M10 13h4" /><path d="M15 2.5l-2 4" /></>,
   package: <><path d="M4 8.5h16V20H4z" /><path d="M9 8.5V5h6v3.5M4 13h16" /></>,
   guard: <><circle cx="12" cy="7" r="3.2" /><path d="M5.5 20.5c.7-4.3 3.2-7 6.5-7s5.8 2.7 6.5 7" /></>,

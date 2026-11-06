@@ -12,7 +12,7 @@
 .pointer { --c: var(--amber); position: absolute; left: 0; top: 0; width: 0; height: 0 }
 .pointer[hidden] { display: none }
 .pointer[data-kind=extract] { --c: var(--mint) }
-.pointer[data-kind=vip], .pointer[data-kind=package] { --c: var(--gold) }
+.pointer[data-kind=vip], .pointer[data-kind=cell], .pointer[data-kind=package] { --c: var(--gold) }
 .pointer[data-kind=watcher], .pointer[data-kind=exit] { --c: var(--red) }
 .pointer[data-kind=target] { --c: #ff8a70 }
 .pointer[data-kind=tag] { --c: #8fd3ff }

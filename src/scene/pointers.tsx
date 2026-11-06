@@ -9,7 +9,7 @@ import type { Point } from '../game/world.ts';
 // Canvas pixels covered by HUD panels on each side, measured by the camera rig.
 export type Insets = { l: number; t: number; r: number; b: number };
 const MARGIN = 34;
-const name = (o: Objective) => o.kind === 'terminal' ? 'VAULT' : o.kind === 'charge' ? `CHARGE ${o.label.at(-1)}` : o.kind === 'cache' ? `CACHE ${cacheLetter(o)}` : o.kind === 'vip' ? 'VIP' : o.kind === 'tag' ? `EXEC ${cacheLetter(o)}` : 'EXTRACT';
+const name = (o: Objective) => o.kind === 'terminal' ? 'VAULT' : o.kind === 'charge' ? `CHARGE ${o.label.at(-1)}` : o.kind === 'cache' ? `CACHE ${cacheLetter(o)}` : o.kind === 'vip' ? 'VIP' : o.kind === 'tag' ? `EXEC ${cacheLetter(o)}` : o.kind === 'cell' ? `CELL ${cacheLetter(o)}` : 'EXTRACT';
 
 // Edge arrows toward hostiles noticing the squad, a fleeing target's exit, and open objectives that are outside
 // the free frame. Watchers and the exit come first, in red; the target points at its last known area until seen. Plain DOM nodes, positioned every frame without React renders.
@@ -48,7 +48,7 @@ export function Pointers({ sim, labels, insets }: { sim: Simulation; labels: Ref
         else if (target && sim.targetArea) targets.push({ p: sim.targetArea, kind: 'target', label: target.name === 'COURIER' ? 'COURIER AREA' : 'TARGET AREA' });
         continue;
       }
-      if (o.kind === 'tag' && o.lost) continue;
+      if (o.lost) continue;
       const exec = o.kind === 'tag' ? sim.units.find(u => u.id === o.unit && u.visible) : undefined;
       targets.push({ p: o.kind === 'vip' ? sim.units.find(u => u.kind === 'vip') ?? o : exec ?? o, kind: o.kind, label: name(o) });
     }

@@ -61,7 +61,7 @@ function play(bot: Bot, type: ContractType, tier: number, seed: number, extra: P
   }
   const team = sim.units.filter(u => u.faction === 'squad');
   const hpLost = 1 - team.reduce((s, u) => s + u.hp, 0) / team.reduce((s, u) => s + u.maxHp, 0);
-  return { win: sim.result === 'success', alarm: sim.detected, time: sim.time, hpLost, reason: sim.result ? sim.failReason : 'timeout', badges: sim.getSnapshot().badges, count: sim.objectives.filter(o => (o.kind === 'cache' || o.kind === 'tag') && o.done).length };
+  return { win: sim.result === 'success', alarm: sim.detected, time: sim.time, hpLost, reason: sim.result ? sim.failReason : 'timeout', badges: sim.getSnapshot().badges, count: sim.objectives.filter(o => (o.kind === 'cache' || o.kind === 'tag' || o.kind === 'cell') && o.done).length };
 }
 
 const withLoadout = (extra: Partial<Campaign>, loadout: Loadout | null = LOADOUT as Loadout | null) => loadout ? { ...extra, loadout } : extra;
@@ -71,7 +71,7 @@ const seeds = Array.from({ length: SEEDS }, (_, k) => 1000 + k * 7919);
 const wins = new Map<string, number[]>(), dealt = new Map<string, number[]>(); // `${bot}|${roster}|${tier}` → win rate per contract type (dealt: only those dealt at that tier)
 const earned = new Map<string, Run[]>(); // `${bot}|${roster}` → its wins, for the badge rates
 // Contract types whose wins count something (caches taken, executives tagged): `${type}|${bot}|${roster}` → its wins.
-const COUNTED: Partial<Record<ContractType, string>> = { smash: 'Smash and grab: caches taken', surveillance: 'Surveillance: executives tagged' };
+const COUNTED: Partial<Record<ContractType, string>> = { smash: 'Smash and grab: caches taken', surveillance: 'Surveillance: executives tagged', jailbreak: 'Jailbreak: prisoners freed' };
 const counted = new Map<string, Run[]>();
 
 const typesLabel = TYPES.length === CONTRACT_TYPES.length ? 'every contract type' : TYPES.join(', ');
