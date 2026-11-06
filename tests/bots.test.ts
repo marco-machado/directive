@@ -56,3 +56,9 @@ test('a bot counts down a remembered stun while the stunned hostile is out of si
   sim.time += 3;
   assert.equal(remembered(), 0);
 });
+
+test('the tactical bot finds and downs every hostile on an Elimination contract it has no positions for', () => {
+  const sim = play({ id: 'e', type: 'elimination', tier: 1, seed: 2, payout: contractPayout(1), district: 'GLASS DISTRICT', sector: 1 });
+  assert.equal(sim.result, 'success', sim.failReason);
+  assert.ok(sim.objectives.find(o => o.kind === 'sweep')!.done);
+});

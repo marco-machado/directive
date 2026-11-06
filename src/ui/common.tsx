@@ -16,6 +16,10 @@ export const CONTRACTS: Record<ContractType, { title: string; brief: string; int
   assassination: { title: 'Assassination', brief: 'Neutralize the target, then extract. Once the alarm sounds, the target runs for an exit.' },
   heist: { title: 'Data heist', brief: `Hold the vault terminal for ${HACK_SECONDS} seconds to download the data, then extract.` },
   sabotage: { title: 'Sabotage', brief: 'Plant a charge at every site, then extract.' },
+  elimination: {
+    title: 'Elimination', brief: 'Down every hostile the district started with, then extract. Reinforcements don\'t count, but an alarm sends them into your way.',
+    intro: 'Every hostile on the briefing has to go down; the tracker counts the ones left. Takedowns and volleys that kill keep it quiet. Purge and Bloodless are not on offer here.',
+  },
   escort: { title: 'Escort', brief: `Stay beside the VIP for ${VIP_SECURE_SECONDS} seconds to free them, then escort them to extraction. Under fire, the VIP ducks behind cover near the squad; if they die, the contract fails.` },
 };
 // What each badge is called, its icon, and what earns it on a contract (its district holding `hostiles` hostiles).

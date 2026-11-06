@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import { sim } from '../app.ts';
-import { BADGES, MAX_COUNTERMEASURES, MAX_TIER, missionPayout, parSeconds, SQUAD_MAX, threatFor } from '../game/campaign.ts';
+import { badgesFor, MAX_COUNTERMEASURES, MAX_TIER, missionPayout, parSeconds, SQUAD_MAX, threatFor } from '../game/campaign.ts';
 import { ABILITY_STATS, CLASS_STATS } from '../game/classes.ts';
 import type { Threat } from '../game/campaign.ts';
 import type { EnemyKind } from '../game/mapgen.ts';
@@ -77,7 +77,7 @@ export function MissionSelect({ state, titleRef, onChoose, onDeploy, onRecenter,
               <div><small>Payout</small><Credits value={contract.payout} /></div>
               <div className="bonus"><small>No alarm</small><Credits value={missionPayout(contract, true)} /></div>
             </div>
-            <ul className="brief-badges" aria-label="Badges">{BADGES.map(b => <li key={b}><Icon name={BADGE_COPY[b].icon} /><b>{BADGE_COPY[b].title}</b><span>{BADGE_COPY[b].goal(contract, hostiles)}</span></li>)}</ul>
+            <ul className="brief-badges" aria-label="Badges">{badgesFor(contract.type).map(b => <li key={b}><Icon name={BADGE_COPY[b].icon} /><b>{BADGE_COPY[b].title}</b><span>{BADGE_COPY[b].goal(contract, hostiles)}</span></li>)}</ul>
             <p className="brief-note">Each badge counts half a contract toward clearance.</p>
           </div>
         </div> : null}

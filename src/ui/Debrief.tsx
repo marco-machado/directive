@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { RefObject } from 'react';
 import type { ClassId } from '../game/classes.ts';
-import { BADGES, MAX_COUNTERMEASURES, parSeconds } from '../game/campaign.ts';
+import { badgesFor, MAX_COUNTERMEASURES, parSeconds } from '../game/campaign.ts';
 import { HOSTILE_STATS, isReinforcement } from '../game/simulation.ts';
 import type { AlarmCause, Snapshot, Unit } from '../game/simulation.ts';
 import { BADGE_COPY, Clearance, clock, CM_LEVEL, CONTRACTS, Credits, SaveCode, SaveWarning, threat } from './common.tsx';
@@ -40,7 +40,7 @@ function AlarmMap({ state, cause }: { state: Snapshot; cause: AlarmCause }) {
   return <svg className="alarm-map" viewBox={`${minX} ${minZ} ${maxX - minX} ${maxZ - minZ}`} role="img" aria-label={`District map, alarm pinned ${alarmLine(cause)}`}>
     <rect className="alarm-map-ground" x={minX} y={minZ} width={maxX - minX} height={maxZ - minZ} />
     {world.buildings.map((b, i) => <rect key={i} className="alarm-map-block" x={b.x - b.w / 2} y={b.z - b.d / 2} width={b.w} height={b.d} />)}
-    {state.objectives.map((o, i) => o.kind === 'extract'
+    {state.objectives.map((o, i) => o.kind === 'sweep' ? null : o.kind === 'extract'
       ? <circle key={i} className="alarm-map-extract" cx={o.x} cy={o.z} r={1.4} />
       : <rect key={i} className="alarm-map-objective" x={o.x - .9} y={o.z - .9} width={1.8} height={1.8} transform={`rotate(45 ${o.x} ${o.z})`} />)}
     <circle className="alarm-map-ring" cx={cause.x} cy={cause.z} r={3} />
@@ -66,7 +66,7 @@ function Badges({ state }: { state: Snapshot }) {
     ghost: 'Alarm raised', untouched: `${state.downs} down`, swift: `${clock(state.time)} / ${clock(parSeconds(c.type, c.tier))}`,
     bloodless: `${hostiles.filter(u => u.hp <= 0 && u.kind !== 'target').length} killed`, purge: `${district.filter(u => u.hp <= 0).length} of ${district.length} down`,
   };
-  return <ul className="badge-grid debrief-badges" aria-label="Badges">{BADGES.map(b => {
+  return <ul className="badge-grid debrief-badges" aria-label="Badges">{badgesFor(c.type).map(b => {
     const won = state.badges.includes(b);
     return <li key={b} className={won ? '' : 'missed'}><Icon name={BADGE_COPY[b].icon} /><b>{BADGE_COPY[b].title}</b><small>{won ? 'Earned' : missed[b]}</small></li>;
   })}</ul>;
