@@ -5,7 +5,7 @@ import { hasModifier, missionPayout, PICKUP_SECONDS } from '../game/campaign.ts'
 import type { Campaign } from '../game/campaign.ts';
 import { abilityCooldown, ABILITY_STATS, CLASS_STATS } from '../game/classes.ts';
 import type { ClassId } from '../game/classes.ts';
-import { REPEAT_REINFORCEMENTS, SUSPICIOUS, WAIT_STEP } from '../game/simulation.ts';
+import { objectivesMet, REPEAT_REINFORCEMENTS, SUSPICIOUS, WAIT_STEP } from '../game/simulation.ts';
 import type { Pending, Shield, Snapshot, Unit } from '../game/simulation.ts';
 import { clock, CM_LEVEL, CONTRACTS, countermeasuresEffect, Credits, ModifierChips, threat } from './common.tsx';
 import { Icon, Portrait } from './icons.tsx';
@@ -14,8 +14,8 @@ import { TipDock } from './Tips.tsx';
 
 // In portrait the tracker collapses to a drawer under the top bar that shows only the current objective; the toggle exists only there.
 function Tracker({ state, open, onToggle }: { state: Snapshot; open: boolean; onToggle: () => void }) {
-  const c = state.contract!, current = state.objectives.findIndex(o => !o.done);
-  const extractOpen = state.objectives.every(o => o.kind === 'extract' || o.done), team = state.squad.length;
+  const c = state.contract!, current = state.objectives.findIndex(o => !o.done && !o.optional);
+  const extractOpen = objectivesMet(state.objectives), team = state.squad.length;
   return <section className="tracker panel" aria-label="Mission status" style={threat(c.tier)}>
     <header className="tracker-head">
       <span className="tracker-icon"><Icon name={c.type} /></span>
@@ -25,7 +25,7 @@ function Tracker({ state, open, onToggle }: { state: Snapshot; open: boolean; on
     </header>
     <button className="drawer-toggle" aria-expanded={open} aria-controls="mission-drawer" aria-label={open ? 'Hide mission details' : 'Show mission details'} onClick={onToggle}><Icon name="chevron" /></button>
     <ol className="objectives">{state.objectives.map((o, i) => {
-      const timed = (o.kind === 'terminal' || o.kind === 'charge' || o.kind === 'vip' || (o.kind === 'extract' && extractOpen)) && !o.done;
+      const timed = (o.kind === 'terminal' || o.kind === 'charge' || o.kind === 'cache' || o.kind === 'vip' || (o.kind === 'extract' && extractOpen)) && !o.done;
       return <li key={i} className={o.done ? 'done' : i === current ? 'current' : ''}>
         <span className="obj-mark">{o.done ? <Icon name="check" /> : null}</span>
         <span className="obj-copy">{o.label}{timed ? <span className="obj-progress" role="progressbar" aria-label={`${o.label} progress`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(o.progress * 100)}>
@@ -110,7 +110,7 @@ function Targeting({ pending }: { pending: NonNullable<Pending> }) {
 
 // A called extraction: the order to call the pickup once the objectives are done, the choice of where, then its countdown.
 function CallPickup({ state }: { state: Snapshot }) {
-  if (state.phase !== 'mission' || state.pending || !hasModifier(state.contract, 'called') || !state.objectives.every(o => o.kind === 'extract' || o.done)) return null;
+  if (state.phase !== 'mission' || state.pending || !hasModifier(state.contract, 'called') || !objectivesMet(state.objectives)) return null;
   const p = state.pickup;
   if (state.calling) return <div className="targeting call-pickup">
     <Icon name="flag" />

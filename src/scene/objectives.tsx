@@ -4,7 +4,7 @@ import { useFrame } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
 import { AdditiveBlending, CylinderGeometry, DoubleSide } from 'three';
 import type { Group, Mesh } from 'three';
-import { PICKUP_RADIUS, VIP_REACH } from '../game/simulation.ts';
+import { cacheLetter, PICKUP_RADIUS, VIP_REACH } from '../game/simulation.ts';
 import type { Objective, Simulation } from '../game/simulation.ts';
 import { Box, ProgressRing, STILL } from './parts.tsx';
 
@@ -65,6 +65,20 @@ function Charge({ sim, index, o, labels, letter }: Props & { letter: string }) {
     </group>
     <Beacon color="#ffb454" active={open(sim, index)} />
     <Label labels={labels} text={`CHARGE ${letter}`} done={o.done} y={1} />
+  </group>;
+}
+
+// A Smash and grab cache: a crate that springs open, with a lid that lifts once it is done.
+function Cache({ sim, index, o, labels }: Props) {
+  const lid = useRef<Group>(null);
+  useFrame(() => { if (lid.current) { const done = !!sim.objectives[index]?.done; lid.current.rotation.x = done ? -1.1 : 0; } });
+  return <group position={[o.x, 0, o.z]}>
+    <ProgressRing radius={1.2} color="#ffd77a" value={progress(sim, index)} segments={32} />
+    <Box position={[0, .25, 0]} size={[.7, .5, .5]} color="#4a4034" castShadow />
+    <group ref={lid} position={[0, .5, -.25]}><Box position={[0, .03, .25]} size={[.72, .06, .52]} color="#5c5040" /></group>
+    <Box position={[0, .3, .26]} size={[.12, .1, .02]} color="#ffd77a" emissive="#ffd77a" />
+    <Beacon color="#ffd77a" active={open(sim, index)} />
+    <Label labels={labels} text={`CACHE ${cacheLetter(o)}`} done={o.done} y={1.1} />
   </group>;
 }
 
@@ -174,6 +188,7 @@ export function Objectives({ sim, objectives, labels }: { sim: Simulation; objec
     if (o.kind === 'target') return <Target key={key} {...props} />;
     if (o.kind === 'terminal') return <Terminal key={key} {...props} />;
     if (o.kind === 'charge') return <Charge key={key} {...props} letter={'AB'[charges++] ?? ''} />;
+    if (o.kind === 'cache') return <Cache key={key} {...props} />;
     if (o.kind === 'extract') return <Extraction key={key} {...props} />;
     if (o.kind === 'vip') return <VipHold key={key} {...props} />;
     return null;

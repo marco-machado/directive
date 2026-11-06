@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Simulation, parseCampaign, SQUAD_SPEED, FLEE_DELAY, HOSTILE_STATS, posted, CALM_SECONDS, COUNTERMEASURES, EXTENDED_RANGE, HEAVY_HP, LIGHT_CONCEALMENT, PIERCING_BONUS, SUPPRESSOR_STEP, CALM_STEP, escalation, FIRST_WAVE_SECONDS, waveSize, REPEAT_REINFORCEMENTS, VIP_DAMAGE_TAKEN, VIP_SECURE_SECONDS, CAMERA_DETECT, COVER_FACTOR, DETECT_DRAIN, detectSeconds, GHOST_SECONDS, HACK_SECONDS, LOOK_ANGLE, LOOK_EVERY, LOOK_PAUSE, QUEUE_SPACING, REINFORCE_CAP, ROUTE_MAX, SUSPICIOUS, REINFORCE_SECONDS, REVIVE_SECONDS, SIGHT_RANGE, TAKEDOWN_REACH, TAKEDOWN_SECONDS, tierDamage, tierHp, WAIT_MAX, WAIT_STEP } from '../src/game/simulation.ts';
+import { Simulation, parseCampaign, CACHE_SECONDS, SQUAD_SPEED, FLEE_DELAY, HOSTILE_STATS, posted, CALM_SECONDS, COUNTERMEASURES, EXTENDED_RANGE, HEAVY_HP, LIGHT_CONCEALMENT, PIERCING_BONUS, SUPPRESSOR_STEP, CALM_STEP, escalation, FIRST_WAVE_SECONDS, waveSize, REPEAT_REINFORCEMENTS, VIP_DAMAGE_TAKEN, VIP_SECURE_SECONDS, CAMERA_DETECT, COVER_FACTOR, DETECT_DRAIN, detectSeconds, GHOST_SECONDS, HACK_SECONDS, LOOK_ANGLE, LOOK_EVERY, LOOK_PAUSE, QUEUE_SPACING, REINFORCE_CAP, ROUTE_MAX, SUSPICIOUS, REINFORCE_SECONDS, REVIVE_SECONDS, SIGHT_RANGE, TAKEDOWN_REACH, TAKEDOWN_SECONDS, tierDamage, tierHp, WAIT_MAX, WAIT_STEP } from '../src/game/simulation.ts';
 import type { CampaignSync, Unit, Upgrade } from '../src/game/simulation.ts';
-import { CAMPAIGN_VERSION, CARRY_SPEED, CONTRACT_TYPES, MODIFIER_FITS, PICKUP_SECONDS, contractPayout, HANDOVER_SECONDS, IDENTIFY_RANGE, IDENTIFY_SECONDS, LOCKDOWN_SECONDS, FIRST_CONTRACT, freshCampaign, MAX_LEVEL, MAX_TIER, parSeconds } from '../src/game/campaign.ts';
+import { CACHE_BONUS, CAMPAIGN_VERSION, CARRY_SPEED, smashSeconds, CONTRACT_TYPES, MODIFIER_FITS, PICKUP_SECONDS, contractPayout, HANDOVER_SECONDS, IDENTIFY_RANGE, IDENTIFY_SECONDS, LOCKDOWN_SECONDS, FIRST_CONTRACT, freshCampaign, MAX_LEVEL, MAX_TIER, parSeconds } from '../src/game/campaign.ts';
 import type { ArmorMode, Campaign, ContractType, MissionReport, WeaponMode } from '../src/game/campaign.ts';
 import { ABILITY_STATS, abilityCooldown, CLASS_STATS } from '../src/game/classes.ts';
 import { COURIER_DELAY, COURIER_MIN_RUN, interceptable, mapSize, planMission, TARGET_AREA_OFFSET, TARGET_AREA_RADIUS } from '../src/game/mapgen.ts';
@@ -1861,6 +1861,55 @@ test('activating an ability ends a pickup call, so the next click casts it inste
   const caster = sim.units.find(u => u.id === sim.squad[slot])!;
   sim.groundClick({ x: caster.x + 1, z: caster.z });
   assert.equal(sim.pickup, null, 'the click did not call the pickup');
+});
+
+// Smash and grab (#49).
+test('Smash and grab plans three caches well apart, each held by a posted guard', () => {
+  for (const [tier, seed] of [[2, 84], ...Array.from({ length: 20 }, (_, k) => [3 + (k + 1) % 3, (k + 1) * 131])]) {
+    const plan = planMission(contract('smash', tier, seed));
+    const caches = plan.sites.filter(s => s.kind === 'cache');
+    assert.equal(caches.length, 3);
+    caches.forEach((c, i) => caches.slice(i + 1).forEach(d => assert.ok(distance(c, d) >= 8)));
+    assert.ok(caches.every(c => plan.enemies.some(e => e.kind === 'guard' && e.patrol.length < 2 && distance(e, c) <= 8)), `seed ${seed}: an unguarded cache`);
+  }
+});
+
+function smash(tier = 3) {
+  const { sim, squad } = arena('smash', { offers: [contract('smash', tier)] });
+  const caches = sim.objectives.filter(o => o.kind === 'cache');
+  caches.forEach((c, i) => { c.x = 10; c.z = -10 + i * 10; });
+  return { sim, squad, caches };
+}
+
+test('the first cache opened starts the lockdown clock, alarm or not, and opens extraction; the rest turn optional', () => {
+  const { sim, squad, caches } = smash();
+  assert.equal(sim.extractReady, false); assert.equal(sim.lockdownIn, null);
+  squad[0].x = caches[1].x; squad[0].z = caches[1].z;
+  step(sim, CACHE_SECONDS + .1);
+  assert.ok(caches[1].done); assert.equal(sim.alarm, false);
+  assert.ok(Math.abs(sim.lockdownIn! - (smashSeconds(3) - .1)) < .2);
+  assert.ok(sim.extractReady);
+  assert.ok(caches[0].optional && caches[2].optional && caches[0].label.includes(`+${CACHE_BONUS}`));
+});
+
+test('the exits seal when the lockdown clock runs out, with the squad still inside', () => {
+  const { sim, squad, caches } = smash();
+  squad[0].x = caches[0].x; squad[0].z = caches[0].z;
+  step(sim, CACHE_SECONDS + .1);
+  step(sim, smashSeconds(3));
+  assert.equal(sim.result, 'failure'); assert.equal(sim.failReason, 'Lockdown. The squad was trapped.');
+});
+
+test('a Smash and grab win reports its caches, and each past the first pays a bonus', () => {
+  for (const taken of [1, 2]) {
+    const { sim, squad, caches } = smash();
+    caches.slice(0, taken).forEach(c => { squad[0].x = c.x; squad[0].z = c.z; step(sim, CACHE_SECONDS + .1); });
+    const zone = sim.objectives.at(-1)!;
+    squad.forEach(u => { u.x = zone.x; u.z = zone.z; u.path = []; });
+    step(sim, .5);
+    assert.equal(sim.result, 'success');
+    assert.equal(sim.getSnapshot().reward.credits, (taken - 1) * CACHE_BONUS);
+  }
 });
 
 test('before a pickup is called, reinforcement waves enter at random edge exits', () => {

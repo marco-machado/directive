@@ -1,6 +1,6 @@
 import { abilityCooldown, abilityPower, ABILITY_STATS, CLASS_STATS, effectScale, EMP_CAMERA_SECONDS, MARK_RADIUS, MARK_SECONDS, SQUAD_SPEED } from './classes.ts';
 import type { AbilityId, ClassId } from './classes.ts';
-import { applyDismiss, applyLoadout, applyPayout, applyPurchase, applyRecruit, badgesFor, CARRY_SPEED, dealBoard, HANDOVER_REACH, HANDOVER_SECONDS, hasModifier, IDENTIFY_RANGE, PICKUP_REACH, IDENTIFY_SECONDS, LOCKDOWN_SECONDS, PICKUP_SECONDS, NO_REWARD, RECRUIT_COST, rewardFor, ROSTER_CAP, freshCampaign, missionPayout, parSeconds, SQUAD_MAX, unlockedCountermeasures } from './campaign.ts';
+import { applyDismiss, applyLoadout, applyPayout, applyPurchase, applyRecruit, badgesFor, CARRY_SPEED, dealBoard, HANDOVER_REACH, HANDOVER_SECONDS, hasModifier, CACHE_BONUS, smashSeconds, IDENTIFY_RANGE, PICKUP_REACH, IDENTIFY_SECONDS, LOCKDOWN_SECONDS, PICKUP_SECONDS, NO_REWARD, RECRUIT_COST, rewardFor, ROSTER_CAP, freshCampaign, missionPayout, parSeconds, SQUAD_MAX, unlockedCountermeasures } from './campaign.ts';
 import type { Badge, Campaign, Contract, Loadout, MissionReport, MissionResults, Reward, Upgrade } from './campaign.ts';
 import { COURIER_DELAY, COURIER_PAUSE, COURIER_SPEED, planMission } from './mapgen.ts';
 import type { Area, EnemyKind, MissionPlan } from './mapgen.ts';
@@ -42,7 +42,11 @@ export type Sighting = Point & { heading: number; at: number };
 export type Shot = { id: number; from: Point; to: Point; faction: Faction; shooter: UnitKind; kind: 'bullet' | 'snipe'; ttl: number };
 export type Blast = { id: number; kind: 'grenade' | 'heal' | 'emp'; x: number; z: number; radius: number; ttl: number };
 // A 'sweep' (Elimination) has no place of its own: its point is the district's center, and nothing draws or points at it.
-export type Objective = Point & { kind: 'target' | 'terminal' | 'charge' | 'vip' | 'sweep' | 'extract'; label: string; progress: number; done: boolean };
+// An `optional` objective (Smash and grab's caches past the first) never holds extraction back.
+export type Objective = Point & { kind: 'target' | 'terminal' | 'charge' | 'cache' | 'vip' | 'sweep' | 'extract'; label: string; progress: number; done: boolean; optional: boolean };
+export const cacheLetter = (o: Objective) => /cache ([A-Z])/.exec(o.label)?.[1] ?? '';
+// Whether extraction is open: every objective but extraction is done or optional.
+export const objectivesMet = (objectives: readonly Objective[]) => objectives.every(o => o.kind === 'extract' || o.done || o.optional);
 export type Phase = 'briefing' | 'mission' | 'headquarters';
 export type Pending = { unitId: string; ability: AbilityId } | null;
 // 'covered' when every threat fires into the barrier the unit crouches behind, 'flanked' when one of them has a clear shot.
@@ -138,6 +142,7 @@ export const REVIVE_SECONDS = 3;
 export const REVIVE_HP = .4;
 export const HACK_SECONDS = 12;
 export const PLANT_SECONDS = 3;
+export const CACHE_SECONDS = 3; // an operative at a Smash and grab cache opens it in this long
 export const COVER_FACTOR = .5;
 // What each gear level buys, by how the squad spends it (Campaign.loadout). At level 0 every mode is plain issue.
 export const PIERCING_BONUS = 4;       // damage a weapon level adds with piercing rounds
@@ -178,7 +183,7 @@ const hashed = (seed: number, id: string, n: number) => {
   return mulberry32((h ^ Math.imul(n + 1, 0x9e3779b1)) >>> 0)();
 };
 // How the debrief names each objective as a landmark (charges carry their letter from the label).
-const LANDMARK: Record<Objective['kind'], string> = { target: 'the target', terminal: 'the vault terminal', charge: 'a charge site', vip: 'the VIP', sweep: 'the district', extract: 'extraction' };
+const LANDMARK: Record<Objective['kind'], string> = { target: 'the target', terminal: 'the vault terminal', charge: 'a charge site', cache: 'a cache', vip: 'the VIP', sweep: 'the district', extract: 'extraction' };
 // Elimination's objective, with how many of the district's own hostiles are still standing.
 export const sweepLabel = (left: number) => left ? `Down every hostile (${left} left)` : 'Down every hostile';
 // Reinforcements are numbered r0, r1, … as they enter (see reinforce); the district's own hostiles are h0, h1, ….
@@ -400,12 +405,13 @@ export class Simulation {
     });
     if (plan.vip) this.units.push(this.makeUnit('vip', 'VIP', 'vip', 'vip', plan.vip, VIP_HP, headingTo(plan.vip, plan.extract)));
     this.selected = [...this.squad];
-    const o = (kind: Objective['kind'], label: string, p: Point): Objective => ({ kind, label, x: p.x, z: p.z, progress: 0, done: false });
+    const o = (kind: Objective['kind'], label: string, p: Point): Objective => ({ kind, label, x: p.x, z: p.z, progress: 0, done: false, optional: false });
     const t = plan.contract.type, target = plan.enemies.find(e => e.kind === 'target');
     if (t === 'assassination' && target) this.objectives.push(o('target', 'Neutralize the target', target));
     if (t === 'intercept' && target) this.objectives.push(o('target', 'Stop the courier', target));
     if (t === 'heist') this.objectives.push(o('terminal', 'Download the vault data', plan.sites[0]));
     if (t === 'sabotage') plan.sites.forEach((s, i) => this.objectives.push(o('charge', `Plant charge ${'AB'[i]}`, s)));
+    if (t === 'smash') plan.sites.forEach((s, i) => this.objectives.push(o('cache', `Open cache ${'ABC'[i]}`, s)));
     if (t === 'escort' && plan.vip) this.objectives.push(o('vip', 'Free the VIP', plan.vip));
     if (t === 'elimination') this.objectives.push(o('sweep', sweepLabel(plan.enemies.length), { x: 0, z: 0 }));
     // A called extraction's zone sits at the start until the pickup is called, and nothing shows or points at it till then.
@@ -664,7 +670,7 @@ export class Simulation {
     this.pending = null; this.message = `${caster.name}: ${stats.name} away.`; this.emit();
   }
   // Extraction opens once every other objective is done.
-  get extractReady() { return this.objectives.every(o => o.kind === 'extract' || o.done); }
+  get extractReady() { return objectivesMet(this.objectives); }
   // Pointer entry points for the scene. `additive` (Shift, or a long press on touch) appends a waypoint on the
   // street and toggles an operative in the selection.
   groundClick(point: Point, additive = false) { if (this.calling) this.callPickup(point); else if (this.pending) this.aim(point, null); else this.move(point, additive); }
@@ -711,7 +717,7 @@ export class Simulation {
   private landmarkNear(p: Point) {
     const o = this.objectives.filter(o => o.kind !== 'sweep').sort((a, b) => distance(a, p) - distance(b, p))[0];
     if (!o) return 'the district';
-    return o.kind === 'charge' ? o.label.replace('Plant charge', 'Charge') : LANDMARK[o.kind];
+    return o.kind === 'charge' ? o.label.replace('Plant charge', 'Charge') : o.kind === 'cache' ? `Cache ${cacheLetter(o)}` : LANDMARK[o.kind];
   }
   // While alarmed, anything that gives the squad away restarts the countdown; a sighting or gunfire also updates where hunters search.
   private contact(seen: Point | null) {
@@ -793,7 +799,9 @@ export class Simulation {
     this.emit();
   }
   // The per-contract results a won contract reports (see RewardSpec in campaign.ts), from the types that have any.
-  private results(): MissionResults { return {}; }
+  private results(): MissionResults {
+    return this.plan?.contract.type === 'smash' ? { caches: this.objectives.filter(o => o.kind === 'cache' && o.done).length } : {};
+  }
   // As applyPayout pays it: an operative for a full roster comes as RECRUIT_COST credits.
   private earnedReward(r: Reward): Reward {
     const full = this.campaign.roster.length >= ROSTER_CAP;
@@ -1178,6 +1186,15 @@ export class Simulation {
     if (this.targetArea) { this.targetArea.x = u.x; this.targetArea.z = u.z; }
     this.emit();
   }
+  // Smash and grab: the first cache opened starts the lockdown clock and opens extraction; the others become optional.
+  private openedCache(o: Objective) {
+    const caches = this.objectives.filter(c => c.kind === 'cache'), open = caches.filter(c => c.done).length, letter = cacheLetter(o);
+    if (open === 1) {
+      this.lockdownIn = smashSeconds(this.plan!.contract.tier);
+      caches.forEach(c => { if (!c.done) { c.optional = true; c.label = `${c.label} (+${CACHE_BONUS} cr)`; } });
+      this.message = `Cache ${letter} open. Lockdown: the exits seal in ${this.lockdownIn} s.`;
+    } else this.message = `Cache ${letter} open (${open} of ${caches.length}).`;
+  }
   private updateObjectives(dt: number, squad: Unit[]) {
     const vip = this.unit('vip');
     for (const o of this.objectives) {
@@ -1190,10 +1207,11 @@ export class Simulation {
         o.progress = district.length ? 1 - left / district.length : 1; o.label = sweepLabel(left);
         if (!left) { o.done = true; this.message = 'District swept. Head for extraction.'; }
       }
-      if (o.kind === 'terminal' || o.kind === 'charge') {
-        const seconds = o.kind === 'terminal' ? HACK_SECONDS : PLANT_SECONDS, reach = o.kind === 'terminal' ? 1.5 : 1.2;
+      if (o.kind === 'terminal' || o.kind === 'charge' || o.kind === 'cache') {
+        const seconds = o.kind === 'terminal' ? HACK_SECONDS : o.kind === 'cache' ? CACHE_SECONDS : PLANT_SECONDS, reach = o.kind === 'terminal' ? 1.5 : 1.2;
         if (squad.some(s => distance(s, o) <= reach)) o.progress = Math.min(1, o.progress + dt / seconds);
         if (o.progress >= 1) { o.done = true; this.message = o.kind === 'terminal' ? 'Vault data secured. Head for extraction.' : `${o.label.replace('Plant', 'Planted')}.`; }
+        if (o.done && o.kind === 'cache') this.openedCache(o);
         // Under carry, the vault gives up a package instead, to the operative nearest the terminal.
         if (o.done && o.kind === 'terminal' && hasModifier(this.plan?.contract, 'carry')) {
           const by = [...squad].sort((a, b) => distance(a, o) - distance(b, o))[0];
@@ -1279,7 +1297,7 @@ export class Simulation {
     this.updateObjectives(dt, squad);
     if (this.phase !== 'mission') return;
     // Lockdown: once the first alarm sounds the exits seal after LOCKDOWN_SECONDS, stood down or not.
-    if (this.lockdownIn !== null && (this.lockdownIn -= dt) <= 0) return this.finish(false, 'Lockdown. The exits sealed with the squad inside.');
+    if (this.lockdownIn !== null && (this.lockdownIn -= dt) <= 0) return this.finish(false, this.plan.contract.type === 'smash' ? 'Lockdown. The squad was trapped.' : 'Lockdown. The exits sealed with the squad inside.');
     this.reinforce(dt);
     if (this.alarm && (this.calmIn -= dt) <= 0) this.standDown();
     this.updateVisibility();
