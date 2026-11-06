@@ -114,12 +114,13 @@ function Spotted({ state }: { state: Snapshot }) {
   const watchers = state.alarm ? [] : state.units.filter(u => u.faction === 'hostile' && u.hp > 0 && u.visible && u.detect > 0).sort((a, b) => b.detect - a.detect);
   const top = watchers[0];
   if (!top) return null;
+  const kind = top.guise ?? top.kind; // an unknown target is noticed as the guard it passes for
   const suspicious = top.detect > SUSPICIOUS, percent = Math.round(top.detect * 100);
   return <div className={`spotted${suspicious ? ' suspicious' : ''}`}>
     <Icon name="eye" />
     <span className="spotted-copy"><strong>Being spotted</strong>
-      <small>{WATCHER[top.kind]} · {suspicious ? 'suspicious' : 'noticing'}{watchers.length > 1 ? ` · +${watchers.length - 1} more` : ''}</small></span>
-    <span className="spotted-meter" role="meter" aria-label={`${WATCHER[top.kind]} detection`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}><i style={{ width: `${percent}%` }} /></span>
+      <small>{WATCHER[kind]} · {suspicious ? 'suspicious' : 'noticing'}{watchers.length > 1 ? ` · +${watchers.length - 1} more` : ''}</small></span>
+    <span className="spotted-meter" role="meter" aria-label={`${WATCHER[kind]} detection`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}><i style={{ width: `${percent}%` }} /></span>
   </div>;
 }
 

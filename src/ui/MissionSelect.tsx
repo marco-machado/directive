@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import { sim } from '../app.ts';
-import { badgesFor, MAX_COUNTERMEASURES, MAX_TIER, missionPayout, parSeconds, SQUAD_MAX, threatFor } from '../game/campaign.ts';
+import { badgesFor, hasModifier, MAX_COUNTERMEASURES, MAX_TIER, missionPayout, parSeconds, SQUAD_MAX, threatFor } from '../game/campaign.ts';
 import { ABILITY_STATS, CLASS_STATS } from '../game/classes.ts';
 import type { Threat } from '../game/campaign.ts';
 import type { EnemyKind } from '../game/mapgen.ts';
@@ -72,7 +72,7 @@ export function MissionSelect({ state, titleRef, onChoose, onDeploy, onRecenter,
             <ol className="brief-objectives">{objectives.map((o, i) => <li key={i}><Icon name={o.kind === 'extract' ? 'flag' : 'diamond'} />{o.label}</li>)}</ol>
             <ul className="intel" aria-label="Known hostiles">{INTEL.map(({ kind, label, icon }) => {
               const n = plan?.enemies.filter(e => e.kind === kind).length ?? 0;
-              return <li key={kind} className={n ? '' : 'none'}><Icon name={icon} /><b>{n}</b><small>{kind === 'target' && contract.type === 'intercept' ? 'Courier' : label}</small></li>;
+              return <li key={kind} className={n ? '' : 'none'}><Icon name={icon} /><b>{n}</b><small>{kind === 'target' && contract.type === 'intercept' ? 'Courier' : kind === 'target' && hasModifier(contract, 'unknown') ? 'Target: unidentified' : label}</small></li>;
             })}</ul>
             <div className="brief-pay">
               <div><small>Payout</small><Credits value={contract.payout} /></div>

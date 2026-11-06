@@ -97,7 +97,7 @@ function Target({ sim, index, labels }: Props) {
   const r = sim.targetArea?.r ?? 6;
   const show = (el: HTMLElement | null, on: boolean) => { if (el && el.hidden === on) el.hidden = !on; };
   useFrame(({ clock }) => {
-    const u = targetUnit(sim), live = open(sim, index)() && !!u && u.hp > 0, seen = live && sim.phase === 'mission' && !!u?.visible, a = sim.targetArea;
+    const u = targetUnit(sim), live = open(sim, index)() && !!u && u.hp > 0, seen = live && sim.phase === 'mission' && !!u?.visible && !u.guise, a = sim.targetArea;
     if (area.current) { area.current.visible = live && !seen && !!a; if (a) area.current.position.set(a.x, .05, a.z); }
     if (spin.current) spin.current.rotation.z = STILL ? 0 : clock.elapsedTime * -.12;
     show(areaLabel.current, live && !seen && !!a);

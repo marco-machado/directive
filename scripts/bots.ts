@@ -2,7 +2,7 @@
 import type { Campaign, Contract } from '../src/game/campaign.ts';
 import type { AbilityId, ClassId } from '../src/game/classes.ts';
 import type { Area, EnemyKind } from '../src/game/mapgen.ts';
-import { GHOST_SECONDS, isReinforcement } from '../src/game/simulation.ts';
+import { apparentHealth, GHOST_SECONDS, isReinforcement } from '../src/game/simulation.ts';
 import type { Objective, Pending, Simulation, Unit } from '../src/game/simulation.ts';
 import { distance } from '../src/game/world.ts';
 import type { Point, World } from '../src/game/world.ts';
@@ -71,9 +71,9 @@ export function observer(sim: Simulation): () => Knowledge {
       if (!isHostile(u)) continue;
       if (u.visible) {
         if (u.hp <= 0) { known.delete(u.id); dead.add(u.id); continue; }
-        const walks = u.patrol.length >= 2 || u.hunting || u.moving;
+        const walks = u.patrol.length >= 2 || u.hunting || u.moving, health = apparentHealth(u, sim.plan!.contract.tier);
         known.set(u.id, {
-          id: u.id, kind: u.kind as EnemyKind, x: u.x, z: u.z, heading: u.heading, sweep: u.sweep, hp: u.hp, maxHp: u.maxHp,
+          id: u.id, kind: (u.guise ?? u.kind) as EnemyKind, x: u.x, z: u.z, heading: u.heading, sweep: u.sweep, hp: health.hp, maxHp: health.maxHp,
           detect: u.detect, stunned: u.stunned, held: u.held, visible: true, at: sim.time,
           patrol: sim.intel.get(u.id) ?? (walks ? [{ x: u.x, z: u.z }, { x: u.x, z: u.z }] : []),
         });

@@ -9,15 +9,19 @@ export type ContractType = 'assassination' | 'heist' | 'sabotage' | 'escort' | '
 // `modifiers` change how a contract plays; the Worker deals them with the offer.
 export type Contract = { id: string; type: ContractType; tier: number; seed: number; payout: number; district: string; sector: number; patrols?: number; modifiers?: Modifier[] };
 // Contract modifiers: Lockdown seals the exits LOCKDOWN_SECONDS after the first alarm, and the contract fails unless the
-// squad is out; under a no-kill clause each kill but a target cuts NO_KILL_CUT of the fee, down to NO_KILL_FLOOR of it.
-// From MODIFIER_TIER, each offer after the opening carries one with MODIFIER_CHANCE, of those that fit its type; each
-// raises the fee by MODIFIER_PAY.
-export type Modifier = 'lockdown' | 'nokill';
-export const MODIFIERS: readonly Modifier[] = ['lockdown', 'nokill'];
+// squad is out; under a no-kill clause each kill but a target cuts NO_KILL_CUT of the fee, down to NO_KILL_FLOOR of it;
+// an unknown target passes as a guard until an operative watches it, unaware, within IDENTIFY_RANGE for IDENTIFY_SECONDS,
+// or Recon marks it. Each offer after the opening carries one with MODIFIER_CHANCE, of those that fit its type and are
+// open at its tier (MODIFIER_UNLOCK, from MODIFIER_TIER); each raises the fee by MODIFIER_PAY.
+export type Modifier = 'lockdown' | 'nokill' | 'unknown';
+export const MODIFIERS: readonly Modifier[] = ['lockdown', 'nokill', 'unknown'];
 export const MODIFIER_FITS: Record<Modifier, readonly ContractType[]> = {
   lockdown: ['assassination', 'heist', 'sabotage', 'escort', 'elimination', 'intercept'],
   nokill: ['assassination', 'heist', 'sabotage', 'escort', 'intercept'], // Elimination is all kills
+  unknown: ['assassination'],
 };
+export const MODIFIER_UNLOCK: Record<Modifier, number> = { lockdown: 2, nokill: 2, unknown: 3 };
+export const IDENTIFY_RANGE = 5, IDENTIFY_SECONDS = 2;
 export const MODIFIER_TIER = 2, MODIFIER_CHANCE = 1 / 3, MODIFIER_PAY = .2, MAX_MODIFIERS = 2;
 export const LOCKDOWN_SECONDS = 45;
 export const NO_KILL_CUT = .15, NO_KILL_FLOOR = .25;
@@ -219,8 +223,8 @@ function dealOffers(p: Dealing, rng: Rng, unlock: UnlockTiers = UNLOCK_TIER): Co
     const id = token(rng);
     if (first && i === 0) return { id, ...first, payout: contractPayout(first.tier) };
     const type = types[first ? i - 1 : i], seed = Math.floor(rng() * 2 ** 31), district = pick(rng, DISTRICTS), sector = 1 + Math.floor(rng() * 99);
-    const fits = MODIFIERS.filter(m => MODIFIER_FITS[m].includes(type));
-    const modifiers = p.completed >= OPENING_CONTRACTS && tier >= MODIFIER_TIER && fits.length && rng() < MODIFIER_CHANCE ? [pick(rng, fits)] : [];
+    const fits = MODIFIERS.filter(m => MODIFIER_FITS[m].includes(type) && tier >= MODIFIER_UNLOCK[m]);
+    const modifiers = p.completed >= OPENING_CONTRACTS && fits.length && rng() < MODIFIER_CHANCE ? [pick(rng, fits)] : [];
     const contract: Contract = { id, type, tier, seed, payout: contractPayout(tier, modifiers.length), district, sector };
     return modifiers.length ? { ...contract, modifiers } : contract;
   });
@@ -267,8 +271,8 @@ function clampContract(c: any): Contract | null {
   if (!id || !district || !isContractType(c?.type)) return null;
   const tier = Math.max(1, n(c.tier, MAX_TIER));
   // Payout always follows the tier and the modifiers, so an imported save cannot carry a richer contract. Modifiers are
-  // only known ones that fit the type, at most MAX_MODIFIERS.
-  const modifiers = Array.isArray(c.modifiers) ? MODIFIERS.filter(m => c.modifiers.includes(m) && MODIFIER_FITS[m].includes(c.type)).slice(0, MAX_MODIFIERS) : [];
+  // only known ones that fit the type and are open at its tier, at most MAX_MODIFIERS.
+  const modifiers = Array.isArray(c.modifiers) ? MODIFIERS.filter(m => c.modifiers.includes(m) && MODIFIER_FITS[m].includes(c.type) && tier >= MODIFIER_UNLOCK[m]).slice(0, MAX_MODIFIERS) : [];
   let contract: Contract = { id, type: c.type, tier, seed: n(c.seed, 2 ** 31), payout: contractPayout(tier, modifiers.length), district, sector: Math.max(1, n(c.sector, 99)) };
   if (modifiers.length) contract = { ...contract, modifiers };
   return c.patrols === undefined ? contract : { ...contract, patrols: n(c.patrols, 3 + MAX_TIER) };

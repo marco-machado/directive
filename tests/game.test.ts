@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Simulation, parseCampaign, CALM_SECONDS, COUNTERMEASURES, EXTENDED_RANGE, HEAVY_HP, LIGHT_CONCEALMENT, PIERCING_BONUS, SUPPRESSOR_STEP, CALM_STEP, escalation, FIRST_WAVE_SECONDS, waveSize, REPEAT_REINFORCEMENTS, VIP_DAMAGE_TAKEN, VIP_SECURE_SECONDS, CAMERA_DETECT, COVER_FACTOR, DETECT_DRAIN, detectSeconds, GHOST_SECONDS, HACK_SECONDS, LOOK_ANGLE, LOOK_EVERY, LOOK_PAUSE, QUEUE_SPACING, REINFORCE_CAP, ROUTE_MAX, SUSPICIOUS, REINFORCE_SECONDS, REVIVE_SECONDS, SIGHT_RANGE, TAKEDOWN_REACH, TAKEDOWN_SECONDS, tierDamage, tierHp, WAIT_MAX, WAIT_STEP } from '../src/game/simulation.ts';
+import { Simulation, parseCampaign, FLEE_DELAY, HOSTILE_STATS, posted, CALM_SECONDS, COUNTERMEASURES, EXTENDED_RANGE, HEAVY_HP, LIGHT_CONCEALMENT, PIERCING_BONUS, SUPPRESSOR_STEP, CALM_STEP, escalation, FIRST_WAVE_SECONDS, waveSize, REPEAT_REINFORCEMENTS, VIP_DAMAGE_TAKEN, VIP_SECURE_SECONDS, CAMERA_DETECT, COVER_FACTOR, DETECT_DRAIN, detectSeconds, GHOST_SECONDS, HACK_SECONDS, LOOK_ANGLE, LOOK_EVERY, LOOK_PAUSE, QUEUE_SPACING, REINFORCE_CAP, ROUTE_MAX, SUSPICIOUS, REINFORCE_SECONDS, REVIVE_SECONDS, SIGHT_RANGE, TAKEDOWN_REACH, TAKEDOWN_SECONDS, tierDamage, tierHp, WAIT_MAX, WAIT_STEP } from '../src/game/simulation.ts';
 import type { CampaignSync, Unit, Upgrade } from '../src/game/simulation.ts';
-import { CAMPAIGN_VERSION, CONTRACT_TYPES, contractPayout, LOCKDOWN_SECONDS, FIRST_CONTRACT, freshCampaign, MAX_LEVEL, MAX_TIER, parSeconds } from '../src/game/campaign.ts';
+import { CAMPAIGN_VERSION, CONTRACT_TYPES, contractPayout, IDENTIFY_RANGE, IDENTIFY_SECONDS, LOCKDOWN_SECONDS, FIRST_CONTRACT, freshCampaign, MAX_LEVEL, MAX_TIER, parSeconds } from '../src/game/campaign.ts';
 import type { ArmorMode, Campaign, ContractType, MissionReport, WeaponMode } from '../src/game/campaign.ts';
 import { abilityCooldown, CLASS_STATS } from '../src/game/classes.ts';
 import { COURIER_DELAY, COURIER_MIN_RUN, interceptable, mapSize, planMission, TARGET_AREA_OFFSET, TARGET_AREA_RADIUS } from '../src/game/mapgen.ts';
@@ -1614,4 +1614,79 @@ test('Lockdown seals the exits a set time after the first alarm, even once it st
   // Without the modifier an alarm starts no clock.
   const plain = alarmed('heist'); plain.raise({ x: 15, z: 15 });
   assert.equal(plain.sim.lockdownIn, null);
+});
+
+// An unknown target (#54): deployed with the squad out of the way and every other hostile stunned, so only the target acts.
+function unknownTarget(seed = 77) {
+  const c = { ...contract('assassination', 3, seed), payout: contractPayout(3, 1), modifiers: ['unknown' as const] };
+  const sim = new Simulation(campaignWith('assassination', { offers: [c] }));
+  sim.deploy();
+  const target = sim.units.find(u => u.kind === 'target')!, squad = sim.units.filter(u => u.faction === 'squad');
+  sim.units.filter(u => u.faction === 'hostile' && u !== target).forEach(u => { u.stunned = 1e9; });
+  squad.forEach(u => { u.x = sim.plan!.extract.x; u.z = sim.plan!.extract.z; u.hp = u.maxHp = 1e9; });
+  // A spot behind the target, in reach and in sight, where it cannot see the operative.
+  const behind = [3, 2.5, 3.5, 2].flatMap(d => [0, .4, -.4].map(a => ({ x: target.x - Math.sin(target.sweep + a) * d, z: target.z - Math.cos(target.sweep + a) * d })))
+    .find(p => sim.plan!.world.walkable(p, .4) && sim.plan!.world.sightClear(p, target))!;
+  return { sim, target, squad, behind };
+}
+
+test('an unknown target passes as a posted guard: its name, health reading and sight give nothing away', () => {
+  const { sim, target } = unknownTarget();
+  assert.equal(target.guise, 'guard'); assert.equal(target.name, HOSTILE_STATS.guard.name); assert.ok(posted(target));
+  // Its health reads as a guard's, so a volley planned to kill a guard can leave it standing.
+  const op = sim.units.find(u => u.faction === 'squad')!;
+  op.x = target.x + 2; op.z = target.z; target.visible = true;
+  assert.equal(sim.attackPreview(target.id)!.hp, Math.ceil(HOSTILE_STATS.guard.hp * tierHp(3)));
+  assert.ok(target.maxHp > HOSTILE_STATS.guard.hp * tierHp(3));
+  op.x = sim.plan!.extract.x; op.z = sim.plan!.extract.z;
+  const area = { ...sim.targetArea! };
+  target.visible = true; sim.update(1 / 60);
+  assert.deepEqual({ x: sim.targetArea!.x, z: sim.targetArea!.z }, { x: area.x, z: area.z }, 'seeing it does not move the target area onto it');
+  const plain = new Simulation(campaignWith('assassination', { offers: [contract('assassination', 3, 77)] }));
+  plain.deploy();
+  assert.equal(plain.units.find(u => u.kind === 'target')!.guise, null);
+});
+
+test('an operative identifies an unknown target by watching it, unaware, up close for long enough', () => {
+  const { sim, target, squad, behind } = unknownTarget();
+  squad[0].x = behind.x; squad[0].z = behind.z;
+  assert.ok(distance(squad[0], target) <= IDENTIFY_RANGE);
+  step(sim, IDENTIFY_SECONDS - .3);
+  assert.equal(target.guise, 'guard', 'not yet');
+  step(sim, .5);
+  assert.equal(target.guise, null); assert.equal(target.name, 'TARGET'); assert.match(sim.message, /identified the target/);
+  assert.equal(sim.alarm, false);
+  // From too far, it is never identified.
+  const far = unknownTarget();
+  const p = { x: far.target.x + (behind.x - target.x) * (IDENTIFY_RANGE + 1.5) / distance(behind, target), z: far.target.z + (behind.z - target.z) * (IDENTIFY_RANGE + 1.5) / distance(behind, target) };
+  far.squad[0].x = p.x; far.squad[0].z = p.z;
+  step(far.sim, IDENTIFY_SECONDS * 3);
+  assert.equal(far.target.guise, 'guard');
+});
+
+test("Recon's mark identifies an unknown target", () => {
+  const { sim, target } = unknownTarget();
+  target.marked = 1; sim.update(1 / 60);
+  assert.equal(target.guise, null); assert.match(sim.message, /Recon marked the target/);
+});
+
+test('killing the wrong guard on an unknown-target contract is a guard kill, and the target stays hidden', () => {
+  const { sim, target } = unknownTarget();
+  const decoy = sim.units.find(u => u.faction === 'hostile' && u.kind === 'guard')!;
+  decoy.hp = 0; sim.update(1 / 60);
+  assert.equal(sim.objectives[0].done, false); assert.equal(target.guise, 'guard');
+  target.hp = 0; sim.update(1 / 60);
+  assert.ok(sim.objectives[0].done);
+  const badges = (sim as unknown as { earnedBadges(): string[] }).earnedBadges();
+  assert.ok(!badges.includes('bloodless'));
+});
+
+test('on alarm an unknown target holds its disguise through its hesitation, then gives itself away by running', () => {
+  const { sim, target } = unknownTarget();
+  (sim as unknown as { raiseAlarm(at: Point, reason: string): void }).raiseAlarm(target, 'test');
+  assert.ok(target.exit);
+  step(sim, FLEE_DELAY - .5);
+  assert.equal(target.guise, 'guard');
+  step(sim, 1);
+  assert.equal(target.guise, null); assert.ok(target.path.length, 'running for its exit');
 });

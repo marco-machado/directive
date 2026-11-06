@@ -390,7 +390,7 @@ class CombatFx {
         const a = Math.random() * Math.PI * 2, r = e.radius * rand(.45, 1);
         this.arc(e.x, .4, e.z, e.x + Math.cos(a) * r, .05, e.z + Math.sin(a) * r, fade * rand(.5, 1));
       }
-      for (const u of sim.units) if (u.faction === 'hostile' && u.hp > 0 && u.stunned > 0 && Math.hypot(u.x - e.x, u.z - e.z) <= e.radius + .5) this.arc(e.x, .4, e.z, u.x, HIT_Y[u.kind], u.z, fade);
+      for (const u of sim.units) if (u.faction === 'hostile' && u.hp > 0 && u.stunned > 0 && Math.hypot(u.x - e.x, u.z - e.z) <= e.radius + .5) this.arc(e.x, .4, e.z, u.x, HIT_Y[u.guise ?? u.kind], u.z, fade);
     }
     for (const w of this.wreckPool.items) {
       const age = now - w.t0;

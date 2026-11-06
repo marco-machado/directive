@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyDismiss, applyLoadout, applyPayout, applyPurchase, applyRecruit, BADGE_POINTS, baseTier, CAMPAIGN_VERSION, clampCampaign, clearancePoints, CONTRACT_POINTS, completeMission, contractPayout, dealBoard, DEFAULT_LOADOUT, FIRST_CONTRACT, freshCampaign, isLoadout, MAX_TIER, MAX_COUNTERMEASURES, MAX_LEVEL, MIN_MISSION_MS, missionReport, nextUnlock, offerTiers, OPENING_CONTRACTS, PAR_PER_TIER, PAR_SECONDS, parSeconds, RECRUIT_COST, ROSTER_CAP, SILENT_CLASSES, squadRating, startMission, threatFor, topTier, unlockedCountermeasures, upgradeLedger, UNLOCK_TIER, unlockedTypes, nextTypeUnlock, MODIFIER_FITS, MODIFIER_TIER, missionPayout, NO_KILL_FLOOR, NO_REWARD, resultsFit, rewardFor } from '../src/game/campaign.ts';
+import { applyDismiss, applyLoadout, applyPayout, applyPurchase, applyRecruit, BADGE_POINTS, baseTier, CAMPAIGN_VERSION, clampCampaign, clearancePoints, CONTRACT_POINTS, completeMission, contractPayout, dealBoard, DEFAULT_LOADOUT, FIRST_CONTRACT, freshCampaign, isLoadout, MAX_TIER, MAX_COUNTERMEASURES, MAX_LEVEL, MIN_MISSION_MS, missionReport, nextUnlock, offerTiers, OPENING_CONTRACTS, PAR_PER_TIER, PAR_SECONDS, parSeconds, RECRUIT_COST, ROSTER_CAP, SILENT_CLASSES, squadRating, startMission, threatFor, topTier, unlockedCountermeasures, upgradeLedger, UNLOCK_TIER, unlockedTypes, nextTypeUnlock, MODIFIER_FITS, MODIFIER_TIER, MODIFIER_UNLOCK, missionPayout, NO_KILL_FLOOR, NO_REWARD, resultsFit, rewardFor } from '../src/game/campaign.ts';
 import type { Ledger, MissionReport, MissionResults, RewardTable, UnlockTiers } from '../src/game/campaign.ts';
 import { mulberry32 } from '../src/game/rng.ts';
 import { formatSaveCode, generateSaveCode, normalizeSaveCode } from '../src/game/saveCode.ts';
@@ -289,25 +289,32 @@ test('an intel reward is spent by the next deployment, kept by its restart, and 
 });
 
 test('modifiers are dealt from tier 2 after the opening, fit their type, pay more, survive the clamp only when valid, and the no-kill clause cuts the fee', () => {
-  let dealt = 0, boards = 0;
+  let dealt = 0, boards = 0, unknown = 0;
   for (let seed = 1; seed <= 200; seed++) {
     const r = mulberry32(seed), veteran = dealBoard({ ...freshCampaign(r), completed: 4 }, r);
     for (const o of veteran.offers) {
       boards++;
       if (!o.modifiers) { assert.equal(o.payout, contractPayout(o.tier)); continue; }
       dealt++;
-      assert.equal(o.modifiers.length, 1); assert.ok(o.tier >= MODIFIER_TIER);
+      assert.equal(o.modifiers.length, 1); assert.ok(o.tier >= MODIFIER_TIER && o.tier >= MODIFIER_UNLOCK[o.modifiers[0]]);
+      if (o.modifiers[0] === 'unknown') unknown++;
       assert.ok(MODIFIER_FITS[o.modifiers[0]].includes(o.type), `${o.modifiers[0]} on ${o.type}`);
       assert.equal(o.payout, contractPayout(o.tier, 1));
     }
     assert.ok(freshCampaign(r).offers.every(o => !o.modifiers), 'none during the opening');
   }
   assert.ok(dealt / boards > .2 && dealt / boards < .4, `${dealt} of ${boards}`);
+  assert.ok(unknown > 0, 'an unknown target is dealt on assassinations from tier 3');
   assert.equal(contractPayout(1, 1), 600);
   // The clamp drops unknown and misfit modifiers and recomputes the fee from what is left.
   const base = { id: 'x', type: 'elimination', tier: 2, seed: 1, district: 'X', sector: 1, payout: 1e9 };
   assert.deepEqual(clampCampaign({ offers: [{ ...base, modifiers: ['lockdown', 'nokill', 'god'] }] }, rng).offers[0].modifiers, ['lockdown']);
   assert.equal(clampCampaign({ offers: [{ ...base, modifiers: ['lockdown'] }] }, rng).offers[0].payout, contractPayout(2, 1));
+  // An unknown target fits only an assassination, from tier 3.
+  const hit = { ...base, type: 'assassination', modifiers: ['unknown'] };
+  assert.equal(clampCampaign({ offers: [hit] }, rng).offers[0].modifiers, undefined);
+  assert.deepEqual(clampCampaign({ offers: [{ ...hit, tier: 3 }] }, rng).offers[0].modifiers, ['unknown']);
+  assert.equal(clampCampaign({ offers: [{ ...base, tier: 3, modifiers: ['unknown'] }] }, rng).offers[0].modifiers, undefined);
   assert.equal(clampCampaign({ offers: [{ ...base, modifiers: ['nokill'] }] }, rng).offers[0].modifiers, undefined);
   // No-kill: each kill but a target cuts NO_KILL_CUT of the fee, to a floor; the stealth bonus applies after.
   const clause = { ...base, type: 'heist' as const, payout: 1000, modifiers: ['nokill' as const] };
