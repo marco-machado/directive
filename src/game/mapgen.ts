@@ -1,23 +1,35 @@
 import type { Contract } from './campaign.ts';
+import { SQUAD_SPEED } from './classes.ts';
 import { between, mulberry32, pick, shuffle } from './rng.ts';
 import type { Rng } from './rng.ts';
 import { distance, World } from './world.ts';
 import type { Bounds, Building, Point, Rect } from './world.ts';
 
 export type EnemyKind = 'guard' | 'heavy' | 'camera' | 'turret' | 'target';
-export type EnemySpawn = Point & { kind: EnemyKind; heading: number; patrol: Point[] };
+// `escort` marks a guard that walks beside an Intercept courier (the plan's target) instead of keeping a patrol or a post.
+export type EnemySpawn = Point & { kind: EnemyKind; heading: number; patrol: Point[]; escort?: true };
 export type ObjectiveSite = Point & { kind: 'terminal' | 'charge' };
 export type Area = Point & { r: number };
 export type MissionPlan = {
   contract: Contract; world: World; label: string;
   spawn: Point[]; extract: Point; enemies: EnemySpawn[]; sites: ObjectiveSite[]; vip: Point | null; exits: Point[];
-  targetArea: Area | null; // assassination intel: where the target was last reported
+  targetArea: Area | null; // assassination intel: where the target was last reported; Intercept: where the courier enters
 };
 
 const STREET = 1.5; // clearance between a block's edge and its building
 const EDGE = .9;    // lattice inset from the map edge
 const SAFE_RADIUS = 9; // no hostile starts this close to the squad
 const BACK_ROOM = 1.5; // map left behind a posted guard, so a takedown has ground to end on
+// Intercept: the courier waits COURIER_DELAY s, then walks its route at COURIER_SPEED from one edge exit to another at
+// least COURIER_MIN_RUN m away (and most of the district's width), pausing COURIER_PAUSE s at each street corner. The
+// squad can always reach some point of the route INTERCEPT_MARGIN s before the courier gets there.
+export const COURIER_DELAY = 6;
+export const COURIER_SPEED = 1.5;
+export const COURIER_PAUSE = 1.2;
+export const COURIER_MIN_RUN = 16;
+export const INTERCEPT_MARGIN = 5;
+// m the route keeps from extraction, so the ambush is a walk out across the district, not a step off the start.
+export const COURIER_BERTH = 15;
 export const TARGET_AREA_RADIUS = 6;
 export const TARGET_AREA_OFFSET = 3; // the area's center lies within this of the target, so the area always contains it
 const ACCENTS = ['#b9d6cc', '#ffb17d', '#73dfca', '#bad3c8', '#e2a078'];
@@ -83,6 +95,50 @@ function patrolRoute(rng: Rng, l: Lattice, i: number, j: number, steps: number, 
   return [...route, ...route.slice(1, -1).reverse()];
 }
 
+// The courier's route: edge nodes far apart, joined by the fewest streets that stay out of the squad's safe corner,
+// with a point the squad can reach first by INTERCEPT_MARGIN. Null when the district has no such pair.
+// A cramped district that has no such route at COURIER_BERTH gets one closer in, never inside the safe radius.
+function courierRoute(rng: Rng, l: Lattice, world: World, from: Point, extract: Point, width: number): Point[] | null {
+  for (const berth of [COURIER_BERTH, SAFE_RADIUS + 1]) { const route = courierRouteAt(rng, l, world, from, extract, width, berth); if (route) return route; }
+  return null;
+}
+function courierRouteAt(rng: Rng, l: Lattice, world: World, from: Point, extract: Point, width: number, berth: number): Point[] | null {
+  const key = (i: number, j: number) => i * (l.rows + 1) + j, clear = (i: number, j: number) => distance(l.node(i, j), extract) > berth;
+  const edge: [number, number][] = [];
+  for (let i = 0; i <= l.cols; i++) for (let j = 0; j <= l.rows; j++) if ((i === 0 || j === 0 || i === l.cols || j === l.rows) && clear(i, j)) edge.push([i, j]);
+  const run = Math.max(COURIER_MIN_RUN, width * .6);
+  for (const [ai, aj] of shuffle(rng, edge)) for (const [bi, bj] of shuffle(rng, edge)) {
+    if (distance(l.node(ai, aj), l.node(bi, bj)) < run) continue;
+    // Breadth-first over the street lattice.
+    const prev = new Map<number, number>([[key(ai, aj), -1]]), queue: [number, number][] = [[ai, aj]];
+    while (queue.length && !prev.has(key(bi, bj))) {
+      const [i, j] = queue.shift()!;
+      for (const [di, dj] of shuffle(rng, [[1, 0], [-1, 0], [0, 1], [0, -1]])) {
+        const ni = i + di, nj = j + dj;
+        if (ni < 0 || nj < 0 || ni > l.cols || nj > l.rows || prev.has(key(ni, nj)) || !clear(ni, nj)) continue;
+        if (!world.findPath(l.node(i, j), l.node(ni, nj)).length) continue;
+        prev.set(key(ni, nj), key(i, j)); queue.push([ni, nj]);
+      }
+    }
+    if (!prev.has(key(bi, bj))) continue;
+    const route: Point[] = [];
+    for (let k = key(bi, bj); k >= 0; k = prev.get(k)!) route.unshift(l.node(Math.floor(k / (l.rows + 1)), k % (l.rows + 1)));
+    if (interceptable(world, from, route)) return route;
+  }
+  return null;
+}
+// Whether the squad, leaving `from` at once, reaches some corner of the route INTERCEPT_MARGIN s before the courier.
+export function interceptable(world: World, from: Point, route: Point[]) {
+  let courier = COURIER_DELAY;
+  return route.some((p, k) => {
+    if (k) courier += distance(route[k - 1], p) / COURIER_SPEED + COURIER_PAUSE;
+    const path = world.findPath(from, p);
+    if (!path.length) return false;
+    const walk = path.reduce((sum, q, i) => sum + distance(i ? path[i - 1] : from, q), 0);
+    return walk / SQUAD_SPEED + INTERCEPT_MARGIN <= courier;
+  });
+}
+
 function attempt(contract: Contract, rng: Rng, withCover: boolean): MissionPlan | null {
   const { bounds, buildings, lattice } = layout(contract, rng);
   const bare = new World(bounds, buildings, []);
@@ -110,8 +166,21 @@ function attempt(contract: Contract, rng: Rng, withCover: boolean): MissionPlan 
   }
   if (type === 'escort') { primary = pick(rng, far.slice(0, Math.ceil(far.length * .5))); vip = primary; }
   if (type === 'assassination') enemies.push({ ...primary, kind: 'target', heading: headingTo(primary, extract), patrol: [] });
+  // Intercept: the courier starts at its entry exit with two escorts beside it; the posted guards hold the route's middle.
+  let escorts: Point[] = [];
+  if (type === 'intercept') {
+    const route = courierRoute(rng, lattice, bare, spawn[0], extract, bounds.maxX - bounds.minX);
+    if (!route) return null;
+    const start = route[0], ahead = headingTo(start, route[1]);
+    // The entry is on the map edge, so they stand at its shoulders a step in, or in file ahead where a shoulder is off the map.
+    const at = ([along, side]: number[]) => ({ x: start.x + Math.sin(ahead) * along + Math.cos(ahead) * side, z: start.z + Math.cos(ahead) * along - Math.sin(ahead) * side });
+    escorts = [[.5, .9], [.5, -.9], [1.2, .7], [1.2, -.7], [1.4, 0], [2.4, 0]].map(at).filter(p => bare.walkable(p, .4)).slice(0, 2);
+    if (escorts.length < 2) return null;
+    enemies.push({ ...start, kind: 'target', heading: ahead, patrol: route });
+    primary = route[Math.floor(route.length / 2)];
+  }
 
-  const used: Point[] = [primary, ...sites];
+  const used: Point[] = [primary, ...sites, ...enemies.flatMap(e => [e, ...e.patrol]), ...escorts];
   const free = (p: Point, gap = 1.5) => distance(p, extract) > SAFE_RADIUS && used.every(u => distance(u, p) >= gap);
   const add = (kind: EnemyKind, p: Point, patrol: Point[], heading = headingTo(p, extract)) => { enemies.push({ ...p, kind, heading, patrol }); used.push(p); };
   const near = (center: Point, r: number, ok = (_: Point) => true) => shuffle(rng, candidates).find(p => distance(p, center) <= r && free(p) && ok(p)) ??
@@ -122,13 +191,15 @@ function attempt(contract: Contract, rng: Rng, withCover: boolean): MissionPlan 
   const backRoom = (p: Point) => { const h = headingTo(p, extract); return bare.inBounds({ x: p.x - Math.sin(h) * BACK_ROOM, z: p.z - Math.cos(h) * BACK_ROOM }); };
   const post = (site: Point) => near(site, 4, backRoom) ?? near(site, 6, backRoom) ?? near(site, 8, backRoom);
 
-  // Two posted guards hold every objective; the rest walk the streets.
-  for (const site of (sites.length ? sites : [primary]).slice(0, 2)) {
+  for (const p of escorts) enemies.push({ ...p, kind: 'guard', heading: enemies[0].heading, patrol: enemies[0].patrol, escort: true });
+  // Two posted guards hold every objective; the rest walk the streets. The courier's escorts stand in for Intercept's.
+  if (type !== 'intercept') for (const site of (sites.length ? sites : [primary]).slice(0, 2)) {
     for (let k = 0; k < (sites.length > 1 ? 1 : 2); k++) { const p = post(site); if (p) add('guard', p, []); }
   }
-  const guards = contract.patrols === undefined ? 3 + contract.tier : enemies.filter(e => e.kind === 'guard').length + contract.patrols;
+  const guarding = () => enemies.filter(e => e.kind === 'guard' && !e.escort).length;
+  const guards = contract.patrols === undefined ? 3 + contract.tier - (type === 'intercept' ? 2 : 0) : guarding() + contract.patrols;
   const nodeStarts = shuffle(rng, nodes).filter(n => free(n.p, 3));
-  while (enemies.filter(e => e.kind === 'guard').length < guards && nodeStarts.length) {
+  while (guarding() < guards && nodeStarts.length) {
     const n = nodeStarts.pop()!, route = patrolRoute(rng, lattice, n.i, n.j, 2 + Math.floor(rng() * 2), extract);
     add('guard', n.p, route, headingTo(route[0], route[1] ?? extract));
   }
@@ -170,6 +241,9 @@ function attempt(contract: Contract, rng: Rng, withCover: boolean): MissionPlan 
   const reach = [extract, ...used, ...exits, ...enemies.flatMap(e => e.patrol)];
   if (!reach.every(p => world.findPath(spawn[0], p).length)) return null;
   const label = `SECTOR ${String(contract.sector).padStart(2, '0')} / ${contract.district}`;
+  // Barriers can lengthen the squad's way to the route, so the margin is checked again on the finished streets.
+  const courier = enemies.find(e => e.kind === 'target' && e.patrol.length);
+  if (courier && !interceptable(world, spawn[0], courier.patrol)) return null;
   return { contract, world, label, spawn, extract, enemies, sites, vip, exits, targetArea: null };
 }
 
@@ -183,6 +257,8 @@ export function planMission(contract: Contract): MissionPlan {
   const rng = mulberry32(contract.seed);
   for (let k = 0; k < 12; k++) {
     const plan = attempt(contract, rng, k < 8), target = plan?.enemies.find(e => e.kind === 'target');
+    // An Intercept courier's area is centered on its entry exit; its route is given away as a patrol's is.
+    if (plan && target && contract.type === 'intercept') return { ...plan, targetArea: { x: target.x, z: target.z, r: TARGET_AREA_RADIUS } };
     if (plan) return target ? { ...plan, targetArea: lastKnownArea(contract.seed, target) } : plan;
   }
   throw new Error(`No playable layout for contract seed ${contract.seed}.`);

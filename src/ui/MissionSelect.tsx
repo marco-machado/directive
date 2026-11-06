@@ -71,7 +71,7 @@ export function MissionSelect({ state, titleRef, onChoose, onDeploy, onRecenter,
             <ol className="brief-objectives">{objectives.map((o, i) => <li key={i}><Icon name={o.kind === 'extract' ? 'flag' : 'diamond'} />{o.label}</li>)}</ol>
             <ul className="intel" aria-label="Known hostiles">{INTEL.map(({ kind, label, icon }) => {
               const n = plan?.enemies.filter(e => e.kind === kind).length ?? 0;
-              return <li key={kind} className={n ? '' : 'none'}><Icon name={icon} /><b>{n}</b><small>{label}</small></li>;
+              return <li key={kind} className={n ? '' : 'none'}><Icon name={icon} /><b>{n}</b><small>{kind === 'target' && contract.type === 'intercept' ? 'Courier' : label}</small></li>;
             })}</ul>
             <div className="brief-pay">
               <div><small>Payout</small><Credits value={contract.payout} /></div>

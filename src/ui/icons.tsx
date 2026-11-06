@@ -9,6 +9,7 @@ const PATHS = {
   sabotage: <><path d="M3 8.5h18V19H3z" /><path d="M3 13.75h18M16 8.5V4.5M7 16.5h4" /><circle cx="16" cy="3.5" r="1.2" fill="currentColor" stroke="none" /></>,
   escort: <><path d="M12 2.5l8 3v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10v-6z" /><circle cx="12" cy="10" r="2.3" /><path d="M8.3 16.6c.8-2 2.1-3 3.7-3s2.9 1 3.7 3" /></>,
   elimination: <><path d="M3 8V3h5M16 3h5v5M21 16v5h-5M8 21H3v-5" /><path d="M8.5 8.5l7 7M15.5 8.5l-7 7" /></>,
+  intercept: <><path d="M2 16h6l3-8h11" strokeDasharray="2.6 2" /><circle cx="15" cy="8" r="2.6" /><path d="M15 12.5v8M11 16.5h8" /></>,
   grenade: <><circle cx="11" cy="14.5" r="6.5" /><path d="M9 8V5.5h4V8M13 5.5l3-2.5 2.5 2M7.5 12.5h7M7.5 16.5h7" /></>,
   heal: <><path d="M12 2.5l8.2 4.75v9.5L12 21.5l-8.2-4.75v-9.5z" /><path d="M12 8v8M8 12h8" /></>,
   snipe: <><circle cx="12" cy="12" r="8.5" /><circle cx="12" cy="12" r="3" /><path d="M12 1.5v6M12 16.5v6M1.5 12h6M16.5 12h6" /></>,

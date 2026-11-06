@@ -5,7 +5,7 @@ import type { CampaignSync, Unit, Upgrade } from '../src/game/simulation.ts';
 import { CAMPAIGN_VERSION, CONTRACT_TYPES, contractPayout, FIRST_CONTRACT, freshCampaign, MAX_LEVEL, MAX_TIER, parSeconds } from '../src/game/campaign.ts';
 import type { ArmorMode, Campaign, ContractType, MissionReport, WeaponMode } from '../src/game/campaign.ts';
 import { abilityCooldown, CLASS_STATS } from '../src/game/classes.ts';
-import { mapSize, planMission, TARGET_AREA_OFFSET, TARGET_AREA_RADIUS } from '../src/game/mapgen.ts';
+import { COURIER_DELAY, COURIER_MIN_RUN, interceptable, mapSize, planMission, TARGET_AREA_OFFSET, TARGET_AREA_RADIUS } from '../src/game/mapgen.ts';
 import type { EnemyKind } from '../src/game/mapgen.ts';
 import { mulberry32 } from '../src/game/rng.ts';
 import { distance, World } from '../src/game/world.ts';
@@ -1522,4 +1522,52 @@ test('the board refuses a locked Countermeasures level, reports the pick on depl
   plain.chooseCountermeasures(1);
   plain.applyCampaign({ ...plain.campaign, armor: 2 });
   assert.equal(plain.countermeasures, 0);
+});
+
+// ---- Intercept ----
+test('an Intercept courier crosses the district edge to edge, and the squad can always get ahead of it', () => {
+  for (let tier = 1; tier <= MAX_TIER; tier++) for (let seed = 1; seed <= 24; seed++) {
+    const plan = planMission(contract('intercept', tier, seed * 131 + tier)), courier = plan.enemies.find(e => e.kind === 'target')!;
+    const route = courier.patrol, { bounds } = plan.world, onEdge = (p: Point) => [p.x - bounds.minX, bounds.maxX - p.x, p.z - bounds.minZ, bounds.maxZ - p.z].some(d => d < 1);
+    assert.ok(route.length >= 2 && onEdge(route[0]) && onEdge(route.at(-1)!), `seed ${seed}: the route runs exit to exit`);
+    assert.ok(distance(route[0], route.at(-1)!) >= COURIER_MIN_RUN);
+    assert.ok(interceptable(plan.world, plan.spawn[0], route), `T${tier} seed ${seed}: the squad cannot reach the route first`);
+    assert.equal(plan.enemies.filter(e => e.escort).length, 2);
+    assert.deepEqual(plan.targetArea, { x: route[0].x, z: route[0].z, r: TARGET_AREA_RADIUS }, 'the briefing marks where the courier enters');
+  }
+});
+
+test('the courier sets off after its delay with its escorts, gives its route away at a corner, and escapes at the far exit', () => {
+  const sim = new Simulation(campaignWith('intercept', { offers: [contract('intercept', 2, 4242)] }));
+  sim.deploy();
+  const courier = sim.units.find(u => u.kind === 'target')!, escorts = sim.units.filter(u => u.escort === courier.id);
+  assert.equal(courier.name, 'COURIER'); assert.equal(escorts.length, 2);
+  assert.equal(sim.objectives[0].label, 'Stop the courier');
+  // Keep the squad out of the way: no hostile ever sees it.
+  sim.units.filter(u => u.faction === 'squad').forEach(u => { u.hp = u.maxHp = 1e9; });
+  const start = { x: courier.x, z: courier.z };
+  step(sim, COURIER_DELAY - .5);
+  assert.deepEqual({ x: courier.x, z: courier.z }, start, 'it waits out its delay');
+  step(sim, 6);
+  assert.ok(distance(courier, start) > 2, 'then walks');
+  assert.ok(escorts.every(e => distance(e, courier) < 3), 'the escorts keep up');
+  courier.marked = 1e9; // a mark keeps it in sight, as if the squad were watching
+  step(sim, 30, () => sim.intel.has(courier.id));
+  assert.ok(sim.intel.has(courier.id), 'a corner watched gives the route away');
+  assert.deepEqual(sim.intel.get(courier.id)!.at(-1), courier.patrol.at(-1));
+  for (const u of sim.units) if (u.faction === 'squad') { u.x = sim.plan!.extract.x; u.z = sim.plan!.extract.z; }
+  step(sim, 300);
+  assert.equal(sim.result, 'failure'); assert.equal(sim.failReason, 'The courier got away.');
+});
+
+test('on alarm the courier runs for its own exit at once, and stopping it opens extraction', () => {
+  const sim = new Simulation(campaignWith('intercept', { offers: [contract('intercept', 2, 4242)] }));
+  sim.deploy();
+  const courier = sim.units.find(u => u.kind === 'target')!;
+  (sim as unknown as { raiseAlarm(at: Point, reason: string): void }).raiseAlarm(courier, 'test');
+  assert.deepEqual(courier.exit, courier.patrol.at(-1)); assert.equal(courier.wait, 0);
+  sim.update(1 / 60);
+  assert.ok(courier.path.length, 'it runs at once, without waiting out its delay');
+  courier.hp = 0; sim.update(1 / 60);
+  assert.ok(sim.objectives[0].done && sim.extractReady);
 });

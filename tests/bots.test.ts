@@ -62,3 +62,8 @@ test('the tactical bot finds and downs every hostile on an Elimination contract 
   assert.equal(sim.result, 'success', sim.failReason);
   assert.ok(sim.objectives.find(o => o.kind === 'sweep')!.done);
 });
+
+test('the tactical bot finds and stops an Intercept courier it was given no area for', () => {
+  const sim = play({ id: 'i', type: 'intercept', tier: 1, seed: 3, payout: contractPayout(1), district: 'GLASS DISTRICT', sector: 1 });
+  assert.equal(sim.result, 'success', sim.failReason);
+});

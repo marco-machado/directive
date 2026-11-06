@@ -1,8 +1,8 @@
-import { abilityCooldown, abilityPower, ABILITY_STATS, CLASS_STATS, effectScale, EMP_CAMERA_SECONDS, MARK_RADIUS, MARK_SECONDS } from './classes.ts';
+import { abilityCooldown, abilityPower, ABILITY_STATS, CLASS_STATS, effectScale, EMP_CAMERA_SECONDS, MARK_RADIUS, MARK_SECONDS, SQUAD_SPEED } from './classes.ts';
 import type { AbilityId, ClassId } from './classes.ts';
 import { applyDismiss, applyLoadout, applyPayout, applyPurchase, applyRecruit, badgesFor, dealBoard, freshCampaign, missionPayout, parSeconds, SQUAD_MAX, unlockedCountermeasures } from './campaign.ts';
 import type { Badge, Campaign, Contract, Loadout, MissionReport, Upgrade } from './campaign.ts';
-import { planMission } from './mapgen.ts';
+import { COURIER_DELAY, COURIER_PAUSE, COURIER_SPEED, planMission } from './mapgen.ts';
 import type { Area, EnemyKind, MissionPlan } from './mapgen.ts';
 import { mulberry32 } from './rng.ts';
 import type { Rng } from './rng.ts';
@@ -25,6 +25,8 @@ export type Unit = Point & {
   patrol: Point[]; patrolIndex: number; exit: Point | null; wait: number; detect: number; stunned: number; marked: number; visible: boolean; hunting: boolean; sweep: number;
   // Takedowns: the hostile an operative is closing on, and how long a hostile has been held.
   takedownId: string | null; held: number;
+  // An Intercept escort: the courier it walks beside.
+  escort: string | null;
   // A posted guard's look-around: seconds into the current cycle, that cycle's length, and its count.
   look: number; lookEvery: number; lookCycle: number;
 };
@@ -76,7 +78,7 @@ export const HOSTILE_STATS: Record<EnemyKind, HostileStats> = {
 // Hostiles grow 5% tougher and 4% deadlier per tier up to tier 3, then a further 10% and 15% per tier.
 export const tierHp = (tier: number) => 1 + .05 * (tier - 1) + .1 * Math.max(0, tier - 3);
 export const tierDamage = (tier: number) => 1 + .04 * (tier - 1) + .15 * Math.max(0, tier - 3);
-export const SQUAD_SPEED = 3.4;
+export { SQUAD_SPEED };
 export const VIP_SPEED = 3.2;
 export const VIP_HP = 160;
 export const VIP_REACH = 3;           // an operative this close to the VIP
@@ -338,7 +340,7 @@ export class Simulation {
     return {
       id, name, kind, faction, x: p.x, z: p.z, hp: maxHp, maxHp, cooldown: faction === 'hostile' ? 1 : 0, path: [], route: [], targetId: null, heading, moving: false, repath: 0,
       ability: null, abilityCd: 0, reviveTarget: null, revive: 0, hurt: 0, patrol: [], patrolIndex: 0, exit: null, wait: 0, detect: 0, stunned: 0, marked: 0, visible: false, hunting: false, sweep: heading,
-      takedownId: null, held: 0, look: 0, lookEvery: 0, lookCycle: 0,
+      takedownId: null, held: 0, escort: null, look: 0, lookEvery: 0, lookCycle: 0,
     };
   }
   private resetUnits() {
@@ -355,16 +357,21 @@ export class Simulation {
       const u = this.makeUnit(id, op.name, op.cls, 'squad', plan.spawn[i % plan.spawn.length], stats.hp + gearHp(this.campaign), headingTo(plan.extract, { x: 0, z: 0 }));
       u.ability = stats.ability; this.units.push(u);
     });
+    const courier = plan.contract.type === 'intercept' ? plan.enemies.findIndex(e => e.kind === 'target') : -1;
     plan.enemies.forEach((e, i) => {
       const stats = HOSTILE_STATS[e.kind];
-      const u = this.makeUnit(`h${i}`, stats.name, e.kind, 'hostile', e, Math.round(stats.hp * tierHp(plan.contract.tier)), e.heading);
+      const u = this.makeUnit(`h${i}`, i === courier ? 'COURIER' : stats.name, e.kind, 'hostile', e, Math.round(stats.hp * tierHp(plan.contract.tier)), e.heading);
       u.patrol = e.patrol; this.units.push(u);
+      if (i === courier) u.wait = COURIER_DELAY;
+      // An escort walks the courier's route, so it reads as a walker, not a posted guard.
+      if (e.escort) u.escort = `h${courier}`;
     });
     if (plan.vip) this.units.push(this.makeUnit('vip', 'VIP', 'vip', 'vip', plan.vip, VIP_HP, headingTo(plan.vip, plan.extract)));
     this.selected = [...this.squad];
     const o = (kind: Objective['kind'], label: string, p: Point): Objective => ({ kind, label, x: p.x, z: p.z, progress: 0, done: false });
     const t = plan.contract.type, target = plan.enemies.find(e => e.kind === 'target');
     if (t === 'assassination' && target) this.objectives.push(o('target', 'Neutralize the target', target));
+    if (t === 'intercept' && target) this.objectives.push(o('target', 'Stop the courier', target));
     if (t === 'heist') this.objectives.push(o('terminal', 'Download the vault data', plan.sites[0]));
     if (t === 'sabotage') plan.sites.forEach((s, i) => this.objectives.push(o('charge', `Plant charge ${'AB'[i]}`, s)));
     if (t === 'escort' && plan.vip) this.objectives.push(o('vip', 'Free the VIP', plan.vip));
@@ -627,6 +634,8 @@ export class Simulation {
       u.detect = 1;
       if ((u.kind === 'guard' || u.kind === 'heavy') && distance(u, at) <= CONVERGE_RADIUS) { u.hunting = true; u.repath = 0; }
       // A target already running from an earlier alarm keeps its exit and does not hesitate again.
+      // An Intercept courier runs on for its own exit, at once.
+      if (u.kind === 'target' && !u.exit && this.plan.contract.type === 'intercept') { u.exit = u.patrol.at(-1)!; u.wait = 0; u.path = []; }
       if (u.kind === 'target' && !u.exit) {
         const exits = [...this.plan.exits].sort((a, b) => distance(u, a) - distance(u, b));
         u.exit = [...exits.filter(e => distance(u, e) >= FLEE_MIN_EXIT), ...exits].find(e => this.plan!.world.findPath(u, e).length) ?? null;
@@ -774,7 +783,9 @@ export class Simulation {
     if (!this.alarm && !(u.kind === 'target' && u.exit)) {
       // A suspicious guard stops and stares instead of walking on.
       if (seen && u.detect > SUSPICIOUS && mobile) { u.heading = headingTo(u, seen); return; }
-      if (mobile) this.patrol(u, stats.speed, dt);
+      if (u.kind === 'target' && u.patrol.length) this.courier(u, dt);
+      else if (u.escort) this.follow(u, dt);
+      else if (mobile) this.patrol(u, stats.speed, dt);
       return;
     }
     if (u.kind === 'target') {
@@ -782,7 +793,7 @@ export class Simulation {
       // Re-plan after anything (an EMP) cleared the route.
       if (!u.path.length) u.path = world.findPath(u, u.exit);
       this.walk(u, stats.alertSpeed, dt);
-      if (distance(u, u.exit) < 1) this.finish(false, 'The target escaped.');
+      if (distance(u, u.exit) < 1) this.finish(false, this.plan!.contract.type === 'intercept' ? 'The courier got away.' : 'The target escaped.');
       return;
     }
     if (u.kind === 'camera') return;
@@ -803,7 +814,40 @@ export class Simulation {
       u.repath -= dt;
       if (u.repath <= 0 && !(end && end.x === goal.x && end.z === goal.z)) { u.repath = 1; u.path = world.findPath(u, goal); }
       this.walk(u, stats.alertSpeed, dt);
-    } else this.patrol(u, stats.speed, dt);
+    } else if (u.escort) this.follow(u, dt);
+    else this.patrol(u, stats.speed, dt);
+  }
+  // An Intercept courier: waits out its delay, then walks its route corner to corner, pausing at each, and leaves at the
+  // last one. Watching it stand at a corner it walked to gives its whole route away, as a patrol's.
+  private courier(u: Unit, dt: number) {
+    if (!u.path.length) {
+      if (u.wait > 0) {
+        if (u.visible && u.patrolIndex > 0 && !this.intel.has(u.id)) this.intel.set(u.id, this.oneWay(u.patrol));
+        u.wait -= dt; return;
+      }
+      if (u.patrolIndex >= u.patrol.length - 1) { this.finish(false, 'The courier got away.'); return; }
+      u.patrolIndex++; u.path = this.plan!.world.findPath(u, u.patrol[u.patrolIndex]); u.wait = COURIER_PAUSE;
+    }
+    this.walk(u, COURIER_SPEED, dt);
+  }
+  private oneWay(points: Point[]): Point[] {
+    const world = this.plan!.world, route = [{ x: points[0].x, z: points[0].z }];
+    points.slice(1).forEach((p, i) => route.push(...world.findPath(points[i], p)));
+    return route;
+  }
+  // An escort keeps a step behind the courier and to one side, catching up at its own pace; it holds where the courier
+  // fell, or stood until it sets off.
+  private follow(u: Unit, dt: number) {
+    const c = this.unit(u.escort!), world = this.plan!.world;
+    if (!c || c.hp <= 0 || !c.moving && !c.path.length && c.patrolIndex === 0) return this.lookAround(u, dt);
+    const side = Number(u.id.slice(1)) % 2 ? 1 : -1;
+    const spot = { x: c.x - Math.sin(c.heading) * .9 + Math.cos(c.heading) * side * .8, z: c.z - Math.cos(c.heading) * .9 - Math.sin(c.heading) * side * .8 };
+    const goal = world.walkable(spot, .3) ? spot : { x: c.x, z: c.z };
+    if (distance(u, goal) < .3) { u.path = []; turnTo(u, c.heading, 4 * dt); u.sweep = u.heading; return; }
+    u.repath -= dt;
+    if (u.repath <= 0 || !u.path.length) { u.repath = .5; u.path = world.findPath(u, goal); }
+    this.walk(u, distance(u, goal) > 1.5 ? HOSTILE_STATS.guard.speed : COURIER_SPEED, dt);
+    u.sweep = u.heading;
   }
   private patrol(u: Unit, speed: number, dt: number) {
     if (u.patrol.length < 2) return this.lookAround(u, dt);
@@ -1029,7 +1073,7 @@ export class Simulation {
         if (squad.some(s => distance(s, o) <= reach)) o.progress = Math.min(1, o.progress + dt / seconds);
         if (o.progress >= 1) { o.done = true; this.message = o.kind === 'terminal' ? 'Vault data secured. Head for extraction.' : `${o.label.replace('Plant', 'Planted')}.`; }
       }
-      if (o.kind === 'target' && o.done) this.message = 'Target neutralized. Return to the extraction zone.';
+      if (o.kind === 'target' && o.done) this.message = this.plan?.contract.type === 'intercept' ? 'Courier stopped. Return to the extraction zone.' : 'Target neutralized. Return to the extraction zone.';
     }
     // Extraction counts only with every deployed operative standing in the zone; the downed must be revived first.
     const extract = this.objectives.at(-1)!, team = this.units.filter(u => u.faction === 'squad');

@@ -35,13 +35,13 @@ export function Pointers({ sim, labels, insets }: { sim: Simulation; labels: Ref
       if (u.faction === 'hostile' && u.hp > 0 && u.visible && u.detect > 0) targets.push({ p: u, kind: 'watcher', label: u.kind.toUpperCase() });
     }
     const target = sim.units.find(u => u.kind === 'target' && u.hp > 0);
-    if (sim.phase === 'mission' && target?.exit) targets.push({ p: target.exit, kind: 'exit', label: 'TARGET EXIT' });
+    if (sim.phase === 'mission' && target?.exit) targets.push({ p: target.exit, kind: 'exit', label: `${target.name === 'COURIER' ? 'COURIER' : 'TARGET'} EXIT` });
     if (sim.phase === 'mission') for (const o of sim.objectives) {
       // Elimination's sweep has no place to point at: hostiles in sight already get their own arrows.
       if (o.done || o.kind === 'sweep' || (o.kind === 'extract' && !ready)) continue;
       if (o.kind === 'target') {
-        if (target?.visible) targets.push({ p: target, kind: 'target', label: 'TARGET' });
-        else if (target && sim.targetArea) targets.push({ p: sim.targetArea, kind: 'target', label: 'TARGET AREA' });
+        if (target?.visible) targets.push({ p: target, kind: 'target', label: target.name === 'COURIER' ? 'COURIER' : 'TARGET' });
+        else if (target && sim.targetArea) targets.push({ p: sim.targetArea, kind: 'target', label: target.name === 'COURIER' ? 'COURIER AREA' : 'TARGET AREA' });
         continue;
       }
       targets.push({ p: o.kind === 'vip' ? sim.units.find(u => u.kind === 'vip') ?? o : o, kind: o.kind, label: name(o) });

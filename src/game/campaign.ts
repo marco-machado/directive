@@ -4,7 +4,7 @@ import { pick, shuffle } from './rng.ts';
 import type { Rng } from './rng.ts';
 
 export type Operative = { id: string; name: string; cls: ClassId };
-export type ContractType = 'assassination' | 'heist' | 'sabotage' | 'escort' | 'elimination';
+export type ContractType = 'assassination' | 'heist' | 'sabotage' | 'escort' | 'elimination' | 'intercept';
 // `patrols` caps the guards that walk a route (the rest of the district is unchanged); only contract 01 sets it.
 export type Contract = { id: string; type: ContractType; tier: number; seed: number; payout: number; district: string; sector: number; patrols?: number };
 export type Gear = 'weapon' | 'armor';
@@ -39,11 +39,11 @@ export type Campaign = {
 export type ActiveMission = { id: string; startedAt: number; contract: Contract; countermeasures: number } | null;
 export type Ledger = { campaign: Campaign; activeMission: ActiveMission };
 
-export const CONTRACT_TYPES: readonly ContractType[] = ['assassination', 'heist', 'sabotage', 'escort', 'elimination'];
+export const CONTRACT_TYPES: readonly ContractType[] = ['assassination', 'heist', 'sabotage', 'escort', 'elimination', 'intercept'];
 // The base tier at which the board starts dealing each contract type. The first board dealt after a type unlocks always
 // includes it.
 export type UnlockTiers = Record<ContractType, number>;
-export const UNLOCK_TIER: UnlockTiers = { assassination: 1, heist: 1, sabotage: 1, escort: 1, elimination: 2 };
+export const UNLOCK_TIER: UnlockTiers = { assassination: 1, heist: 1, sabotage: 1, escort: 1, elimination: 2, intercept: 2 };
 export const GEAR_COST: Record<Gear, number> = { weapon: 300, armor: 250 };
 export const ABILITY_UPGRADE_COST = 200;
 export const RECRUIT_COST = 400;
@@ -74,7 +74,7 @@ export type Progress = Pick<Campaign, 'completed' | 'badges'>;
 export const clearancePoints = (p: Progress) => CONTRACT_POINTS * p.completed + BADGE_POINTS * BADGES.reduce((sum, b) => sum + p.badges[b], 0);
 export const baseTier = (points: number) => Math.min(MAX_TIER, 1 + Math.floor(points / TIER_POINTS));
 // Swift: extract within this many seconds of mission time, by contract type, plus PAR_PER_TIER for each tier above the first.
-export const PAR_SECONDS: Record<ContractType, number> = { assassination: 18, heist: 28, sabotage: 32, escort: 28, elimination: 45 };
+export const PAR_SECONDS: Record<ContractType, number> = { assassination: 18, heist: 28, sabotage: 32, escort: 28, elimination: 45, intercept: 20 };
 export const PAR_PER_TIER = 12;
 export const parSeconds = (type: ContractType, tier: number) => PAR_SECONDS[type] + PAR_PER_TIER * (tier - 1);
 // A client's report of a won contract, checked: only known badges, and Ghost exactly when the alarm never sounded (so an

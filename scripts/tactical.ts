@@ -86,6 +86,9 @@ class Tactician {
       return;
     }
     if (!k.alarm) this.retreat = null;
+    // An Intercept courier about to leave is worth the alarm: once its route is known, the bot goes loud within 10 m of its exit.
+    const exit = goal.target?.patrol.length && k.contract.type === 'intercept' ? goal.target.patrol.at(-1)! : null;
+    if (exit && goal.target!.visible && distance(goal.target!, exit) < 10) this.loud = true;
     if (k.alarm || this.loud) this.fight(goal); else this.sneak(goal);
   }
 
@@ -94,19 +97,24 @@ class Tactician {
     const k = this.k, o = k.objectives.find(o => !o.done)!;
     if (o.kind === 'target') {
       const target = k.hostiles.find(h => h.kind === 'target');
-      return target ? { key: 'target', kind: 'target', point: target, target } : { key: 'search', kind: 'search', point: this.street(k.targetArea ?? k.extract) };
+      // An Intercept courier comes with no target area: the squad scouts for it.
+      return target ? { key: 'target', kind: 'target', point: target, target } : k.targetArea ? { key: 'search', kind: 'search', point: this.street(k.targetArea) } : this.scout();
     }
     if (o.kind === 'vip') return { key: 'vip', kind: 'vip', point: k.vip! };
     if (o.kind === 'sweep') return this.sweep();
     return { key: `${o.kind}:${o.label}`, kind: o.kind, point: o };
   }
-  // Elimination: the nearest of the district's own hostiles the squad knows of; with none known, the nearest street
-  // point no operative has passed within SCOUTED m of yet. Reinforcements don't count, so they are only fought.
+  // Elimination: the nearest of the district's own hostiles the squad knows of; with none known, the squad scouts: the
+  // nearest street point no operative has passed within SCOUTED m of yet. Reinforcements don't count, so they are only fought.
   private scouted: Point[] | null = null;
   private sweep(): Goal {
     const k = this.k, lead = this.living[0];
     const known = k.hostiles.filter(h => h.hp > 0 && !/^r\d+$/.test(h.id)).sort((a, b) => distance(a, lead) - distance(b, lead))[0];
     if (known) return { key: `sweep:${known.id}`, kind: 'sweep', point: known, target: known };
+    return this.scout();
+  }
+  private scout(): Goal {
+    const k = this.k, lead = this.living[0];
     if (!this.scouted) {
       const { minX, maxX, minZ, maxZ } = k.world.bounds;
       this.scouted = [];
@@ -116,7 +124,9 @@ class Tactician {
       }
     }
     this.scouted = this.scouted.filter(p => this.living.every(op => distance(op, p) > SCOUTED));
-    const next = [...this.scouted].sort((a, b) => distance(a, lead) - distance(b, lead))[0] ?? k.extract;
+    // A courier's route keeps well clear of extraction, so a search for one starts out past that.
+    const far = k.contract.type === 'intercept' ? this.scouted.filter(p => distance(p, k.extract) > 12) : [];
+    const next = [...(far.length ? far : this.scouted)].sort((a, b) => distance(a, lead) - distance(b, lead))[0] ?? k.extract;
     return { key: `scout:${next.x},${next.z}`, kind: 'search', point: next };
   }
   // The nearest walkable point to `p` (the target area's center can lie inside a building).

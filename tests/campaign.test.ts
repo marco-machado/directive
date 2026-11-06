@@ -214,13 +214,13 @@ test('Countermeasures open once fully upgraded, refuse a locked level, and a bad
 
 test('contract types join the board as clearance rises, each guaranteed on the first board after it unlocks', () => {
   // A table with later types, as new types will have; the four current types all deal from tier 1.
-  assert.deepEqual(UNLOCK_TIER, { assassination: 1, heist: 1, sabotage: 1, escort: 1, elimination: 2 });
-  const unlock: UnlockTiers = { assassination: 1, heist: 1, sabotage: 2, escort: 3, elimination: 9 };
+  assert.deepEqual(UNLOCK_TIER, { assassination: 1, heist: 1, sabotage: 1, escort: 1, elimination: 2, intercept: 2 });
+  const unlock: UnlockTiers = { assassination: 1, heist: 1, sabotage: 2, escort: 3, elimination: 9, intercept: 9 };
   assert.deepEqual(unlockedTypes(done(0), unlock), ['assassination', 'heist']);
   assert.deepEqual(unlockedTypes(done(2), unlock), ['assassination', 'heist', 'sabotage']);
   assert.deepEqual(nextTypeUnlock(done(1), unlock), { type: 'sabotage', tier: 2, points: 2, contracts: 1, progress: .5 });
   assert.deepEqual(nextTypeUnlock(done(2), unlock), { type: 'escort', tier: 3, points: 4, contracts: 2, progress: 0 });
-  assert.equal(nextTypeUnlock(done(4), { ...unlock, elimination: 1 }), null);
+  assert.equal(nextTypeUnlock(done(4), { ...unlock, elimination: 1, intercept: 1 }), null);
   assert.deepEqual(nextTypeUnlock(done(0)), { type: 'elimination', tier: 2, points: 4, contracts: 2, progress: 0 });
   assert.equal(nextTypeUnlock(done(2)), null);
   for (let seed = 1; seed <= 30; seed++) {
@@ -240,6 +240,6 @@ test('contract types join the board as clearance rises, each guaranteed on the f
     assert.ok(fresh.offers.slice(1).every(o => o.type !== 'heist'));
   }
   // A save from before types unlocked counts what its progress unlocks as already dealt.
-  assert.deepEqual(clampCampaign({ completed: 3, offers: [] }, rng).dealt.length, 5);
+  assert.deepEqual(clampCampaign({ completed: 3, offers: [] }, rng).dealt.length, 6);
   assert.deepEqual(clampCampaign({ dealt: ['heist', 'nope'] }, rng).dealt.includes('nope' as never), false);
 });
