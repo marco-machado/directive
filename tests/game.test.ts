@@ -1571,3 +1571,16 @@ test('on alarm the courier runs for its own exit at once, and stopping it opens 
   courier.hp = 0; sim.update(1 / 60);
   assert.ok(sim.objectives[0].done && sim.extractReady);
 });
+
+test('a courier stunned mid-leg finishes that leg before the next, and only escapes at its exit', () => {
+  const sim = new Simulation(campaignWith('intercept', { offers: [contract('intercept', 2, 4242)] }));
+  sim.deploy();
+  sim.units.filter(u => u.faction === 'squad').forEach(u => { u.x = sim.plan!.extract.x; u.z = sim.plan!.extract.z; u.hp = u.maxHp = 1e9; });
+  const courier = sim.units.find(u => u.kind === 'target')!, last = courier.patrol.length - 1;
+  step(sim, 300, () => courier.patrolIndex === last && courier.path.length > 0 && distance(courier, courier.patrol[last]) > 2);
+  assert.equal(courier.patrolIndex, last);
+  courier.path = []; courier.stunned = .5; // as an EMP leaves it
+  step(sim, 300);
+  assert.equal(sim.failReason, 'The courier got away.');
+  assert.ok(distance(courier, courier.patrol[last]) < 1, `escaped ${distance(courier, courier.patrol[last]).toFixed(2)} m from its exit`);
+});

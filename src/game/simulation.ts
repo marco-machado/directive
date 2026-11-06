@@ -825,8 +825,11 @@ export class Simulation {
         if (u.visible && u.patrolIndex > 0 && !this.intel.has(u.id)) this.intel.set(u.id, this.oneWay(u.patrol));
         u.wait -= dt; return;
       }
-      if (u.patrolIndex >= u.patrol.length - 1) { this.finish(false, 'The courier got away.'); return; }
-      u.patrolIndex++; u.path = this.plan!.world.findPath(u, u.patrol[u.patrolIndex]); u.wait = COURIER_PAUSE;
+      // A leg cut short (an EMP clears the path) is walked to its end before the next one starts.
+      const corner = u.patrol[u.patrolIndex];
+      if (distance(u, corner) > .05) u.path = this.plan!.world.findPath(u, corner);
+      else if (u.patrolIndex >= u.patrol.length - 1) { this.finish(false, 'The courier got away.'); return; }
+      else { u.patrolIndex++; u.path = this.plan!.world.findPath(u, u.patrol[u.patrolIndex]); u.wait = COURIER_PAUSE; }
     }
     this.walk(u, COURIER_SPEED, dt);
   }
