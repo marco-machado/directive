@@ -37,7 +37,8 @@ export function Pointers({ sim, labels, insets }: { sim: Simulation; labels: Ref
     const target = sim.units.find(u => u.kind === 'target' && u.hp > 0);
     if (sim.phase === 'mission' && target?.exit) targets.push({ p: target.exit, kind: 'exit', label: 'TARGET EXIT' });
     if (sim.phase === 'mission') for (const o of sim.objectives) {
-      if (o.done || (o.kind === 'extract' && !ready)) continue;
+      // Elimination's sweep has no place to point at: hostiles in sight already get their own arrows.
+      if (o.done || o.kind === 'sweep' || (o.kind === 'extract' && !ready)) continue;
       if (o.kind === 'target') {
         if (target?.visible) targets.push({ p: target, kind: 'target', label: 'TARGET' });
         else if (target && sim.targetArea) targets.push({ p: sim.targetArea, kind: 'target', label: 'TARGET AREA' });

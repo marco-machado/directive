@@ -13,6 +13,7 @@ import type { Bot, Knowledge, Op, Orders, Seen } from './bots.ts';
 const STALL = 45;      // s without progress before the bot goes loud
 const PATIENCE = 8;    // s to wait for a patrol to walk out of the way before dealing with it
 const REPLAN = 1;      // s a job keeps its spot before the bot looks for a better one
+const SCOUTED = 5;     // m: Elimination's search counts a street point seen once an operative passes this close
 const SITE_REACH: Partial<Record<Objective['kind'], number>> = { terminal: 1.5, charge: 1.2 };
 
 const angleDiff = (a: number, b: number) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
@@ -96,7 +97,27 @@ class Tactician {
       return target ? { key: 'target', kind: 'target', point: target, target } : { key: 'search', kind: 'search', point: this.street(k.targetArea ?? k.extract) };
     }
     if (o.kind === 'vip') return { key: 'vip', kind: 'vip', point: k.vip! };
+    if (o.kind === 'sweep') return this.sweep();
     return { key: `${o.kind}:${o.label}`, kind: o.kind, point: o };
+  }
+  // Elimination: the nearest of the district's own hostiles the squad knows of; with none known, the nearest street
+  // point no operative has passed within SCOUTED m of yet. Reinforcements don't count, so they are only fought.
+  private scouted: Point[] | null = null;
+  private sweep(): Goal {
+    const k = this.k, lead = this.living[0];
+    const known = k.hostiles.filter(h => h.hp > 0 && !/^r\d+$/.test(h.id)).sort((a, b) => distance(a, lead) - distance(b, lead))[0];
+    if (known) return { key: `sweep:${known.id}`, kind: 'sweep', point: known, target: known };
+    if (!this.scouted) {
+      const { minX, maxX, minZ, maxZ } = k.world.bounds;
+      this.scouted = [];
+      for (let x = minX + 2; x < maxX; x += 4) for (let z = minZ + 2; z < maxZ; z += 4) {
+        const p = this.street({ x, z });
+        if (k.world.walkable(p) && k.world.findPath(lead, p).length) this.scouted.push(p);
+      }
+    }
+    this.scouted = this.scouted.filter(p => this.living.every(op => distance(op, p) > SCOUTED));
+    const next = [...this.scouted].sort((a, b) => distance(a, lead) - distance(b, lead))[0] ?? k.extract;
+    return { key: `scout:${next.x},${next.z}`, kind: 'search', point: next };
   }
   // The nearest walkable point to `p` (the target area's center can lie inside a building).
   private street(p: Point): Point {

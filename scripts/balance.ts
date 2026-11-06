@@ -66,7 +66,7 @@ const seeds = Array.from({ length: SEEDS }, (_, k) => 1000 + k * 7919);
 const wins = new Map<string, number[]>(); // `${bot}|${roster}|${tier}` → win rate per contract type
 const earned = new Map<string, Run[]>(); // `${bot}|${roster}` → its wins, for the badge rates
 
-const typesLabel = TYPES.length === CONTRACT_TYPES.length ? 'the four contract types' : TYPES.join(', ');
+const typesLabel = TYPES.length === CONTRACT_TYPES.length ? 'every contract type' : TYPES.join(', ');
 const average = (xs: number[]) => xs.reduce((s, x) => s + x, 0) / xs.length;
 const checkTarget = (t: typeof TARGETS[number], v: number, note = '') =>
   console.log(`${v >= t.min && v <= t.max ? 'PASS' : 'FAIL'}  ${t.bot.padEnd(11)} ${t.roster.padEnd(9)} tier ${t.tier}: ${Math.round(v)}%${note} (target ${t.max >= 100 ? `${t.min}% or more` : `${t.min}–${t.max}%`})`);

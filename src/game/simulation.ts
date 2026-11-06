@@ -1,6 +1,6 @@
 import { abilityCooldown, abilityPower, ABILITY_STATS, CLASS_STATS, effectScale, EMP_CAMERA_SECONDS, MARK_RADIUS, MARK_SECONDS } from './classes.ts';
 import type { AbilityId, ClassId } from './classes.ts';
-import { applyDismiss, applyLoadout, applyPayout, applyPurchase, applyRecruit, dealBoard, freshCampaign, missionPayout, parSeconds, SQUAD_MAX, unlockedCountermeasures } from './campaign.ts';
+import { applyDismiss, applyLoadout, applyPayout, applyPurchase, applyRecruit, badgesFor, dealBoard, freshCampaign, missionPayout, parSeconds, SQUAD_MAX, unlockedCountermeasures } from './campaign.ts';
 import type { Badge, Campaign, Contract, Loadout, MissionReport, Upgrade } from './campaign.ts';
 import { planMission } from './mapgen.ts';
 import type { Area, EnemyKind, MissionPlan } from './mapgen.ts';
@@ -32,7 +32,8 @@ export type Unit = Point & {
 export type Sighting = Point & { heading: number; at: number };
 export type Shot = { id: number; from: Point; to: Point; faction: Faction; shooter: UnitKind; kind: 'bullet' | 'snipe'; ttl: number };
 export type Blast = { id: number; kind: 'grenade' | 'heal' | 'emp'; x: number; z: number; radius: number; ttl: number };
-export type Objective = Point & { kind: 'target' | 'terminal' | 'charge' | 'vip' | 'extract'; label: string; progress: number; done: boolean };
+// A 'sweep' (Elimination) has no place of its own: its point is the district's center, and nothing draws or points at it.
+export type Objective = Point & { kind: 'target' | 'terminal' | 'charge' | 'vip' | 'sweep' | 'extract'; label: string; progress: number; done: boolean };
 export type Phase = 'briefing' | 'mission' | 'headquarters';
 export type Pending = { unitId: string; ability: AbilityId } | null;
 // 'covered' when every threat fires into the barrier the unit crouches behind, 'flanked' when one of them has a clear shot.
@@ -161,7 +162,9 @@ const hashed = (seed: number, id: string, n: number) => {
   return mulberry32((h ^ Math.imul(n + 1, 0x9e3779b1)) >>> 0)();
 };
 // How the debrief names each objective as a landmark (charges carry their letter from the label).
-const LANDMARK: Record<Objective['kind'], string> = { target: 'the target', terminal: 'the vault terminal', charge: 'a charge site', vip: 'the VIP', extract: 'extraction' };
+const LANDMARK: Record<Objective['kind'], string> = { target: 'the target', terminal: 'the vault terminal', charge: 'a charge site', vip: 'the VIP', sweep: 'the district', extract: 'extraction' };
+// Elimination's objective, with how many of the district's own hostiles are still standing.
+export const sweepLabel = (left: number) => left ? `Down every hostile (${left} left)` : 'Down every hostile';
 // Reinforcements are numbered r0, r1, … as they enter (see reinforce); the district's own hostiles are h0, h1, ….
 export const isReinforcement = (u: Pick<Unit, 'id' | 'faction'>) => u.faction === 'hostile' && /^r\d+$/.test(u.id);
 const takedownable = (u: Unit) => u.kind === 'guard' || u.kind === 'heavy' || u.kind === 'target';
@@ -365,6 +368,7 @@ export class Simulation {
     if (t === 'heist') this.objectives.push(o('terminal', 'Download the vault data', plan.sites[0]));
     if (t === 'sabotage') plan.sites.forEach((s, i) => this.objectives.push(o('charge', `Plant charge ${'AB'[i]}`, s)));
     if (t === 'escort' && plan.vip) this.objectives.push(o('vip', 'Free the VIP', plan.vip));
+    if (t === 'elimination') this.objectives.push(o('sweep', sweepLabel(plan.enemies.length), { x: 0, z: 0 }));
     this.objectives.push(o('extract', t === 'escort' ? 'Escort the VIP and the whole squad to extraction' : 'Get the whole squad to extraction', plan.extract));
     this.updateVisibility();
   }
@@ -633,7 +637,7 @@ export class Simulation {
   }
   // The objective closest to a point, named for the debrief.
   private landmarkNear(p: Point) {
-    const o = [...this.objectives].sort((a, b) => distance(a, p) - distance(b, p))[0];
+    const o = this.objectives.filter(o => o.kind !== 'sweep').sort((a, b) => distance(a, p) - distance(b, p))[0];
     if (!o) return 'the district';
     return o.kind === 'charge' ? o.label.replace('Plant charge', 'Charge') : LANDMARK[o.kind];
   }
@@ -723,7 +727,7 @@ export class Simulation {
       ghost: !this.detected, untouched: !this.downs, swift: this.time <= parSeconds(c.type, c.tier),
       bloodless: hostiles.every(u => u.hp > 0 || u.kind === 'target'), purge: district.length > 0 && district.every(u => u.hp <= 0),
     };
-    return (Object.keys(earned) as Badge[]).filter(b => earned[b]);
+    return badgesFor(c.type).filter(b => earned[b]);
   }
   private intruders() { return this.units.filter(u => u.hp > 0 && (u.faction === 'squad' || (u.faction === 'vip' && this.vipJoined))); }
   private walk(u: Unit, speed: number, dt: number) {
@@ -1014,6 +1018,12 @@ export class Simulation {
       if (o.done) continue;
       if (o.kind === 'target') o.done = this.units.some(u => u.kind === 'target' && u.hp <= 0);
       if (o.kind === 'vip') o.done = this.vipJoined;
+      // Elimination counts the hostiles the district started with, as Purge does; reinforcements never count.
+      if (o.kind === 'sweep') {
+        const district = this.units.filter(u => u.faction === 'hostile' && !isReinforcement(u)), left = district.filter(u => u.hp > 0).length;
+        o.progress = district.length ? 1 - left / district.length : 1; o.label = sweepLabel(left);
+        if (!left) { o.done = true; this.message = 'District swept. Head for extraction.'; }
+      }
       if (o.kind === 'terminal' || o.kind === 'charge') {
         const seconds = o.kind === 'terminal' ? HACK_SECONDS : PLANT_SECONDS, reach = o.kind === 'terminal' ? 1.5 : 1.2;
         if (squad.some(s => distance(s, o) <= reach)) o.progress = Math.min(1, o.progress + dt / seconds);

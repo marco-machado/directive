@@ -2,7 +2,7 @@
 import type { Campaign, Contract } from '../src/game/campaign.ts';
 import type { AbilityId, ClassId } from '../src/game/classes.ts';
 import type { Area, EnemyKind } from '../src/game/mapgen.ts';
-import { GHOST_SECONDS } from '../src/game/simulation.ts';
+import { GHOST_SECONDS, isReinforcement } from '../src/game/simulation.ts';
 import type { Objective, Pending, Simulation, Unit } from '../src/game/simulation.ts';
 import { distance } from '../src/game/world.ts';
 import type { Point, World } from '../src/game/world.ts';
@@ -23,8 +23,11 @@ export const noTactics: Bot = sim => {
     const goal = sim.objectives.find(o => !o.done)!;
     // A downed operative is revived before anything else; a move order would cancel the revive.
     if (down) { if (!living.some(u => u.reviveTarget)) { sim.selectAll(); sim.revive(down.id); order = ''; } }
-    else if (goal.kind === 'target') {
-      const target = sim.units.find(u => u.kind === 'target') as Unit;
+    else if (goal.kind === 'target' || goal.kind === 'sweep') {
+      // Elimination: the nearest of the district's own hostiles still standing.
+      const lead = living[0], left = sim.units.filter(u => u.faction === 'hostile' && u.hp > 0 && !isReinforcement(u));
+      const target = goal.kind === 'target' ? sim.units.find(u => u.kind === 'target') as Unit : left.sort((a, b) => distance(a, lead) - distance(b, lead))[0];
+      if (!target) return;
       if (target.visible) { if (order !== 'attack' || idle) { order = 'attack'; sim.selectAll(); sim.attack(target.id); } }
       else if (order !== 'hunt' || idle || distance(point!, target) > 3) go('hunt', target);
     } else {

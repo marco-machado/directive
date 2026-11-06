@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Simulation, parseCampaign, CALM_SECONDS, COUNTERMEASURES, EXTENDED_RANGE, HEAVY_HP, LIGHT_CONCEALMENT, PIERCING_BONUS, SUPPRESSOR_STEP, CALM_STEP, escalation, FIRST_WAVE_SECONDS, waveSize, REPEAT_REINFORCEMENTS, VIP_DAMAGE_TAKEN, VIP_SECURE_SECONDS, CAMERA_DETECT, COVER_FACTOR, DETECT_DRAIN, detectSeconds, GHOST_SECONDS, HACK_SECONDS, LOOK_ANGLE, LOOK_EVERY, LOOK_PAUSE, QUEUE_SPACING, REINFORCE_CAP, ROUTE_MAX, SUSPICIOUS, REINFORCE_SECONDS, REVIVE_SECONDS, SIGHT_RANGE, TAKEDOWN_REACH, TAKEDOWN_SECONDS, tierDamage, tierHp, WAIT_MAX, WAIT_STEP } from '../src/game/simulation.ts';
 import type { CampaignSync, Unit, Upgrade } from '../src/game/simulation.ts';
-import { CAMPAIGN_VERSION, contractPayout, FIRST_CONTRACT, freshCampaign, MAX_LEVEL, MAX_TIER, parSeconds } from '../src/game/campaign.ts';
+import { CAMPAIGN_VERSION, CONTRACT_TYPES, contractPayout, FIRST_CONTRACT, freshCampaign, MAX_LEVEL, MAX_TIER, parSeconds } from '../src/game/campaign.ts';
 import type { ArmorMode, Campaign, ContractType, MissionReport, WeaponMode } from '../src/game/campaign.ts';
 import { abilityCooldown, CLASS_STATS } from '../src/game/classes.ts';
 import { mapSize, planMission, TARGET_AREA_OFFSET, TARGET_AREA_RADIUS } from '../src/game/mapgen.ts';
@@ -54,7 +54,7 @@ test('migrates v1 and v2 saves and clamps corrupt values', () => {
 });
 
 test('districts are deterministic, reachable, and grow with tier', () => {
-  for (const type of ['assassination', 'heist', 'sabotage', 'escort'] as const) for (let tier = 1; tier <= MAX_TIER; tier++) {
+  for (const type of CONTRACT_TYPES) for (let tier = 1; tier <= MAX_TIER; tier++) {
     const c = contract(type, tier, 99 + tier), plan = planMission(c), again = planMission(c);
     assert.deepEqual(again.world.buildings, plan.world.buildings);
     const { w, d } = mapSize(tier);
@@ -71,7 +71,7 @@ test('districts are deterministic, reachable, and grow with tier', () => {
 });
 
 test('a posted guard never stands with its back to the map edge, so a takedown has ground behind it', () => {
-  for (const type of ['assassination', 'heist', 'sabotage', 'escort'] as const) for (let tier = 1; tier <= MAX_TIER; tier++) for (let seed = 1; seed <= 12; seed++) {
+  for (const type of CONTRACT_TYPES) for (let tier = 1; tier <= MAX_TIER; tier++) for (let seed = 1; seed <= 12; seed++) {
     const plan = planMission(contract(type, tier, seed * 7919 + tier));
     for (const g of plan.enemies.filter(e => e.kind === 'guard' && !e.patrol.length)) {
       const behind = { x: g.x - Math.sin(g.heading) * TAKEDOWN_REACH, z: g.z - Math.cos(g.heading) * TAKEDOWN_REACH };
@@ -1448,6 +1448,31 @@ test('Bloodless spares only the assassination target; Purge counts the district,
   const spared = play(false), swept = play(true);
   assert.ok(spared.includes('bloodless') && !spared.includes('purge'), spared.join());
   assert.ok(swept.includes('purge') && !swept.includes('bloodless'), swept.join());
+});
+
+test('Elimination counts down the district it started with; reinforcements never count, and it offers no Purge or Bloodless', () => {
+  const plan = planMission(contract('elimination', 2, 77));
+  assert.ok(plan.enemies.length > 0 && !plan.sites.length && !plan.vip && !plan.enemies.some(e => e.kind === 'target'));
+  const reports: MissionReport[] = [];
+  const sync = { ...recorder().sync, completed: (r: MissionReport) => { reports.push(r); } };
+  const { sim, squad, hostile } = arena('elimination', {}, sync);
+  const a = hostile('guard', 12, 10, 0), b = hostile('camera', 14, 10, 0, 40), r = hostile('guard', 16, 10, 0);
+  r.id = 'r0'; // a reinforcement, left standing
+  const sweep = sim.objectives[0];
+  assert.equal(sweep.kind, 'sweep');
+  step(sim, .1);
+  assert.equal(sweep.label, 'Down every hostile (2 left)'); assert.equal(sim.extractReady, false);
+  a.hp = 0; step(sim, .1);
+  assert.equal(sweep.label, 'Down every hostile (1 left)'); assert.equal(sweep.progress, .5);
+  extractAll(sim, squad);
+  assert.equal(sim.phase, 'mission', 'extraction waits for the sweep');
+  b.hp = 0; step(sim, .1);
+  assert.ok(sweep.done && sim.extractReady, 'the standing reinforcement does not hold up the sweep');
+  extractAll(sim, squad);
+  assert.equal(sim.result, 'success');
+  assert.deepEqual(sim.getSnapshot().badges, ['ghost', 'untouched', 'swift']);
+  assert.deepEqual(reports, [{ stealth: true, badges: ['ghost', 'untouched', 'swift'] }]);
+  assert.equal(sim.campaign.badges.purge, 0);
 });
 
 test('a restart clears the downs a run had counted', () => {
