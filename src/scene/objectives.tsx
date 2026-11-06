@@ -82,6 +82,25 @@ function Cache({ sim, index, o, labels }: Props) {
   </group>;
 }
 
+// A Surveillance executive: a ring at its feet that fills as an operative watches it, over it while seen and at the
+// last place it was seen otherwise. It goes once the executive is tagged or lost.
+const TAG_BLUE = '#8fd3ff';
+function Tag({ sim, index, o, labels }: Props) {
+  const ref = useRef<Group>(null);
+  useFrame(() => {
+    const live = sim.objectives[index], u = live?.unit ? sim.units.find(v => v.id === live.unit) : undefined;
+    if (!ref.current || !live) return;
+    ref.current.visible = sim.phase === 'mission' && !live.done && !live.lost;
+    const at = u?.visible ? u : live;
+    ref.current.position.set(at.x, 0, at.z);
+  });
+  return <group ref={ref} position={[o.x, 0, o.z]}>
+    <ProgressRing radius={.9} color={TAG_BLUE} value={progress(sim, index)} segments={32} />
+    <Beacon color={TAG_BLUE} active={open(sim, index)} />
+    <Label labels={labels} text={`EXEC ${cacheLetter(o)}`} done={false} y={2.1} />
+  </group>;
+}
+
 // The VIP's hold: the ring fills while an operative stands within reach, and goes once they are free.
 function VipHold({ sim, index, o }: Props) {
   const ref = useRef<Group>(null);
@@ -191,6 +210,7 @@ export function Objectives({ sim, objectives, labels }: { sim: Simulation; objec
     if (o.kind === 'cache') return <Cache key={key} {...props} />;
     if (o.kind === 'extract') return <Extraction key={key} {...props} />;
     if (o.kind === 'vip') return <VipHold key={key} {...props} />;
+    if (o.kind === 'tag') return <Tag key={key} {...props} />;
     return null;
   })}</>;
 }

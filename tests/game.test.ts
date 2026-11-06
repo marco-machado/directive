@@ -2,9 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Simulation, parseCampaign, CACHE_SECONDS, SQUAD_SPEED, FLEE_DELAY, HOSTILE_STATS, posted, CALM_SECONDS, COUNTERMEASURES, EXTENDED_RANGE, HEAVY_HP, LIGHT_CONCEALMENT, PIERCING_BONUS, SUPPRESSOR_STEP, CALM_STEP, escalation, FIRST_WAVE_SECONDS, waveSize, REPEAT_REINFORCEMENTS, VIP_DAMAGE_TAKEN, VIP_SECURE_SECONDS, CAMERA_DETECT, COVER_FACTOR, DETECT_DRAIN, detectSeconds, GHOST_SECONDS, HACK_SECONDS, LOOK_ANGLE, LOOK_EVERY, LOOK_PAUSE, QUEUE_SPACING, REINFORCE_CAP, ROUTE_MAX, SUSPICIOUS, REINFORCE_SECONDS, REVIVE_SECONDS, SIGHT_RANGE, TAKEDOWN_REACH, TAKEDOWN_SECONDS, tierDamage, tierHp, WAIT_MAX, WAIT_STEP } from '../src/game/simulation.ts';
 import type { CampaignSync, Unit, Upgrade } from '../src/game/simulation.ts';
-import { CACHE_BONUS, CAMPAIGN_VERSION, CARRY_SPEED, smashSeconds, CONTRACT_TYPES, MODIFIER_FITS, PICKUP_SECONDS, contractPayout, HANDOVER_SECONDS, IDENTIFY_RANGE, IDENTIFY_SECONDS, LOCKDOWN_SECONDS, FIRST_CONTRACT, freshCampaign, MAX_LEVEL, MAX_TIER, parSeconds } from '../src/game/campaign.ts';
+import { CACHE_BONUS, EXECUTIVES, TAG_RANGE, TAG_SECONDS, CAMPAIGN_VERSION, CARRY_SPEED, smashSeconds, CONTRACT_TYPES, MODIFIER_FITS, PICKUP_SECONDS, contractPayout, HANDOVER_SECONDS, IDENTIFY_RANGE, IDENTIFY_SECONDS, LOCKDOWN_SECONDS, FIRST_CONTRACT, freshCampaign, MAX_LEVEL, MAX_TIER, parSeconds } from '../src/game/campaign.ts';
 import type { ArmorMode, Campaign, ContractType, MissionReport, WeaponMode } from '../src/game/campaign.ts';
-import { ABILITY_STATS, abilityCooldown, CLASS_STATS } from '../src/game/classes.ts';
+import { ABILITY_STATS, abilityCooldown, CLASS_STATS, MARK_SECONDS } from '../src/game/classes.ts';
 import { COURIER_DELAY, COURIER_MIN_RUN, interceptable, mapSize, planMission, TARGET_AREA_OFFSET, TARGET_AREA_RADIUS } from '../src/game/mapgen.ts';
 import type { EnemyKind } from '../src/game/mapgen.ts';
 import { mulberry32 } from '../src/game/rng.ts';
@@ -1910,6 +1910,98 @@ test('a Smash and grab win reports its caches, and each past the first pays a bo
     assert.equal(sim.result, 'success');
     assert.equal(sim.getSnapshot().reward.credits, (taken - 1) * CACHE_BONUS);
   }
+});
+
+// Surveillance (#50).
+test('Surveillance plans three executives on their own beats, well apart, with no last known area', () => {
+  for (let seed = 1; seed <= 20; seed++) {
+    const plan = planMission(contract('surveillance', 3 + seed % 3, seed * 173)), execs = plan.enemies.filter(e => e.kind === 'target');
+    assert.equal(execs.length, EXECUTIVES);
+    execs.forEach((e, i) => { assert.ok(e.patrol.length >= 2, 'an executive walks'); execs.slice(i + 1).forEach(f => assert.ok(distance(e, f) >= 8)); });
+    assert.equal(plan.targetArea, null);
+  }
+  const sim = new Simulation(campaignWith('surveillance', { offers: [contract('surveillance', 3)] }));
+  sim.deploy();
+  assert.deepEqual(sim.objectives.map(o => o.kind), ['tag', 'tag', 'tag', 'extract']);
+  assert.ok(sim.units.filter(u => u.kind === 'target').every(u => u.name === 'EXECUTIVE'));
+});
+
+function surveillance(tier = 3) {
+  const { sim, squad, hostile } = arena('surveillance', { offers: [contract('surveillance', tier)] });
+  // Executives facing away from the squad, out of each other's way; stunned ones stand still.
+  const execs = [hostile('target', 6, 0, Math.PI / 2, 110), hostile('target', -6, 12, Math.PI, 110), hostile('target', 0, -14, 0, 110)];
+  const tags = sim.objectives.filter(o => o.kind === 'tag');
+  execs.forEach((u, i) => { u.name = 'EXECUTIVE'; u.stunned = 1e9; tags[i].unit = u.id; tags[i].x = u.x; tags[i].z = u.z; });
+  return { sim, squad, execs, tags };
+}
+
+test('an operative tags an unaware executive by keeping it in sight; a broken watch drains', () => {
+  const { sim, execs, tags } = surveillance();
+  assert.ok(distance(sim.units[0], execs[0]) <= TAG_RANGE && distance(sim.units[0], execs[1]) > TAG_RANGE);
+  step(sim, TAG_SECONDS / 2);
+  assert.ok(tags[0].progress > .4 && !tags[0].done && tags[1].progress === 0);
+  execs[0].x = 18; step(sim, TAG_SECONDS / 4);
+  assert.ok(tags[0].progress < .4, 'the watch drains out of range');
+  execs[0].x = 6; step(sim, TAG_SECONDS);
+  assert.ok(execs[0].tagged && tags[0].done); assert.equal(sim.extractReady, false);
+});
+
+test("Recon's mark tags an executive, and two tags open extraction with the third optional for intel", () => {
+  const { sim, execs, tags } = surveillance();
+  execs[1].marked = MARK_SECONDS; step(sim, .1);
+  assert.ok(tags[1].done && !tags[0].done);
+  step(sim, TAG_SECONDS + .1);
+  assert.ok(tags[0].done && sim.extractReady);
+  assert.ok(tags[2].optional && tags[2].label.includes('intel'));
+});
+
+test('an alarm sends the untagged executives running; one that gets away is lost, and losing two blows the contract', () => {
+  const { sim, execs, tags } = surveillance();
+  execs[0].tagged = true;
+  execs.forEach(u => { u.stunned = 0; });
+  (sim as unknown as { raiseAlarm(at: Point, reason: string): void }).raiseAlarm({ x: 0, z: 0 }, 'test');
+  assert.equal(execs[0].exit, null, 'a tagged executive does not run');
+  assert.ok(execs[1].exit && execs[2].exit);
+  sim.units.filter(u => u.faction === 'squad').forEach(u => { u.hp = u.maxHp = 1e9; });
+  step(sim, 60, () => !sim.units.includes(execs[1]) || sim.phase !== 'mission');
+  assert.ok(!sim.units.includes(execs[1]), 'the executive left the district');
+  step(sim, .1);
+  assert.ok(tags[1].lost && tags[1].optional); assert.match(tags[1].label, /got away/);
+  execs[2].hp = 0; step(sim, .1);
+  assert.equal(sim.result, 'failure'); assert.match(sim.failReason, /Too many executives lost/);
+});
+
+test('a killed executive is lost, not tagged, and costs Bloodless; all three tagged report intel', () => {
+  for (const all of [false, true]) {
+    const { sim, squad, execs } = surveillance();
+    if (!all) execs[2].hp = 0;
+    execs.forEach(u => { if (u.hp > 0) u.marked = MARK_SECONDS; });
+    step(sim, .1);
+    assert.ok(sim.extractReady);
+    squad.forEach(u => { u.x = -18; u.z = -18; u.path = []; });
+    step(sim, .5);
+    assert.equal(sim.result, 'success');
+    const snap = sim.getSnapshot();
+    assert.equal(snap.reward.intel, all);
+    assert.equal(snap.badges.includes('bloodless'), all);
+  }
+});
+
+test('under the alarm the squad never fires on an executive unordered', () => {
+  const { sim, execs } = surveillance();
+  (sim as unknown as { raiseAlarm(at: Point, reason: string): void }).raiseAlarm({ x: 0, z: 0 }, 'test');
+  step(sim, 2);
+  assert.equal(execs[0].hp, execs[0].maxHp);
+  sim.selectAll(); sim.attack(execs[0].id); step(sim, 3);
+  assert.ok(execs[0].hp < execs[0].maxHp, 'an ordered attack still fires');
+});
+
+test('two executives tagged in the same update open extraction', () => {
+  const { sim, execs, tags } = surveillance();
+  execs[0].x = 18; execs[1].marked = MARK_SECONDS; execs[2].marked = MARK_SECONDS;
+  step(sim, .05);
+  assert.ok(tags[1].done && tags[2].done && sim.extractReady);
+  assert.ok(tags[0].optional && tags[0].label.includes('intel'));
 });
 
 test('before a pickup is called, reinforcement waves enter at random edge exits', () => {

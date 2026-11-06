@@ -422,6 +422,7 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .objectives li.done { color: var(--mint) }
 .objectives li.done .obj-copy { opacity: .75 }
 .objectives li.done .obj-mark { border-color: var(--mint); background: var(--mint); color: #04170f }
+.objectives li.lost .obj-copy { opacity: .55; text-decoration: line-through }
 .obj-copy { min-width: 0 }
 .obj-progress { display: block; height: 4px; margin-top: 7px; background: rgb(255 255 255 / .08) }
 .obj-progress b { display: block; height: 100%; background: var(--amber); box-shadow: 0 0 8px var(--amber); transition: width .2s linear }

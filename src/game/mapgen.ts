@@ -1,4 +1,4 @@
-import { hasModifier } from './campaign.ts';
+import { EXECUTIVES, hasModifier } from './campaign.ts';
 import type { Contract } from './campaign.ts';
 import { SQUAD_SPEED } from './classes.ts';
 import { between, mulberry32, pick, shuffle } from './rng.ts';
@@ -178,6 +178,17 @@ function attempt(contract: Contract, rng: Rng, withCover: boolean): MissionPlan 
     if (caches.length < 3) return null;
     sites.push(...caches.map(p => ({ ...p, kind: 'cache' as const })));
   }
+  // Surveillance: three executives walk their own beats on the far side, each starting at least 8 m from the others.
+  if (type === 'surveillance') {
+    const starts: typeof nodes = [];
+    for (const n of shuffle(rng, nodes)) if (starts.length < EXECUTIVES && reach(n.p) > SAFE_RADIUS + 4 && starts.every(s => distance(s.p, n.p) >= 8)) starts.push(n);
+    if (starts.length < EXECUTIVES) return null;
+    for (const n of starts) {
+      const route = patrolRoute(rng, lattice, n.i, n.j, 2 + Math.floor(rng() * 2), start);
+      enemies.push({ ...n.p, kind: 'target', heading: headingTo(route[0], route[1] ?? start), patrol: route });
+    }
+    primary = starts[0].p;
+  }
   if (type === 'escort') { primary = pick(rng, far.slice(0, Math.ceil(far.length * .5))); vip = primary; }
   if (type === 'assassination') enemies.push({ ...primary, kind: 'target', heading: headingTo(primary, start), patrol: [] });
   // Intercept: the courier starts at its entry exit with two escorts beside it; the posted guards hold the route's middle.
@@ -206,8 +217,9 @@ function attempt(contract: Contract, rng: Rng, withCover: boolean): MissionPlan 
   const post = (site: Point) => near(site, 4, backRoom) ?? near(site, 6, backRoom) ?? near(site, 8, backRoom);
 
   for (const p of escorts) enemies.push({ ...p, kind: 'guard', heading: enemies[0].heading, patrol: enemies[0].patrol, escort: true });
-  // Two posted guards hold every objective; the rest walk the streets. The courier's escorts stand in for Intercept's.
-  if (type !== 'intercept') for (const site of (sites.length ? sites : [primary]).slice(0, type === 'smash' ? 3 : 2)) {
+  // Two posted guards hold every objective; the rest walk the streets. The courier's escorts stand in for Intercept's;
+  // Surveillance's executives walk, so no post holds them.
+  if (type !== 'intercept' && type !== 'surveillance') for (const site of (sites.length ? sites : [primary]).slice(0, type === 'smash' ? 3 : 2)) {
     for (let k = 0; k < (sites.length > 1 ? 1 : 2); k++) {
       const p = post(site);
       // Every Smash and grab cache is held; a layout with no post by one is tried again.
@@ -260,7 +272,7 @@ function attempt(contract: Contract, rng: Rng, withCover: boolean): MissionPlan 
   if (!needed.every(p => world.findPath(spawn[0], p).length)) return null;
   const label = `SECTOR ${String(contract.sector).padStart(2, '0')} / ${contract.district}`;
   // Barriers can lengthen the squad's way to the route, so the margin is checked again on the finished streets.
-  const courier = enemies.find(e => e.kind === 'target' && e.patrol.length);
+  const courier = type === 'intercept' ? enemies.find(e => e.kind === 'target') : undefined;
   if (courier && !interceptable(world, spawn[0], courier.patrol)) return null;
   return { contract, world, label, spawn, start, extract, enemies, sites, vip, exits, targetArea: null };
 }
@@ -277,7 +289,8 @@ export function planMission(contract: Contract): MissionPlan {
     const plan = attempt(contract, rng, k < 8), target = plan?.enemies.find(e => e.kind === 'target');
     // An Intercept courier's area is centered on its entry exit; its route is given away as a patrol's is.
     if (plan && target && contract.type === 'intercept') return { ...plan, targetArea: { x: target.x, z: target.z, r: TARGET_AREA_RADIUS } };
-    if (plan) return target ? { ...plan, targetArea: lastKnownArea(contract.seed, target) } : plan;
+    // Surveillance's executives are seen walking from the start; there is no single target to search for.
+    if (plan) return target && contract.type !== 'surveillance' ? { ...plan, targetArea: lastKnownArea(contract.seed, target) } : plan;
   }
   throw new Error(`No playable layout for contract seed ${contract.seed}.`);
 }

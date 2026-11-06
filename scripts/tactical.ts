@@ -13,9 +13,10 @@ import type { Bot, Knowledge, Op, Orders, Seen } from './bots.ts';
 
 const STALL = 45;      // s without progress before the bot goes loud
 const PATIENCE = 8;    // s to wait for a patrol to walk out of the way before dealing with it
+const SHADOW = 4;      // m behind a Surveillance executive the squad follows it from
 const REPLAN = 1;      // s a job keeps its spot before the bot looks for a better one
 const SCOUTED = 5;     // m: Elimination's search counts a street point seen once an operative passes this close
-const SITE_REACH: Partial<Record<Objective['kind'], number>> = { terminal: 1.5, charge: 1.2 };
+const SITE_REACH: Partial<Record<Objective['kind'], number>> = { terminal: 1.5, charge: 1.2, tag: 1.5 };
 
 const angleDiff = (a: number, b: number) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
 const headingTo = (a: Point, b: Point) => Math.atan2(b.x - a.x, b.z - a.z);
@@ -108,10 +109,22 @@ class Tactician {
       // An Intercept courier comes with no target area: the squad scouts for it.
       return target ? { key: `target:${target.id}`, kind: 'target', point: target, target } : k.targetArea ? { key: 'search', kind: 'search', point: this.street(k.targetArea) } : this.scout();
     }
+    if (o.kind === 'tag') return this.shadow(o);
     if (o.kind === 'vip') return { key: 'vip', kind: 'vip', point: k.vip! };
     if (o.kind === 'sweep') return this.sweep();
     return { key: `${o.kind}:${o.label}`, kind: o.kind, point: o };
   }
+  // Surveillance: the squad shadows an executive from SHADOW m behind it, out of its sight, until the watch fills; with
+  // the executive out of sight, it heads for where it was last seen.
+  private shadow(o: Objective): Goal {
+    const k = this.k, h = k.hostiles.find(h => h.id === o.unit && h.hp > 0);
+    if (!h) return { key: `tag:${o.label}`, kind: 'tag', point: o };
+    const back = { x: h.x - Math.sin(h.heading) * SHADOW, z: h.z - Math.cos(h.heading) * SHADOW };
+    const point = k.world.walkable(back, .4) && k.world.sightClear(back, h) ? back : h;
+    return { key: `tag:${o.label}`, kind: 'tag', point: { x: Math.round(point.x * 2) / 2, z: Math.round(point.z * 2) / 2 } };
+  }
+  // Surveillance's executives are to be watched, never shot or taken down.
+  private spared(h: Seen) { return this.k.contract.type === 'surveillance' && h.kind === 'target'; }
   // An unknown target passes as a posted guard in its area: the squad goes for the nearest such guard it knows of, which
   // either identifies the target on the approach or takes down a guard, and tries the next.
   private suspect(): Seen | undefined {
@@ -185,7 +198,7 @@ class Tactician {
     const wide = k.vip?.joined ? this.watchers.map(w => sight(k.world, w.h, 2)) : null;
     const avoid = wide ? (p: Point) => wide.some(sees => sees(p)) : this.danger('plan');
     // A goal inside someone's sight is cleared first.
-    const guard = this.watchers.find(w => w.plan(goal.point));
+    const guard = this.watchers.find(w => !this.spared(w.h) && w.plan(goal.point));
     if (guard) { this.unblock(guard.h); return; }
     const reach = SITE_REACH[goal.kind as Objective['kind']] ?? 1;
     for (const op of this.living) {
@@ -224,6 +237,8 @@ class Tactician {
   // A walking blocker gets PATIENCE seconds to walk off; anyone else is dealt with.
   private unblock(h: Seen) {
     const k = this.k;
+    // An executive in the way is waited out, however long it takes.
+    if (this.spared(h)) { this.stop(this.living.filter(op => samples(op, op.route).some(this.danger('now')))); return; }
     if (h.patrol.length >= 2) {
       if (this.waiting?.id !== h.id) this.waiting = { id: h.id, since: k.time };
       if (k.time - this.waiting.since < PATIENCE) { this.stop(this.living.filter(op => samples(op, op.route).some(this.danger('now')))); return; }
@@ -246,6 +261,7 @@ class Tactician {
   // ---- Dealing with one hostile, quietly ----
   // What can be done right now, without moving: a sniper shot or a volley that kills.
   private quick(h: Seen): boolean {
+    if (this.spared(h)) return false;
     if (this.snipe(h)) return true;
     if (!h.visible) return false;
     this.o.selectAll();
@@ -383,7 +399,7 @@ class Tactician {
     this.abilities();
     if (k.alarm && this.withdraw()) return;
     const visible = k.hostiles.filter(h => h.visible && h.hp > 0);
-    const near = visible.filter(h => this.living.some(op => distance(op, h) <= this.range(op) + 3) && (HOSTILE_STATS[h.kind].damage > 0 || h.kind === 'target'));
+    const near = visible.filter(h => !this.spared(h) && this.living.some(op => distance(op, h) <= this.range(op) + 3) && (HOSTILE_STATS[h.kind].damage > 0 || h.kind === 'target'));
     const target = near.find(h => h.kind === 'target') ?? [...near].sort((a, b) => a.hp - b.hp)[0] ?? (goal.target?.visible ? goal.target : undefined);
     if (target && k.alarm) {
       if (this.fightTarget !== target.id || this.living.every(op => op.targetId !== target.id)) { this.o.selectAll(); this.o.attack(target.id); this.fightTarget = target.id; this.fightGoal = ''; }

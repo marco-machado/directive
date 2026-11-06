@@ -1,7 +1,7 @@
 import { Component, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { CSSProperties, ErrorInfo, FormEvent, ReactNode, RefObject } from 'react';
 import { client, sim } from '../app.ts';
-import { BADGE_POINTS, BADGES, CACHE_BONUS, CACHES, CARRY_SPEED, PICKUP_SECONDS, CONTRACT_POINTS, IDENTIFY_RANGE, IDENTIFY_SECONDS, LOCKDOWN_SECONDS, MAX_TIER, MODIFIER_PAY, NO_KILL_CUT, NO_KILL_FLOOR, nextTypeUnlock, RECRUIT_COST, REWARDS, nextUnlock, OPENING_CONTRACTS, parSeconds, topTier, unlockedTypes } from '../game/campaign.ts';
+import { BADGE_POINTS, BADGES, CACHE_BONUS, CACHES, CARRY_SPEED, EXECUTIVES, EXECUTIVES_NEEDED, PICKUP_SECONDS, TAG_RANGE, TAG_SECONDS, CONTRACT_POINTS, IDENTIFY_RANGE, IDENTIFY_SECONDS, LOCKDOWN_SECONDS, MAX_TIER, MODIFIER_PAY, NO_KILL_CUT, NO_KILL_FLOOR, nextTypeUnlock, RECRUIT_COST, REWARDS, nextUnlock, OPENING_CONTRACTS, parSeconds, topTier, unlockedTypes } from '../game/campaign.ts';
 import type { Badge, Campaign, Contract, ContractType, Modifier, Operative, Reward, ResultField } from '../game/campaign.ts';
 import { ABILITY_STATS, CLASS_STATS } from '../game/classes.ts';
 import { formatSaveCode, normalizeSaveCode } from '../game/saveCode.ts';
@@ -29,6 +29,10 @@ export const CONTRACTS: Record<ContractType, { title: string; brief: string; int
     title: 'Smash and grab', brief: `Open one of ${CACHES} caches, then extract before the exits seal. Opening the first starts the lockdown clock, alarm or not; each further cache pays ${CACHE_BONUS} credits.`,
     intro: 'Plan everything before the first cache: takedowns, positions, the way out. The clock starts the moment one opens, and the tracker counts it down. Take another cache only if the time allows.',
   },
+  surveillance: {
+    title: 'Surveillance', brief: `Tag ${EXECUTIVES_NEEDED} of ${EXECUTIVES} executives: keep one in sight within ${TAG_RANGE} m for ${TAG_SECONDS} s without being noticed, or mark it with Recon. Then extract. Once the alarm sounds, the untagged run for exits. Tag all ${EXECUTIVES} for intel on the next contract.`,
+    intro: 'Executives walk their own beats and carry no weapon. A killed executive is lost, not tagged; lose two and the contract is blown. Stay out of sight and let the watch fill.',
+  },
   escort: { title: 'Escort', brief: `Stay beside the VIP for ${VIP_SECURE_SECONDS} seconds to free them, then escort them to extraction. Under fire, the VIP ducks behind cover near the squad; if they die, the contract fails.` },
 };
 // What each badge is called, its icon, and what earns it on a contract (its district holding `hostiles` hostiles).
@@ -36,7 +40,7 @@ export const BADGE_COPY: Record<Badge, { title: string; icon: IconName; goal: (c
   ghost: { title: 'Ghost', icon: 'eye', goal: () => 'Never raise the alarm' },
   untouched: { title: 'Untouched', icon: 'cover', goal: () => 'No operative goes down' },
   swift: { title: 'Swift', icon: 'clock', goal: c => `Extract within ${clock(parSeconds(c.type, c.tier))}` },
-  bloodless: { title: 'Bloodless', icon: 'heal', goal: c => c.type === 'assassination' ? 'Kill no one but the target' : c.type === 'intercept' ? 'Kill no one but the courier' : 'Kill no one' },
+  bloodless: { title: 'Bloodless', icon: 'heal', goal: c => c.type === 'assassination' ? 'Kill no one but the target' : c.type === 'intercept' ? 'Kill no one but the courier' : c.type === 'surveillance' ? 'Kill no one, executives included' : 'Kill no one' },
   purge: { title: 'Purge', icon: 'kills', goal: (_, n) => `Down all ${n} hostile${n === 1 ? '' : 's'} in the district` },
 };
 // What a contract can pay beyond its credits, for the board and the briefing, and what a won one earned, for the report.

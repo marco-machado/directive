@@ -14,13 +14,16 @@ export type Bot = (sim: Simulation, options: { quietOnly: boolean }) => () => vo
 // Select all, click the objective, then extraction; revive the downed; no abilities. It reads the simulation directly
 // (it walks to the target's true position), as it always has, so its numbers stay comparable with older runs.
 // The objective a bot goes for next. Smash and grab's optional caches are taken, nearest first, only while the lockdown
-// clock leaves time to walk there, open it, and walk on to extraction with `margin` seconds to spare.
+// clock leaves time to walk there, open it, and walk on to extraction with `margin` seconds to spare; Surveillance's
+// third executive is tried whenever there is no clock.
 const walk = (world: World, a: Point, b: Point) => { const path = world.findPath(a, b); return path.reduce((sum, q, i) => sum + distance(i ? path[i - 1] : a, q), 0); };
 export function nextObjective(objectives: readonly Objective[], from: Point, world: World, lockdownIn: number | null, margin: number): Objective {
   const required = objectives.find(o => !o.done && !o.optional && o.kind !== 'extract'), zone = objectives.at(-1)!;
   if (required) return required;
   const time = (o: Objective) => (walk(world, from, o) + walk(world, o, zone)) / SQUAD_SPEED + CACHE_SECONDS + margin;
-  const extra = objectives.filter(o => !o.done && o.optional).sort((a, b) => distance(a, from) - distance(b, from)).find(o => lockdownIn !== null && time(o) <= lockdownIn);
+  // A Surveillance executive past the second is always worth a try without a lockdown clock; a lost one never is.
+  const extra = objectives.filter(o => !o.done && o.optional && !o.lost).sort((a, b) => distance(a, from) - distance(b, from))
+    .find(o => lockdownIn !== null ? time(o) <= lockdownIn : o.kind === 'tag');
   return extra ?? zone;
 }
 export const noTactics: Bot = sim => {
@@ -48,7 +51,8 @@ export const noTactics: Bot = sim => {
       const p = goal.kind === 'vip' ? sim.units.find(u => u.faction === 'vip')! : goal;
       const key = `${goal.kind}:${goal.label}`;
       // A player clicks again when the squad has stopped short of the objective.
-      if (order !== key || (idle && living.some(u => distance(u, p) > 2))) go(key, p);
+      // A walking executive is followed to where it was last seen.
+      if (order !== key || (idle && living.some(u => distance(u, p) > 2)) || (goal.kind === 'tag' && distance(point!, p) > 3)) go(key, p);
     }
   };
 };
