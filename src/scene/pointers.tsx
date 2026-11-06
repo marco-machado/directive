@@ -36,6 +36,8 @@ export function Pointers({ sim, labels, insets }: { sim: Simulation; labels: Ref
     }
     const target = sim.units.find(u => u.kind === 'target' && u.hp > 0);
     if (sim.phase === 'mission' && target?.exit) targets.push({ p: target.exit, kind: 'exit', label: `${target.name === 'COURIER' ? 'COURIER' : 'TARGET'} EXIT` });
+    // A dropped package gets its own arrow until someone picks it up.
+    if (sim.phase === 'mission' && sim.cargo && !sim.cargo.carrier) targets.push({ p: sim.cargo, kind: 'package', label: 'PACKAGE' });
     if (sim.phase === 'mission') for (const o of sim.objectives) {
       // Elimination's sweep has no place to point at: hostiles in sight already get their own arrows.
       if (o.done || o.kind === 'sweep' || (o.kind === 'extract' && !ready)) continue;

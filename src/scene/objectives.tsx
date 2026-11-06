@@ -131,9 +131,35 @@ function Target({ sim, index, labels }: Props) {
   </>;
 }
 
+// A carry contract's package: a case at its carrier's side, or on the ground under a beacon once dropped.
+const PACKAGE_GOLD = '#ffd77a';
+function Package({ sim, labels }: { sim: Simulation; labels: RefObject<HTMLDivElement> }) {
+  const root = useRef<Group>(null), ground = useRef<Group>(null), label = useRef<HTMLSpanElement>(null);
+  useFrame(() => {
+    const c = sim.phase === 'mission' ? sim.cargo : null, carrier = c?.carrier ? sim.units.find(u => u.id === c.carrier) : undefined;
+    if (!root.current || !ground.current) return;
+    root.current.visible = !!c;
+    if (!c) { if (label.current) label.current.hidden = true; return; }
+    const side = carrier ? carrier.heading + Math.PI / 2 : 0;
+    root.current.position.set(c.x + (carrier ? Math.sin(side) * .32 : 0), carrier ? .55 : .14, c.z + (carrier ? Math.cos(side) * .32 : 0));
+    root.current.rotation.y = carrier ? carrier.heading : 0;
+    ground.current.visible = !carrier;
+    if (label.current && label.current.hidden === !carrier) label.current.hidden = !!carrier;
+  });
+  return <group ref={root} visible={false}>
+    <Box position={[0, 0, 0]} size={[.42, .28, .16]} color="#5a4a2a" castShadow />
+    <Box position={[0, .17, 0]} size={[.16, .05, .04]} color="#2a2421" />
+    <group ref={ground}>
+      <Beacon color={PACKAGE_GOLD} active={() => true} />
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -.1, 0]}><ringGeometry args={[.6, .67, 32]} /><meshBasicMaterial color={PACKAGE_GOLD} transparent opacity={.8} depthWrite={false} toneMapped={false} /></mesh>
+      <Html portal={labels} center position={[0, 1.2, 0]} style={{ pointerEvents: 'none' }}><span ref={label} hidden className="objective-label">PACKAGE</span></Html>
+    </group>
+  </group>;
+}
+
 export function Objectives({ sim, objectives, labels }: { sim: Simulation; objectives: Objective[]; labels: RefObject<HTMLDivElement> }) {
   let charges = 0;
-  return <>{objectives.map((o, i) => {
+  return <><Package sim={sim} labels={labels} />{objectives.map((o, i) => {
     const key = `${o.kind}-${i}`, props = { sim, index: i, o, labels };
     if (o.kind === 'target') return <Target key={key} {...props} />;
     if (o.kind === 'terminal') return <Terminal key={key} {...props} />;

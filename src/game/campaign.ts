@@ -11,17 +11,22 @@ export type Contract = { id: string; type: ContractType; tier: number; seed: num
 // Contract modifiers: Lockdown seals the exits LOCKDOWN_SECONDS after the first alarm, and the contract fails unless the
 // squad is out; under a no-kill clause each kill but a target cuts NO_KILL_CUT of the fee, down to NO_KILL_FLOOR of it;
 // an unknown target passes as a guard until an operative watches it, unaware, within IDENTIFY_RANGE for IDENTIFY_SECONDS,
-// or Recon marks it. Each offer after the opening carries one with MODIFIER_CHANCE, of those that fit its type and are
+// or Recon marks it; under carry, a heist's prize is a package an operative carries out at CARRY_SPEED of a walk, hands
+// full (no firing, no ability). Each offer after the opening carries one with MODIFIER_CHANCE, of those that fit its type and are
 // open at its tier (MODIFIER_UNLOCK, from MODIFIER_TIER); each raises the fee by MODIFIER_PAY.
-export type Modifier = 'lockdown' | 'nokill' | 'unknown';
-export const MODIFIERS: readonly Modifier[] = ['lockdown', 'nokill', 'unknown'];
+export type Modifier = 'lockdown' | 'nokill' | 'unknown' | 'carry';
+export const MODIFIERS: readonly Modifier[] = ['lockdown', 'nokill', 'unknown', 'carry'];
 export const MODIFIER_FITS: Record<Modifier, readonly ContractType[]> = {
   lockdown: ['assassination', 'heist', 'sabotage', 'escort', 'elimination', 'intercept'],
   nokill: ['assassination', 'heist', 'sabotage', 'escort', 'intercept'], // Elimination is all kills
   unknown: ['assassination'],
+  carry: ['heist'],
 };
-export const MODIFIER_UNLOCK: Record<Modifier, number> = { lockdown: 2, nokill: 2, unknown: 3 };
+export const MODIFIER_UNLOCK: Record<Modifier, number> = { lockdown: 2, nokill: 2, unknown: 3, carry: 2 };
 export const IDENTIFY_RANGE = 5, IDENTIFY_SECONDS = 2;
+// Carry: the carrier's share of a walk; a squadmate sent on its own to stand within HANDOVER_REACH of a standing carrier
+// takes the package after HANDOVER_SECONDS; a dropped one is picked up by standing within PICKUP_REACH of it.
+export const CARRY_SPEED = .75, HANDOVER_REACH = 1, HANDOVER_SECONDS = 1.5, PICKUP_REACH = .8;
 export const MODIFIER_TIER = 2, MODIFIER_CHANCE = 1 / 3, MODIFIER_PAY = .2, MAX_MODIFIERS = 2;
 export const LOCKDOWN_SECONDS = 45;
 export const NO_KILL_CUT = .15, NO_KILL_FLOOR = .25;

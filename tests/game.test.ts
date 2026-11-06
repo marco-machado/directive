@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Simulation, parseCampaign, FLEE_DELAY, HOSTILE_STATS, posted, CALM_SECONDS, COUNTERMEASURES, EXTENDED_RANGE, HEAVY_HP, LIGHT_CONCEALMENT, PIERCING_BONUS, SUPPRESSOR_STEP, CALM_STEP, escalation, FIRST_WAVE_SECONDS, waveSize, REPEAT_REINFORCEMENTS, VIP_DAMAGE_TAKEN, VIP_SECURE_SECONDS, CAMERA_DETECT, COVER_FACTOR, DETECT_DRAIN, detectSeconds, GHOST_SECONDS, HACK_SECONDS, LOOK_ANGLE, LOOK_EVERY, LOOK_PAUSE, QUEUE_SPACING, REINFORCE_CAP, ROUTE_MAX, SUSPICIOUS, REINFORCE_SECONDS, REVIVE_SECONDS, SIGHT_RANGE, TAKEDOWN_REACH, TAKEDOWN_SECONDS, tierDamage, tierHp, WAIT_MAX, WAIT_STEP } from '../src/game/simulation.ts';
+import { Simulation, parseCampaign, SQUAD_SPEED, FLEE_DELAY, HOSTILE_STATS, posted, CALM_SECONDS, COUNTERMEASURES, EXTENDED_RANGE, HEAVY_HP, LIGHT_CONCEALMENT, PIERCING_BONUS, SUPPRESSOR_STEP, CALM_STEP, escalation, FIRST_WAVE_SECONDS, waveSize, REPEAT_REINFORCEMENTS, VIP_DAMAGE_TAKEN, VIP_SECURE_SECONDS, CAMERA_DETECT, COVER_FACTOR, DETECT_DRAIN, detectSeconds, GHOST_SECONDS, HACK_SECONDS, LOOK_ANGLE, LOOK_EVERY, LOOK_PAUSE, QUEUE_SPACING, REINFORCE_CAP, ROUTE_MAX, SUSPICIOUS, REINFORCE_SECONDS, REVIVE_SECONDS, SIGHT_RANGE, TAKEDOWN_REACH, TAKEDOWN_SECONDS, tierDamage, tierHp, WAIT_MAX, WAIT_STEP } from '../src/game/simulation.ts';
 import type { CampaignSync, Unit, Upgrade } from '../src/game/simulation.ts';
-import { CAMPAIGN_VERSION, CONTRACT_TYPES, contractPayout, IDENTIFY_RANGE, IDENTIFY_SECONDS, LOCKDOWN_SECONDS, FIRST_CONTRACT, freshCampaign, MAX_LEVEL, MAX_TIER, parSeconds } from '../src/game/campaign.ts';
+import { CAMPAIGN_VERSION, CARRY_SPEED, CONTRACT_TYPES, contractPayout, HANDOVER_SECONDS, IDENTIFY_RANGE, IDENTIFY_SECONDS, LOCKDOWN_SECONDS, FIRST_CONTRACT, freshCampaign, MAX_LEVEL, MAX_TIER, parSeconds } from '../src/game/campaign.ts';
 import type { ArmorMode, Campaign, ContractType, MissionReport, WeaponMode } from '../src/game/campaign.ts';
 import { abilityCooldown, CLASS_STATS } from '../src/game/classes.ts';
 import { COURIER_DELAY, COURIER_MIN_RUN, interceptable, mapSize, planMission, TARGET_AREA_OFFSET, TARGET_AREA_RADIUS } from '../src/game/mapgen.ts';
@@ -1689,4 +1689,82 @@ test('on alarm an unknown target holds its disguise through its hesitation, then
   assert.equal(target.guise, 'guard');
   step(sim, 1);
   assert.equal(target.guise, null); assert.ok(target.path.length, 'running for its exit');
+});
+
+// A carry heist (#52) in the open arena, the vault terminal under VEX, hacked until the package is in hand.
+function carrying() {
+  const c = { ...contract('heist', 2), payout: contractPayout(2, 1), modifiers: ['carry' as const] };
+  const { sim, squad, hostile } = arena('heist', { offers: [c] });
+  const terminal = sim.objectives[0]; terminal.x = squad[0].x; terminal.z = squad[0].z;
+  step(sim, HACK_SECONDS + .1);
+  return { sim, squad, hostile, carrier: squad[0], mate: squad[1] };
+}
+
+test('under carry the vault gives up a package to the operative at the terminal, who walks slower with it', () => {
+  const { sim, carrier, mate } = carrying();
+  assert.equal(sim.cargo?.carrier, carrier.id); assert.match(sim.message, /has the package/);
+  assert.equal(sim.getSnapshot().cargo?.carrier, carrier.id);
+  carrier.path = [{ x: carrier.x, z: 15 }]; mate.path = [{ x: mate.x, z: 15 }];
+  const from = { c: { x: carrier.x, z: carrier.z }, m: { x: mate.x, z: mate.z } };
+  step(sim, 1);
+  assert.ok(Math.abs(distance(carrier, from.c) - SQUAD_SPEED * CARRY_SPEED) < .1, `carrier walked ${distance(carrier, from.c).toFixed(2)} m`);
+  assert.ok(Math.abs(distance(mate, from.m) - SQUAD_SPEED) < .1);
+  assert.deepEqual({ x: sim.cargo!.x, z: sim.cargo!.z }, { x: carrier.x, z: carrier.z });
+  // A plain heist has no package.
+  const plain = arena('heist'); const t = plain.sim.objectives[0]; t.x = plain.squad[0].x; t.z = plain.squad[0].z;
+  step(plain.sim, HACK_SECONDS + .1);
+  assert.ok(plain.sim.objectives[0].done); assert.equal(plain.sim.cargo, null);
+});
+
+test('a carrier cannot fire, use its ability or join an attack', () => {
+  const { sim, carrier, mate, hostile } = carrying();
+  mate.x = -15; mate.z = 15;
+  const h = hostile('guard', carrier.x + 3, carrier.z, Math.PI);
+  h.stunned = 1e9; sim.alarm = true;
+  step(sim, 2);
+  assert.equal(h.hp, h.maxHp, 'it held fire under the alarm');
+  sim.select(carrier.id);
+  assert.equal(sim.attackPreview(h.id), null);
+  const cd = carrier.abilityCd;
+  sim.ability(0);
+  assert.match(sim.message, /hands full/); assert.equal(sim.pending, null); assert.equal(carrier.abilityCd, cd);
+});
+
+test('a downed carrier drops the package where it fell, and whoever stands on it picks it up', () => {
+  const { sim, carrier, mate } = carrying();
+  carrier.hp = 0; sim.update(1 / 60);
+  assert.equal(sim.cargo!.carrier, null); assert.deepEqual({ x: sim.cargo!.x, z: sim.cargo!.z }, { x: carrier.x, z: carrier.z });
+  assert.match(sim.message, /dropped the package/);
+  mate.path = [{ x: carrier.x, z: carrier.z + .3 }];
+  step(sim, 2);
+  assert.equal(sim.cargo!.carrier, mate.id);
+});
+
+test('a squadmate sent on its own to stand beside a standing carrier takes the package over; a squad move never swaps it', () => {
+  const { sim, carrier, mate } = carrying();
+  // The whole squad moved together and stopped side by side: no handover.
+  sim.selectAll(); sim.move({ x: 0, z: 6 });
+  step(sim, 8);
+  assert.ok(distance(carrier, mate) <= 1.2);
+  assert.equal(sim.cargo!.carrier, carrier.id);
+  sim.select(mate.id); sim.move({ x: carrier.x + .7, z: carrier.z });
+  step(sim, 1.5, () => !mate.path.length);
+  step(sim, HANDOVER_SECONDS - .3);
+  assert.equal(sim.cargo!.carrier, carrier.id, 'not yet');
+  step(sim, .5);
+  assert.equal(sim.cargo!.carrier, mate.id); assert.match(sim.message, /handed the package/);
+  step(sim, HANDOVER_SECONDS * 2);
+  assert.equal(sim.cargo!.carrier, mate.id, 'and it is not handed straight back');
+});
+
+test('extraction under carry needs the package in the zone', () => {
+  const { sim, squad, carrier } = carrying();
+  carrier.hp = 0; sim.update(1 / 60); carrier.hp = carrier.maxHp; // dropped, then back up
+  const zone = sim.objectives.at(-1)!;
+  squad.forEach(u => { u.x = zone.x; u.z = zone.z; u.path = []; });
+  step(sim, 1);
+  assert.equal(sim.phase, 'mission'); assert.match(sim.message, /Bring the package/);
+  sim.cargo!.x = zone.x; sim.cargo!.z = zone.z;
+  step(sim, 1);
+  assert.equal(sim.result, 'success');
 });

@@ -44,7 +44,7 @@ function Tracker({ state, open, onToggle }: { state: Snapshot; open: boolean; on
 
 // Two clicks or taps on a card within this many ms focus the view on that operative.
 const DOUBLE_TAP_MS = 450;
-function SquadCard({ unit, slot, selected, campaign, pending, cover, onFocusSelection }: { unit: Unit; slot: number; selected: boolean; campaign: Campaign; pending: Pending; cover: Shield; onFocusSelection: () => void }) {
+function SquadCard({ unit, slot, selected, campaign, pending, cover, carrying, onFocusSelection }: { unit: Unit; slot: number; selected: boolean; campaign: Campaign; pending: Pending; cover: Shield; carrying: boolean; onFocusSelection: () => void }) {
   const cls = unit.kind as ClassId, ability = unit.ability ?? CLASS_STATS[cls].ability, name = ABILITY_STATS[ability].name;
   const max = abilityCooldown(ability, campaign.abilities[cls]), down = unit.hp <= 0, ready = unit.abilityCd <= 0, aiming = pending?.unitId === unit.id;
   const health = unit.hp / unit.maxHp, hit = !down && unit.hurt > 1.1, lastTap = useRef(-Infinity);
@@ -60,14 +60,15 @@ function SquadCard({ unit, slot, selected, campaign, pending, cover, onFocusSele
         <span className="agent-name"><b>{unit.name}</b><small>{CLASS_STATS[cls].title}</small></span>
         <span className="hp" style={{ '--hp': health } as CSSProperties}><i /></span>
         <span className="hp-text">{down ? <b className="down-text">Down</b> : <><span><b>{Math.ceil(unit.hp)}</b> / {unit.maxHp}</span>
-          {cover ? <span className={`cover-badge ${cover}`} role="img" aria-label={cover === 'covered' ? 'In cover' : 'Flanked'} title={cover === 'covered' ? 'In cover: incoming fire halved' : 'Flanked: a hostile has a clear shot'}><Icon name="cover" /></span> : null}</>}</span>
+          {cover ? <span className={`cover-badge ${cover}`} role="img" aria-label={cover === 'covered' ? 'In cover' : 'Flanked'} title={cover === 'covered' ? 'In cover: incoming fire halved' : 'Flanked: a hostile has a clear shot'}><Icon name="cover" /></span> : null}
+          {carrying ? <span className="carry-badge" role="img" aria-label="Carrying the package" title="Carrying the package: slower, no firing or ability"><Icon name="package" /></span> : null}</>}</span>
       </span>
     </button>
     {down ? <p className="agent-down">Select a teammate, click the body to revive</p>
-      : <button className={`ability${ready ? ' ready' : ''}${aiming ? ' aiming' : ''}`} style={{ '--cd': ready ? 0 : unit.abilityCd / max } as CSSProperties} aria-keyshortcuts={`Shift+${slot + 1}`}
-        title={`${name} [Shift+${slot + 1}]`} aria-label={`${name}: ${aiming ? 'choose a target' : ready ? 'ready' : `recharging, ${Math.ceil(unit.abilityCd)} seconds`}`}
+      : <button className={`ability${ready && !carrying ? ' ready' : ''}${aiming ? ' aiming' : ''}`} disabled={carrying} style={{ '--cd': ready ? 0 : unit.abilityCd / max } as CSSProperties} aria-keyshortcuts={`Shift+${slot + 1}`}
+        title={`${name} [Shift+${slot + 1}]`} aria-label={`${name}: ${carrying ? 'hands full with the package' : aiming ? 'choose a target' : ready ? 'ready' : `recharging, ${Math.ceil(unit.abilityCd)} seconds`}`}
         onClick={() => { if (aiming) sim.cancelAbility(); else sim.ability(slot); }}>
-        <Icon name={ability} /><span className="ability-state">{aiming ? 'Aim' : ready ? 'Ready' : Math.ceil(unit.abilityCd)}</span>
+        <Icon name={ability} /><span className="ability-state">{carrying ? 'Full' : aiming ? 'Aim' : ready ? 'Ready' : Math.ceil(unit.abilityCd)}</span>
       </button>}
   </div>;
 }
@@ -136,7 +137,7 @@ export function Hud({ state, overview, onFocusSelection, onToggleOverview }: { s
     <footer className="hud-bottom">
       <section className="squad" aria-label="Squad selection">{state.squad.map((id, i) => {
         const u = state.units.find(v => v.id === id);
-        return u ? <SquadCard key={id} unit={u} slot={i} selected={state.selected.includes(id)} campaign={state.campaign} pending={state.pending} cover={state.cover[id] ?? null} onFocusSelection={onFocusSelection} /> : null;
+        return u ? <SquadCard key={id} unit={u} slot={i} selected={state.selected.includes(id)} campaign={state.campaign} pending={state.pending} cover={state.cover[id] ?? null} carrying={state.cargo?.carrier === id} onFocusSelection={onFocusSelection} /> : null;
       })}</section>
       <div className="commands" role="group" aria-label="Orders">
         <button className="cmd" onClick={sim.hold} aria-keyshortcuts="S"><Icon name="hold" /><span>Hold</span><kbd>S</kbd></button>

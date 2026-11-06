@@ -516,6 +516,8 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .cover-badge { display: inline-grid; place-items: center; color: var(--mint) }
 .cover-badge .icon { width: 14px; height: 14px; fill: rgb(94 242 192 / .25) }
 .cover-badge.flanked { color: var(--red) }
+.carry-badge { display: inline-grid; place-items: center; color: var(--gold) }
+.carry-badge .icon { width: 14px; height: 14px }
 .cover-badge.flanked .icon { fill: rgb(255 81 72 / .25) }
 .hp-text b { font-weight: 600; color: var(--text) }
 .ability { position: relative; display: grid; place-items: center; align-content: center; gap: 3px; padding: 0; overflow: hidden; border: 0; border-left: 1px solid var(--line); background: rgb(3 8 10 / .5); color: var(--dim); transition: background .15s, color .15s }

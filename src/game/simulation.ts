@@ -1,6 +1,6 @@
 import { abilityCooldown, abilityPower, ABILITY_STATS, CLASS_STATS, effectScale, EMP_CAMERA_SECONDS, MARK_RADIUS, MARK_SECONDS, SQUAD_SPEED } from './classes.ts';
 import type { AbilityId, ClassId } from './classes.ts';
-import { applyDismiss, applyLoadout, applyPayout, applyPurchase, applyRecruit, badgesFor, dealBoard, hasModifier, IDENTIFY_RANGE, IDENTIFY_SECONDS, LOCKDOWN_SECONDS, NO_REWARD, RECRUIT_COST, rewardFor, ROSTER_CAP, freshCampaign, missionPayout, parSeconds, SQUAD_MAX, unlockedCountermeasures } from './campaign.ts';
+import { applyDismiss, applyLoadout, applyPayout, applyPurchase, applyRecruit, badgesFor, CARRY_SPEED, dealBoard, HANDOVER_REACH, HANDOVER_SECONDS, hasModifier, IDENTIFY_RANGE, PICKUP_REACH, IDENTIFY_SECONDS, LOCKDOWN_SECONDS, NO_REWARD, RECRUIT_COST, rewardFor, ROSTER_CAP, freshCampaign, missionPayout, parSeconds, SQUAD_MAX, unlockedCountermeasures } from './campaign.ts';
 import type { Badge, Campaign, Contract, Loadout, MissionReport, MissionResults, Reward, Upgrade } from './campaign.ts';
 import { COURIER_DELAY, COURIER_PAUSE, COURIER_SPEED, planMission } from './mapgen.ts';
 import type { Area, EnemyKind, MissionPlan } from './mapgen.ts';
@@ -31,7 +31,11 @@ export type Unit = Point & {
   look: number; lookEvery: number; lookCycle: number;
   // An unknown target: the kind it passes as until identified, and how long an operative has watched it (seconds).
   guise: EnemyKind | null; watched: number;
+  // Whether an operative's last move order was its own, not the squad's (only that hands a carrier's package over).
+  solo: boolean;
 };
+// A carry contract's package: where it is, who carries it (null once dropped), and the squadmate taking it over and for how long.
+export type Cargo = Point & { carrier: string | null; to: string | null; hand: number };
 // Where a hostile was, and which way it faced, when the squad lost sight of it (`at` is mission time).
 export type Sighting = Point & { heading: number; at: number };
 export type Shot = { id: number; from: Point; to: Point; faction: Faction; shooter: UnitKind; kind: 'bullet' | 'snipe'; ttl: number };
@@ -61,6 +65,7 @@ export type Snapshot = {
   badges: Badge[]; downs: number;
   // What a won contract earned beyond its payout, and whether the mission started with an intel reward's routes.
   reward: Reward; intelReward: boolean;
+  cargo: Cargo | null; // a carry contract's package, once the vault gives it up
   lockdownIn: number | null; // seconds until a Lockdown contract's exits seal, once its first alarm has sounded
   // The Countermeasures level picked for (or fixed by) the mission, and the highest one open.
   countermeasures: number; countermeasuresOpen: number;
@@ -254,6 +259,7 @@ export class Simulation {
   private reward: Reward = NO_REWARD;
   // Seconds until a Lockdown contract's exits seal; null until its first alarm (and on any other contract).
   lockdownIn: number | null = null;
+  cargo: Cargo | null = null;
   private intelReward = false;
   private downs = 0;
   private alarms = 0;
@@ -287,7 +293,7 @@ export class Simulation {
       objectives: this.objectives.map(o => ({ ...o })), alarm: this.alarm, calmIn: this.calmIn, reinforceIn: this.reinforceIn, reinforced: this.reinforced, result: this.result,
       alarms: this.alarms, reinforceCap: this.reinforceCap, calmFor: this.calmFor, nextAlarm: this.escalate(this.alarms + 1),
       failReason: this.failReason, payout: this.payout, stealth: !this.detected, alarmCause: this.alarmCause, time: this.time, message: this.message,
-      saveUnavailable: this.saveUnavailable, syncing: this.syncing, pending: this.pending, badges: this.badges, reward: this.reward, intelReward: this.intelReward, lockdownIn: this.lockdownIn, downs: this.downs, countermeasures: this.countermeasures, countermeasuresOpen: unlockedCountermeasures(this.campaign),
+      saveUnavailable: this.saveUnavailable, syncing: this.syncing, pending: this.pending, badges: this.badges, reward: this.reward, intelReward: this.intelReward, lockdownIn: this.lockdownIn, cargo: this.cargo && { ...this.cargo }, downs: this.downs, countermeasures: this.countermeasures, countermeasuresOpen: unlockedCountermeasures(this.campaign),
       milestones: this.milestones,
       cover: Object.fromEntries(this.phase === 'mission' && this.plan ? this.livingSquad().map(u => [u.id, this.coverStatus(u).shield]) : []),
     };
@@ -358,14 +364,14 @@ export class Simulation {
     return {
       id, name, kind, faction, x: p.x, z: p.z, hp: maxHp, maxHp, cooldown: faction === 'hostile' ? 1 : 0, path: [], route: [], targetId: null, heading, moving: false, repath: 0,
       ability: null, abilityCd: 0, reviveTarget: null, revive: 0, hurt: 0, patrol: [], patrolIndex: 0, exit: null, wait: 0, detect: 0, stunned: 0, marked: 0, visible: false, hunting: false, sweep: heading,
-      takedownId: null, held: 0, escort: null, look: 0, lookEvery: 0, lookCycle: 0, guise: null, watched: 0,
+      takedownId: null, held: 0, escort: null, look: 0, lookEvery: 0, lookCycle: 0, guise: null, watched: 0, solo: false,
     };
   }
   private resetUnits() {
     const plan = this.plan;
     this.units = []; this.objectives = []; this.shots = []; this.blasts = []; this.casts = []; this.hitThisFrame.clear(); this.volleyReady.clear(); this.autoPaused.clear();
     this.alarm = false; this.detected = false; this.alarmCause = null; this.calmIn = 0; this.lastKnown = null; this.lastSeen = new Map(); this.intel = new Map(); this.milestones = [];
-    this.reinforceIn = 0; this.reinforced = 0; this.badges = []; this.reward = NO_REWARD; this.lockdownIn = null; this.downs = 0; this.alarms = 0; this.reinforceCap = REINFORCE_CAP; this.calmFor = CALM_SECONDS; this.waves = 0; this.vipJoined = false; this.vipThreat = null; this.holdup = ''; this.pending = null; this.commandPoint = null;
+    this.reinforceIn = 0; this.reinforced = 0; this.badges = []; this.reward = NO_REWARD; this.lockdownIn = null; this.cargo = null; this.downs = 0; this.alarms = 0; this.reinforceCap = REINFORCE_CAP; this.calmFor = CALM_SECONDS; this.waves = 0; this.vipJoined = false; this.vipThreat = null; this.holdup = ''; this.pending = null; this.commandPoint = null;
     this.targetArea = plan?.targetArea ? { ...plan.targetArea } : null;
     if (!plan) { this.squad = []; this.selected = []; return; }
     this.rng = mulberry32(plan.contract.seed ^ 0x5bd1e995);
@@ -472,6 +478,7 @@ export class Simulation {
       return path.length || world.inBounds(slot) ? path : world.findPath(at(u), point);
     });
     const orders = line.every(path => path.length) ? new Map(units.map((u, i) => [u, line[i]])) : this.queue(units, point, at);
+    units.forEach(u => { u.solo = n === 1; });
     orders.forEach((path, u) => {
       if (append && this.planned(u)) u.route.push({ path, wait: 0 });
       else { this.clearOrders(u); u.path = path; }
@@ -520,7 +527,8 @@ export class Simulation {
   // its health), so an order planned on that, a volley meant to kill a guard, can leave the target standing.
   private apparentHp(u: Unit) { return apparentHealth(u, this.plan!.contract.tier).hp; }
   private attackable(id: string) {
-    const target = this.unit(id), units = this.orderable();
+    // A carrier's hands are full: it takes no part in attacks.
+    const target = this.unit(id), units = this.orderable().filter(u => !this.carrying(u));
     return this.phase === 'mission' && this.plan && target && target.faction === 'hostile' && target.hp > 0 && target.visible && units.length ? { target, units } : null;
   }
   // What an attack order on `id` would do with the current selection.
@@ -609,6 +617,7 @@ export class Simulation {
     const u = this.unit(this.squad[slot] ?? '');
     if (!u || u.hp <= 0 || !u.ability) return;
     const stats = ABILITY_STATS[u.ability];
+    if (this.carrying(u)) { this.message = `${u.name} has their hands full with the package.`; this.emit(); return; }
     if (u.abilityCd > 0) { this.message = `${u.name}: ${stats.name} recharging (${Math.ceil(u.abilityCd)} s).`; this.emit(); return; }
     if (!stats.targeted) { this.casts.push({ unitId: u.id, ability: u.ability, point: { x: u.x, z: u.z }, targetId: null }); u.abilityCd = this.cooldownFor(u); this.pending = null; this.message = `${u.name}: ${stats.name}.`; this.emit(); return; }
     this.pending = { unitId: u.id, ability: u.ability };
@@ -622,7 +631,7 @@ export class Simulation {
   private cooldownFor(u: Unit) { return abilityCooldown(u.ability!, this.campaign.abilities[u.kind as ClassId]); }
   private aim(point: Point, targetId: string | null) {
     const p = this.pending!, caster = this.unit(p.unitId), stats = ABILITY_STATS[p.ability];
-    if (!caster || caster.hp <= 0 || !this.plan) { this.pending = null; this.emit(); return; }
+    if (!caster || caster.hp <= 0 || !this.plan || this.carrying(caster)) { this.pending = null; this.emit(); return; }
     const target = targetId ? this.unit(targetId) : undefined;
     if (p.ability === 'snipe' && (!target || target.faction !== 'hostile' || !target.visible)) { this.message = 'The sniper shot needs a visible hostile.'; this.emit(); return; }
     const at = target ?? point;
@@ -925,6 +934,33 @@ export class Simulation {
     turnTo(u, u.sweep + (u.lookCycle % 2 ? -1 : 1) * offset, 2 * LOOK_TURN * dt);
   }
 
+  private carrying(u: Unit) { return !!this.cargo && this.cargo.carrier === u.id; }
+  private speedOf(u: Unit) { return SQUAD_SPEED * (this.carrying(u) ? CARRY_SPEED : 1); }
+  // The package follows its carrier and drops where the carrier goes down. A dropped one goes to whoever stands on it;
+  // a carried one to a squadmate sent on its own to stand beside the carrier for HANDOVER_SECONDS, both holding still.
+  private updateCargo(dt: number, squad: Unit[]) {
+    const c = this.cargo; if (!c) return;
+    const carrier = c.carrier ? this.unit(c.carrier) : undefined;
+    if (carrier && carrier.hp <= 0) { c.carrier = c.to = null; c.hand = 0; c.x = carrier.x; c.z = carrier.z; this.message = `${carrier.name} dropped the package.`; return; }
+    if (carrier) {
+      c.x = carrier.x; c.z = carrier.z;
+      const still = (u: Unit) => !u.path.length && !u.route.length;
+      const taker = still(carrier) ? squad.find(u => u !== carrier && u.solo && still(u) && distance(u, carrier) <= HANDOVER_REACH) : undefined;
+      c.hand = taker && taker.id === c.to ? c.hand + dt : taker ? dt : 0; c.to = taker?.id ?? null;
+      if (taker && c.hand >= HANDOVER_SECONDS) this.carry(taker, `${carrier.name} handed the package to ${taker.name}.`, carrier);
+      return;
+    }
+    const finder = squad.filter(u => distance(u, c) <= PICKUP_REACH).sort((a, b) => distance(a, c) - distance(b, c))[0];
+    if (finder) this.carry(finder, `${finder.name} picked up the package.`);
+  }
+  private carry(u: Unit, message: string, from?: Unit) {
+    const c = this.cargo!;
+    c.carrier = u.id; c.to = null; c.hand = 0; c.x = u.x; c.z = u.z;
+    // A carrier drops its attack orders; neither operative hands the package straight back.
+    u.targetId = u.takedownId = null; u.solo = false; if (from) from.solo = false;
+    if (this.pending?.unitId === u.id) this.pending = null;
+    this.message = message; this.emit();
+  }
   private updateOperative(u: Unit, dt: number, hostiles: Unit[]) {
     const world = this.plan!.world, stats = CLASS_STATS[u.kind as ClassId];
     u.moving = false;
@@ -949,8 +985,8 @@ export class Simulation {
     if (!ordered) u.targetId = null;
     else if (!canHit(ordered) && !u.path.length) { u.repath -= dt; if (u.repath <= 0) { u.repath = .75; u.path = world.findPath(u, ordered); } }
     // Before the alarm the squad holds fire except at ordered targets.
-    const target = ordered && canHit(ordered) ? ordered : this.alarm ? hostiles.filter(canHit).sort((a, b) => distance(u, a) - distance(u, b))[0] : undefined;
-    if (u.path.length && !(ordered && canHit(ordered))) this.walk(u, SQUAD_SPEED, dt);
+    const target = this.carrying(u) ? undefined : ordered && canHit(ordered) ? ordered : this.alarm ? hostiles.filter(canHit).sort((a, b) => distance(u, a) - distance(u, b))[0] : undefined;
+    if (u.path.length && !(target && target === ordered)) this.walk(u, this.speedOf(u), dt);
     else if (!u.path.length) this.nextLeg(u, dt);
     if (!target || u.cooldown > 0) return;
     // Before the alarm an ordered operative waits for the rest of its volley (see fireVolleys).
@@ -996,7 +1032,7 @@ export class Simulation {
       const stale = !end || distance(end, v) > TAKEDOWN_REACH - .1 || avoid(end) || u.path.some((p, i) => !world.passable(i ? u.path[i - 1] : u, p, 0) || !this.unseen(i ? u.path[i - 1] : u, p, avoid));
       if (stale) u.path = this.approach(u, v);
     }
-    if (u.path.length) this.walk(u, SQUAD_SPEED, dt);
+    if (u.path.length) this.walk(u, this.speedOf(u), dt);
     return true;
   }
   private unseen(a: Point, b: Point, avoid: (p: Point) => boolean) {
@@ -1134,6 +1170,12 @@ export class Simulation {
         const seconds = o.kind === 'terminal' ? HACK_SECONDS : PLANT_SECONDS, reach = o.kind === 'terminal' ? 1.5 : 1.2;
         if (squad.some(s => distance(s, o) <= reach)) o.progress = Math.min(1, o.progress + dt / seconds);
         if (o.progress >= 1) { o.done = true; this.message = o.kind === 'terminal' ? 'Vault data secured. Head for extraction.' : `${o.label.replace('Plant', 'Planted')}.`; }
+        // Under carry, the vault gives up a package instead, to the operative nearest the terminal.
+        if (o.done && o.kind === 'terminal' && hasModifier(this.plan?.contract, 'carry')) {
+          const by = [...squad].sort((a, b) => distance(a, o) - distance(b, o))[0];
+          this.cargo = { x: by.x, z: by.z, carrier: null, to: null, hand: 0 };
+          this.carry(by, `${by.name} has the package. Carry it to extraction.`);
+        }
       }
       if (o.kind === 'target' && o.done) this.message = this.plan?.contract.type === 'intercept' ? 'Courier stopped. Return to the extraction zone.' : 'Target neutralized. Return to the extraction zone.';
     }
@@ -1143,10 +1185,10 @@ export class Simulation {
     extract.progress = team.filter(s => s.hp > 0 && inZone(s)).length / team.length;
     if (!this.extractReady) return;
     this.reach('extractOpen');
-    const vipIn = !vip || distance(vip, extract) < 2.4;
-    if (extract.progress === 1 && vipIn) { extract.done = true; this.finish(true); return; }
+    const vipIn = !vip || distance(vip, extract) < 2.4, cargoIn = !this.cargo || distance(this.cargo, extract) < 2;
+    if (extract.progress === 1 && vipIn && cargoIn) { extract.done = true; this.finish(true); return; }
     const down = team.find(s => s.hp <= 0);
-    const holdup = !squad.every(inZone) ? '' : down ? `${down.name} is down. Revive them before extracting.` : vipIn ? '' : 'Bring the VIP into the zone.';
+    const holdup = !squad.every(inZone) ? '' : down ? `${down.name} is down. Revive them before extracting.` : !vipIn ? 'Bring the VIP into the zone.' : cargoIn ? '' : 'Bring the package into the zone.';
     if (holdup && holdup !== this.holdup) this.message = holdup;
     this.holdup = holdup;
   }
@@ -1202,6 +1244,7 @@ export class Simulation {
     if (this.pending && !squad.some(u => u.id === this.pending!.unitId)) this.pending = null;
     if (!squad.length) return this.finish(false, 'The squad was wiped out.');
     this.watchForTarget(dt, squad);
+    this.updateCargo(dt, squad);
     this.updateObjectives(dt, squad);
     if (this.phase !== 'mission') return;
     // Lockdown: once the first alarm sounds the exits seal after LOCKDOWN_SECONDS, stood down or not.
