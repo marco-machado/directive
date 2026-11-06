@@ -421,7 +421,7 @@ function Agent({ sim, unit, selected, slot, tagged, labels, hitboxes }: { sim: S
     e.stopPropagation(); if (dragged()) return;
     sim.unitClick(id, e.shiftKey);
   };
-  const label = kind === 'target' ? (unit.hp > 0 && unit.visible ? 'TARGET' : null) : kind === 'vip' ? (unit.hp > 0 ? 'VIP' : null) : tagged && faction === 'squad' && selected && unit.hp > 0 ? String(slot + 1) : null;
+  const label = kind === 'target' ? (unit.hp > 0 && unit.visible ? (unit.name !== 'EXECUTIVE' ? 'TARGET' : unit.tagged ? 'TAGGED' : null) : null) : kind === 'vip' ? (unit.hp > 0 ? 'VIP' : null) : tagged && faction === 'squad' && selected && unit.hp > 0 ? String(slot + 1) : null;
   const ground = c(kind === 'target' ? ACCENT.target : GROUND[faction]);
   return <group ref={root} position={[unit.x, 0, unit.z]}>
     <group ref={model}>

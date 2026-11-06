@@ -25,8 +25,8 @@ function Tracker({ state, open, onToggle }: { state: Snapshot; open: boolean; on
     </header>
     <button className="drawer-toggle" aria-expanded={open} aria-controls="mission-drawer" aria-label={open ? 'Hide mission details' : 'Show mission details'} onClick={onToggle}><Icon name="chevron" /></button>
     <ol className="objectives">{state.objectives.map((o, i) => {
-      const timed = (o.kind === 'terminal' || o.kind === 'charge' || o.kind === 'cache' || o.kind === 'vip' || (o.kind === 'extract' && extractOpen)) && !o.done;
-      return <li key={i} className={o.done ? 'done' : i === current ? 'current' : ''}>
+      const timed = (o.kind === 'terminal' || o.kind === 'charge' || o.kind === 'cache' || o.kind === 'vip' || (o.kind === 'tag' && !o.lost) || (o.kind === 'extract' && extractOpen)) && !o.done;
+      return <li key={i} className={o.done ? 'done' : o.lost ? 'lost' : i === current ? 'current' : ''}>
         <span className="obj-mark">{o.done ? <Icon name="check" /> : null}</span>
         <span className="obj-copy">{o.label}{timed ? <span className="obj-progress" role="progressbar" aria-label={`${o.label} progress`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(o.progress * 100)}>
           <b style={{ width: `${o.progress * 100}%` }} /></span> : null}</span>

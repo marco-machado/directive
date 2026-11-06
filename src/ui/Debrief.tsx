@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { RefObject } from 'react';
 import type { ClassId } from '../game/classes.ts';
 import { badgesFor, MAX_COUNTERMEASURES, noKillShare, parSeconds } from '../game/campaign.ts';
-import { HOSTILE_STATS, isReinforcement } from '../game/simulation.ts';
+import { countsAsKill, HOSTILE_STATS, isReinforcement } from '../game/simulation.ts';
 import type { AlarmCause, Snapshot, Unit } from '../game/simulation.ts';
 import { BADGE_COPY, Clearance, clock, CM_LEVEL, CONTRACTS, Credits, earnedLines, SaveCode, SaveWarning, threat } from './common.tsx';
 import { Icon, Portrait } from './icons.tsx';
@@ -64,7 +64,7 @@ function Badges({ state }: { state: Snapshot }) {
   const c = state.contract!, hostiles = state.units.filter(u => u.faction === 'hostile'), district = hostiles.filter(u => !isReinforcement(u));
   const missed = {
     ghost: 'Alarm raised', untouched: `${state.downs} down`, swift: `${clock(state.time)} / ${clock(parSeconds(c.type, c.tier))}`,
-    bloodless: `${hostiles.filter(u => u.hp <= 0 && u.kind !== 'target').length} killed`, purge: `${district.filter(u => u.hp <= 0).length} of ${district.length} down`,
+    bloodless: `${hostiles.filter(u => u.hp <= 0 && countsAsKill(u, c.type)).length} killed`, purge: `${district.filter(u => u.hp <= 0).length} of ${district.length} down`,
   };
   return <ul className="badge-grid debrief-badges" aria-label="Badges">{badgesFor(c.type).map(b => {
     const won = state.badges.includes(b);
@@ -84,7 +84,7 @@ export function Debrief({ state, saveCode, titleRef, onBoard, onHeadquarters }: 
   const kills = state.units.filter(u => u.faction === 'hostile' && u.hp <= 0).length;
   const squad = state.squad.map(id => state.units.find(u => u.id === id)).filter((u): u is Unit => !!u);
   // A no-kill clause cuts the fee before the stealth bonus is added.
-  const slain = state.units.filter(u => u.faction === 'hostile' && u.hp <= 0 && u.kind !== 'target').length, cut = success && c ? c.payout - Math.round(c.payout * noKillShare(c, slain)) : 0;
+  const slain = state.units.filter(u => u.faction === 'hostile' && u.hp <= 0 && countsAsKill(u, c?.type)).length, cut = success && c ? c.payout - Math.round(c.payout * noKillShare(c, slain)) : 0;
   const extra = success ? state.reward.credits : 0, fee = success && c ? c.payout : 0, bonus = success ? state.payout - fee + cut : 0, total = useCountUp(success ? state.payout + extra : 0);
   return <section className={`debrief ${success ? 'success' : 'failure'}`} aria-labelledby="ops-title">
     <div className="debrief-card panel">

@@ -9,7 +9,7 @@ import type { Point } from '../game/world.ts';
 // Canvas pixels covered by HUD panels on each side, measured by the camera rig.
 export type Insets = { l: number; t: number; r: number; b: number };
 const MARGIN = 34;
-const name = (o: Objective) => o.kind === 'terminal' ? 'VAULT' : o.kind === 'charge' ? `CHARGE ${o.label.at(-1)}` : o.kind === 'cache' ? `CACHE ${cacheLetter(o)}` : o.kind === 'vip' ? 'VIP' : 'EXTRACT';
+const name = (o: Objective) => o.kind === 'terminal' ? 'VAULT' : o.kind === 'charge' ? `CHARGE ${o.label.at(-1)}` : o.kind === 'cache' ? `CACHE ${cacheLetter(o)}` : o.kind === 'vip' ? 'VIP' : o.kind === 'tag' ? `EXEC ${cacheLetter(o)}` : 'EXTRACT';
 
 // Edge arrows toward hostiles noticing the squad, a fleeing target's exit, and open objectives that are outside
 // the free frame. Watchers and the exit come first, in red; the target points at its last known area until seen. Plain DOM nodes, positioned every frame without React renders.
@@ -36,7 +36,8 @@ export function Pointers({ sim, labels, insets }: { sim: Simulation; labels: Ref
       if (u.faction === 'hostile' && u.hp > 0 && u.visible && u.detect > 0) targets.push({ p: u, kind: 'watcher', label: (u.guise ?? u.kind).toUpperCase() });
     }
     const target = sim.units.find(u => u.kind === 'target' && u.hp > 0);
-    if (sim.phase === 'mission' && target?.exit) targets.push({ p: target.exit, kind: 'exit', label: `${target.name === 'COURIER' ? 'COURIER' : 'TARGET'} EXIT` });
+    // Every fleeing executive's exit gets an arrow, as the target's does.
+    if (sim.phase === 'mission') for (const u of sim.units) if (u.kind === 'target' && u.hp > 0 && u.exit) targets.push({ p: u.exit, kind: 'exit', label: `${u.name === 'COURIER' ? 'COURIER' : u.name === 'EXECUTIVE' ? 'EXEC' : 'TARGET'} EXIT` });
     // A dropped package gets its own arrow until someone picks it up.
     if (sim.phase === 'mission' && sim.cargo && !sim.cargo.carrier) targets.push({ p: sim.cargo, kind: 'package', label: 'PACKAGE' });
     if (sim.phase === 'mission') for (const o of sim.objectives) {
@@ -47,7 +48,9 @@ export function Pointers({ sim, labels, insets }: { sim: Simulation; labels: Ref
         else if (target && sim.targetArea) targets.push({ p: sim.targetArea, kind: 'target', label: target.name === 'COURIER' ? 'COURIER AREA' : 'TARGET AREA' });
         continue;
       }
-      targets.push({ p: o.kind === 'vip' ? sim.units.find(u => u.kind === 'vip') ?? o : o, kind: o.kind, label: name(o) });
+      if (o.kind === 'tag' && o.lost) continue;
+      const exec = o.kind === 'tag' ? sim.units.find(u => u.id === o.unit && u.visible) : undefined;
+      targets.push({ p: o.kind === 'vip' ? sim.units.find(u => u.kind === 'vip') ?? o : exec ?? o, kind: o.kind, label: name(o) });
     }
     let n = 0;
     if (x1 > x0 && y1 > y0) for (const { p, kind, label } of targets) {
