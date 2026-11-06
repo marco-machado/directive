@@ -6,7 +6,23 @@ import type { Rng } from './rng.ts';
 export type Operative = { id: string; name: string; cls: ClassId };
 export type ContractType = 'assassination' | 'heist' | 'sabotage' | 'escort' | 'elimination' | 'intercept';
 // `patrols` caps the guards that walk a route (the rest of the district is unchanged); only contract 01 sets it.
-export type Contract = { id: string; type: ContractType; tier: number; seed: number; payout: number; district: string; sector: number; patrols?: number };
+// `modifiers` change how a contract plays; the Worker deals them with the offer.
+export type Contract = { id: string; type: ContractType; tier: number; seed: number; payout: number; district: string; sector: number; patrols?: number; modifiers?: Modifier[] };
+// Contract modifiers: Lockdown seals the exits LOCKDOWN_SECONDS after the first alarm, and the contract fails unless the
+// squad is out; under a no-kill clause each kill but a target cuts NO_KILL_CUT of the fee, down to NO_KILL_FLOOR of it.
+// From MODIFIER_TIER, each offer after the opening carries one with MODIFIER_CHANCE, of those that fit its type; each
+// raises the fee by MODIFIER_PAY.
+export type Modifier = 'lockdown' | 'nokill';
+export const MODIFIERS: readonly Modifier[] = ['lockdown', 'nokill'];
+export const MODIFIER_FITS: Record<Modifier, readonly ContractType[]> = {
+  lockdown: ['assassination', 'heist', 'sabotage', 'escort', 'elimination', 'intercept'],
+  nokill: ['assassination', 'heist', 'sabotage', 'escort', 'intercept'], // Elimination is all kills
+};
+export const MODIFIER_TIER = 2, MODIFIER_CHANCE = 1 / 3, MODIFIER_PAY = .2, MAX_MODIFIERS = 2;
+export const LOCKDOWN_SECONDS = 45;
+export const NO_KILL_CUT = .15, NO_KILL_FLOOR = .25;
+export const isModifier = (v: unknown): v is Modifier => MODIFIERS.includes(v as Modifier);
+export const hasModifier = (c: Pick<Contract, 'modifiers'> | null | undefined, m: Modifier) => !!c?.modifiers?.includes(m);
 export type Gear = 'weapon' | 'armor';
 export type Upgrade = Gear | ClassId;
 // How the squad's gear levels are spent, switched freely at headquarters: weapons that pierce (damage), are suppressed
@@ -31,7 +47,8 @@ export type ResultField = 'caches' | 'prisoners' | 'tagged';
 export const RESULT_FIELDS: readonly ResultField[] = ['caches', 'prisoners', 'tagged'];
 export type MissionResults = Partial<Record<ResultField, number>>;
 // What the client reports when a contract is won.
-export type MissionReport = { stealth: boolean; badges: Badge[]; results: MissionResults };
+// `kills` counts hostiles killed but a target, for a no-kill clause (an older client reports none).
+export type MissionReport = { stealth: boolean; badges: Badge[]; results: MissionResults; kills?: number };
 // What a contract type pays beyond its credits, from the one result it reports (`field`, at most `max(contract)`):
 // `bonus` credits for each count past `free`, an operative who joins the roster once the count reaches `operative`
 // (RECRUIT_COST credits instead when the roster is full), and intel on the next contract once it reaches `intel`.
@@ -96,7 +113,7 @@ export function rewardFor(contract: Contract, results: MissionResults, rewards: 
   };
 }
 
-export const contractPayout = (tier: number) => 500 + (tier - 1) * 250;
+export const contractPayout = (tier: number, modifiers = 0) => Math.round((500 + (tier - 1) * 250) * (1 + MODIFIER_PAY * modifiers));
 // Clearance: each completed contract earns CONTRACT_POINTS and each badge BADGE_POINTS (half a contract); the base
 // tier rises every TIER_POINTS, so every two contracts without badges.
 export const CONTRACT_POINTS = 2, BADGE_POINTS = 1, TIER_POINTS = 4;
@@ -110,13 +127,15 @@ export const parSeconds = (type: ContractType, tier: number) => PAR_SECONDS[type
 // A client's report of a won contract, checked: only known badges, and Ghost exactly when the alarm never sounded (so an
 // older client that reports no badges still earns it); results only in known fields, as whole counts. Null when it is
 // malformed. Whether the results fit the contract is checked against it (resultsFit).
-export function missionReport(stealth: unknown, badges: unknown = [], results: unknown = {}): MissionReport | null {
+export function missionReport(stealth: unknown, badges: unknown = [], results: unknown = {}, kills: unknown = 0): MissionReport | null {
   if (!Array.isArray(badges) || !badges.every(isBadge)) return null;
+  if (!Number.isInteger(kills) || (kills as number) < 0 || (kills as number) > 999) return null;
   if (!results || typeof results !== 'object' || Array.isArray(results)) return null;
   const entries = Object.entries(results);
   if (!entries.every(([k, v]) => RESULT_FIELDS.includes(k as ResultField) && Number.isInteger(v) && (v as number) >= 0 && (v as number) <= 99)) return null;
   const quiet = stealth === true;
-  return { stealth: quiet, badges: BADGES.filter(b => b === 'ghost' ? quiet : badges.includes(b)), results: Object.fromEntries(entries) as MissionResults };
+  const report: MissionReport = { stealth: quiet, badges: BADGES.filter(b => b === 'ghost' ? quiet : badges.includes(b)), results: Object.fromEntries(entries) as MissionResults };
+  return kills ? { ...report, kills: kills as number } : report;
 }
 // How hard a tier is for this campaign's squad. Four operatives count for about one tier and the six
 // weapon and armor levels for a little over one more (see scripts/balance.ts); ability levels of the classes on the
@@ -136,7 +155,8 @@ export function threatFor(c: Campaign, tier: number): Threat {
 export const MAX_COUNTERMEASURES = 3;
 export const fullyUpgraded = (c: Campaign) => c.weapon >= MAX_LEVEL && c.armor >= MAX_LEVEL && CLASSES.every(k => c.abilities[k] >= MAX_LEVEL);
 export const unlockedCountermeasures = (c: Campaign) => fullyUpgraded(c) ? Math.min(MAX_COUNTERMEASURES, c.countermeasures + 1) : 0;
-export const missionPayout = (contract: Contract, stealth: boolean) => Math.round(contract.payout * (stealth ? 1 + STEALTH_BONUS : 1));
+export const noKillShare = (contract: Contract, kills = 0) => hasModifier(contract, 'nokill') ? Math.max(NO_KILL_FLOOR, 1 - NO_KILL_CUT * kills) : 1;
+export const missionPayout = (contract: Contract, stealth: boolean, kills = 0) => Math.round(contract.payout * noKillShare(contract, kills) * (stealth ? 1 + STEALTH_BONUS : 1));
 
 const DISTRICTS = ['GLASS DISTRICT', 'CHROME QUARTER', 'NEON VERGE', 'KESSLER YARDS', 'DATA WARRENS', 'HALCYON ROW', 'IRON MARKET', 'ORBITAL DOCKS', 'VANTA HEIGHTS', 'SILT CANAL'];
 const NAMES = ['KAI', 'NOVA', 'SABLE', 'ORIN', 'JUNO', 'HEX', 'MIRA', 'DACE', 'RIO', 'LUX', 'TALON', 'ECHO', 'IVY', 'CROW', 'ZETA', 'PIKE', 'WREN', 'ONYX', 'SKYE', 'BRAM'];
@@ -198,7 +218,11 @@ function dealOffers(p: Dealing, rng: Rng, unlock: UnlockTiers = UNLOCK_TIER): Co
   return tiers.map((tier, i) => {
     const id = token(rng);
     if (first && i === 0) return { id, ...first, payout: contractPayout(first.tier) };
-    return { id, type: types[first ? i - 1 : i], tier, seed: Math.floor(rng() * 2 ** 31), payout: contractPayout(tier), district: pick(rng, DISTRICTS), sector: 1 + Math.floor(rng() * 99) };
+    const type = types[first ? i - 1 : i], seed = Math.floor(rng() * 2 ** 31), district = pick(rng, DISTRICTS), sector = 1 + Math.floor(rng() * 99);
+    const fits = MODIFIERS.filter(m => MODIFIER_FITS[m].includes(type));
+    const modifiers = p.completed >= OPENING_CONTRACTS && tier >= MODIFIER_TIER && fits.length && rng() < MODIFIER_CHANCE ? [pick(rng, fits)] : [];
+    const contract: Contract = { id, type, tier, seed, payout: contractPayout(tier, modifiers.length), district, sector };
+    return modifiers.length ? { ...contract, modifiers } : contract;
   });
 }
 // Recon and Tech carry the only silent tools (sniper shot, EMP).
@@ -242,8 +266,11 @@ function clampContract(c: any): Contract | null {
   const id = ident(c?.id), district = label(c?.district);
   if (!id || !district || !isContractType(c?.type)) return null;
   const tier = Math.max(1, n(c.tier, MAX_TIER));
-  // Payout always follows the tier, so an imported save cannot carry a richer contract.
-  const contract: Contract = { id, type: c.type, tier, seed: n(c.seed, 2 ** 31), payout: contractPayout(tier), district, sector: Math.max(1, n(c.sector, 99)) };
+  // Payout always follows the tier and the modifiers, so an imported save cannot carry a richer contract. Modifiers are
+  // only known ones that fit the type, at most MAX_MODIFIERS.
+  const modifiers = Array.isArray(c.modifiers) ? MODIFIERS.filter(m => c.modifiers.includes(m) && MODIFIER_FITS[m].includes(c.type)).slice(0, MAX_MODIFIERS) : [];
+  let contract: Contract = { id, type: c.type, tier, seed: n(c.seed, 2 ** 31), payout: contractPayout(tier, modifiers.length), district, sector: Math.max(1, n(c.sector, 99)) };
+  if (modifiers.length) contract = { ...contract, modifiers };
   return c.patrols === undefined ? contract : { ...contract, patrols: n(c.patrols, 3 + MAX_TIER) };
 }
 // Accepts v1 (`mission`) to v8 saves. A save from before v7 has no `dealt`, so the types its progress unlocks count as
@@ -306,7 +333,7 @@ export function applyPayout(c: Campaign, contract: Contract, countermeasures: nu
   const earned = report.badges.filter(b => badgesFor(contract.type).includes(b));
   for (const b of earned) badges[b]++;
   const cleared = countermeasures > c.countermeasures && countermeasures === unlockedCountermeasures(c) && earned.length > 0;
-  const paid = { ...c, cash: c.cash + missionPayout(contract, report.stealth), completed: c.completed + 1, badges, countermeasures: cleared ? countermeasures : c.countermeasures };
+  const paid = { ...c, cash: c.cash + missionPayout(contract, report.stealth, report.kills), completed: c.completed + 1, badges, countermeasures: cleared ? countermeasures : c.countermeasures };
   return c.offers.some(isFirstContract) ? withDealt(paid, dealOffers(paid, rng)) : paid;
 }
 

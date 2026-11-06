@@ -7,7 +7,7 @@ import { abilityCooldown, ABILITY_STATS, CLASS_STATS } from '../game/classes.ts'
 import type { ClassId } from '../game/classes.ts';
 import { REPEAT_REINFORCEMENTS, SUSPICIOUS, WAIT_STEP } from '../game/simulation.ts';
 import type { Pending, Shield, Snapshot, Unit } from '../game/simulation.ts';
-import { clock, CM_LEVEL, CONTRACTS, countermeasuresEffect, Credits, threat } from './common.tsx';
+import { clock, CM_LEVEL, CONTRACTS, countermeasuresEffect, Credits, ModifierChips, threat } from './common.tsx';
 import { Icon, Portrait } from './icons.tsx';
 import { play } from './audio.ts';
 import { TipDock } from './Tips.tsx';
@@ -21,7 +21,7 @@ function Tracker({ state, open, onToggle }: { state: Snapshot; open: boolean; on
       <span className="tracker-icon"><Icon name={c.type} /></span>
       <span className="tracker-title"><strong>{CONTRACTS[c.type].title}</strong><small>{c.district}</small></span>
       <span className="tracker-badges"><span className="tier-badge">T{c.tier}</span>
-        {state.countermeasures ? <span className="tier-badge cm-badge" title={countermeasuresEffect(state.countermeasures)}>CM {CM_LEVEL[state.countermeasures]}</span> : null}</span>
+        {state.countermeasures ? <span className="tier-badge cm-badge" title={countermeasuresEffect(state.countermeasures)}>CM {CM_LEVEL[state.countermeasures]}</span> : null}<ModifierChips c={c} /></span>
     </header>
     <button className="drawer-toggle" aria-expanded={open} aria-controls="mission-drawer" aria-label={open ? 'Hide mission details' : 'Show mission details'} onClick={onToggle}><Icon name="chevron" /></button>
     <ol className="objectives">{state.objectives.map((o, i) => {
@@ -37,6 +37,7 @@ function Tracker({ state, open, onToggle }: { state: Snapshot; open: boolean; on
       <span><small>Payout</small><strong><Credits value={c.payout} /></strong></span>
       <span className={state.stealth ? 'bonus' : 'lost'}><small>{state.stealth ? 'Stealth bonus' : 'Bonus lost'}</small><strong>+<Credits value={missionPayout(c, true) - c.payout} /></strong></span>
     </footer>
+    {state.lockdownIn !== null ? <p className="tracker-note lockdown" role="timer"><Icon name="clock" />Lockdown: exits seal in {Math.ceil(state.lockdownIn)} s.</p> : null}
     {state.alarms && !state.alarm ? <p className="tracker-note"><Icon name="heavy" />Next alarm: {Number.isFinite(state.nextAlarm.cap) ? `${REPEAT_REINFORCEMENTS} more reinforcements` : 'reinforcements without end'}, {state.nextAlarm.heavies} {state.nextAlarm.heavies === 1 ? 'heavy' : 'heavies'} leading each wave, {state.nextAlarm.calm} s to stand down.</p> : null}
   </section>;
 }

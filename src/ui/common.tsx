@@ -1,8 +1,8 @@
 import { Component, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { CSSProperties, ErrorInfo, FormEvent, ReactNode, RefObject } from 'react';
 import { client, sim } from '../app.ts';
-import { BADGE_POINTS, BADGES, CONTRACT_POINTS, MAX_TIER, nextTypeUnlock, RECRUIT_COST, REWARDS, nextUnlock, OPENING_CONTRACTS, parSeconds, topTier, unlockedTypes } from '../game/campaign.ts';
-import type { Badge, Campaign, Contract, ContractType, Operative, Reward, ResultField } from '../game/campaign.ts';
+import { BADGE_POINTS, BADGES, CONTRACT_POINTS, LOCKDOWN_SECONDS, MAX_TIER, MODIFIER_PAY, NO_KILL_CUT, NO_KILL_FLOOR, nextTypeUnlock, RECRUIT_COST, REWARDS, nextUnlock, OPENING_CONTRACTS, parSeconds, topTier, unlockedTypes } from '../game/campaign.ts';
+import type { Badge, Campaign, Contract, ContractType, Modifier, Operative, Reward, ResultField } from '../game/campaign.ts';
 import { ABILITY_STATS, CLASS_STATS } from '../game/classes.ts';
 import { formatSaveCode, normalizeSaveCode } from '../game/saveCode.ts';
 import { COUNTERMEASURES, HACK_SECONDS, VIP_SECURE_SECONDS } from '../game/simulation.ts';
@@ -49,6 +49,14 @@ export function rewardLines(c: Contract): string[] {
 export function earnedLines(r: Reward): string[] {
   return [r.operative ? 'An operative joined the roster.' : '', r.intel ? 'Intel: the next contract\'s patrol routes are known from the start.' : ''].filter(Boolean);
 }
+// Contract modifiers by name, the short chip for cards and the tracker, and what each does.
+export const MODIFIER_COPY: Record<Modifier, { title: string; chip: string; effect: string }> = {
+  lockdown: { title: 'Lockdown', chip: 'LOCK', effect: `The exits seal ${LOCKDOWN_SECONDS} s after the first alarm, stood down or not. Be out by then.` },
+  nokill: { title: 'No-kill clause', chip: 'NO KILL', effect: `Each kill but a target cuts the fee by ${NO_KILL_CUT * 100}%, down to ${NO_KILL_FLOOR * 100}% of it.` },
+};
+export const modifierPay = `Each modifier adds ${MODIFIER_PAY * 100}% to the fee.`;
+export const ModifierChips = ({ c }: { c: Contract }) => c.modifiers?.length
+  ? <>{c.modifiers.map(m => <span key={m} className="tier-badge mod-badge" title={MODIFIER_COPY[m].effect}>{MODIFIER_COPY[m].chip}</span>)}</> : null;
 // Countermeasures levels by name, and what a level does (each adds to the ones below it).
 export const CM_LEVEL = ['Off', 'I', 'II', 'III'];
 export function countermeasuresEffect(level: number) {

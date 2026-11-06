@@ -1,6 +1,6 @@
 import { abilityCooldown, abilityPower, ABILITY_STATS, CLASS_STATS, effectScale, EMP_CAMERA_SECONDS, MARK_RADIUS, MARK_SECONDS, SQUAD_SPEED } from './classes.ts';
 import type { AbilityId, ClassId } from './classes.ts';
-import { applyDismiss, applyLoadout, applyPayout, applyPurchase, applyRecruit, badgesFor, dealBoard, NO_REWARD, RECRUIT_COST, rewardFor, ROSTER_CAP, freshCampaign, missionPayout, parSeconds, SQUAD_MAX, unlockedCountermeasures } from './campaign.ts';
+import { applyDismiss, applyLoadout, applyPayout, applyPurchase, applyRecruit, badgesFor, dealBoard, hasModifier, LOCKDOWN_SECONDS, NO_REWARD, RECRUIT_COST, rewardFor, ROSTER_CAP, freshCampaign, missionPayout, parSeconds, SQUAD_MAX, unlockedCountermeasures } from './campaign.ts';
 import type { Badge, Campaign, Contract, Loadout, MissionReport, MissionResults, Reward, Upgrade } from './campaign.ts';
 import { COURIER_DELAY, COURIER_PAUSE, COURIER_SPEED, planMission } from './mapgen.ts';
 import type { Area, EnemyKind, MissionPlan } from './mapgen.ts';
@@ -59,6 +59,7 @@ export type Snapshot = {
   badges: Badge[]; downs: number;
   // What a won contract earned beyond its payout, and whether the mission started with an intel reward's routes.
   reward: Reward; intelReward: boolean;
+  lockdownIn: number | null; // seconds until a Lockdown contract's exits seal, once its first alarm has sounded
   // The Countermeasures level picked for (or fixed by) the mission, and the highest one open.
   countermeasures: number; countermeasuresOpen: number;
 };
@@ -240,6 +241,8 @@ export class Simulation {
   private reinforced = 0;
   private badges: Badge[] = [];
   private reward: Reward = NO_REWARD;
+  // Seconds until a Lockdown contract's exits seal; null until its first alarm (and on any other contract).
+  lockdownIn: number | null = null;
   private intelReward = false;
   private downs = 0;
   private alarms = 0;
@@ -273,7 +276,7 @@ export class Simulation {
       objectives: this.objectives.map(o => ({ ...o })), alarm: this.alarm, calmIn: this.calmIn, reinforceIn: this.reinforceIn, reinforced: this.reinforced, result: this.result,
       alarms: this.alarms, reinforceCap: this.reinforceCap, calmFor: this.calmFor, nextAlarm: this.escalate(this.alarms + 1),
       failReason: this.failReason, payout: this.payout, stealth: !this.detected, alarmCause: this.alarmCause, time: this.time, message: this.message,
-      saveUnavailable: this.saveUnavailable, syncing: this.syncing, pending: this.pending, badges: this.badges, reward: this.reward, intelReward: this.intelReward, downs: this.downs, countermeasures: this.countermeasures, countermeasuresOpen: unlockedCountermeasures(this.campaign),
+      saveUnavailable: this.saveUnavailable, syncing: this.syncing, pending: this.pending, badges: this.badges, reward: this.reward, intelReward: this.intelReward, lockdownIn: this.lockdownIn, downs: this.downs, countermeasures: this.countermeasures, countermeasuresOpen: unlockedCountermeasures(this.campaign),
       milestones: this.milestones,
       cover: Object.fromEntries(this.phase === 'mission' && this.plan ? this.livingSquad().map(u => [u.id, this.coverStatus(u).shield]) : []),
     };
@@ -351,7 +354,7 @@ export class Simulation {
     const plan = this.plan;
     this.units = []; this.objectives = []; this.shots = []; this.blasts = []; this.casts = []; this.hitThisFrame.clear(); this.volleyReady.clear(); this.autoPaused.clear();
     this.alarm = false; this.detected = false; this.alarmCause = null; this.calmIn = 0; this.lastKnown = null; this.lastSeen = new Map(); this.intel = new Map(); this.milestones = [];
-    this.reinforceIn = 0; this.reinforced = 0; this.badges = []; this.reward = NO_REWARD; this.downs = 0; this.alarms = 0; this.reinforceCap = REINFORCE_CAP; this.calmFor = CALM_SECONDS; this.waves = 0; this.vipJoined = false; this.vipThreat = null; this.holdup = ''; this.pending = null; this.commandPoint = null;
+    this.reinforceIn = 0; this.reinforced = 0; this.badges = []; this.reward = NO_REWARD; this.lockdownIn = null; this.downs = 0; this.alarms = 0; this.reinforceCap = REINFORCE_CAP; this.calmFor = CALM_SECONDS; this.waves = 0; this.vipJoined = false; this.vipThreat = null; this.holdup = ''; this.pending = null; this.commandPoint = null;
     this.targetArea = plan?.targetArea ? { ...plan.targetArea } : null;
     if (!plan) { this.squad = []; this.selected = []; return; }
     this.rng = mulberry32(plan.contract.seed ^ 0x5bd1e995);
@@ -634,6 +637,7 @@ export class Simulation {
     this.contact(null);
     if (this.alarm) return;
     this.alarm = true; this.detected = true; this.reach('alarm');
+    if (hasModifier(this.plan.contract, 'lockdown') && this.lockdownIn === null) this.lockdownIn = LOCKDOWN_SECONDS;
     // Every alarm sends its first wave as quickly; a later one sends more, and takes longer to stand down.
     const e = this.escalate(++this.alarms);
     this.reinforceCap = e.cap; this.calmFor = this.calmIn = e.calm; this.waves = 0; this.reinforceIn = FIRST_WAVE_SECONDS;
@@ -732,8 +736,9 @@ export class Simulation {
     if (this.phase !== 'mission' || !this.contract) return;
     this.phase = 'headquarters'; this.result = success ? 'success' : 'failure'; this.failReason = reason; this.pending = null;
     if (success) {
-      const report = { stealth: !this.detected, badges: this.earnedBadges(), results: this.results() };
-      this.badges = report.badges; this.payout = missionPayout(this.contract, report.stealth); this.reward = this.earnedReward(rewardFor(this.contract, report.results));
+      const kills = this.units.filter(u => u.faction === 'hostile' && u.hp <= 0 && u.kind !== 'target').length;
+      const report: MissionReport = { stealth: !this.detected, badges: this.earnedBadges(), results: this.results(), ...(kills ? { kills } : {}) };
+      this.badges = report.badges; this.payout = missionPayout(this.contract, report.stealth, kills); this.reward = this.earnedReward(rewardFor(this.contract, report.results));
       this.campaign = applyPayout(this.campaign, this.contract, this.countermeasures, report, Math.random); this.report(s => s.completed(report));
     }
     this.emit();
@@ -1160,6 +1165,9 @@ export class Simulation {
     if (this.pending && !squad.some(u => u.id === this.pending!.unitId)) this.pending = null;
     if (!squad.length) return this.finish(false, 'The squad was wiped out.');
     this.updateObjectives(dt, squad);
+    if (this.phase !== 'mission') return;
+    // Lockdown: once the first alarm sounds the exits seal after LOCKDOWN_SECONDS, stood down or not.
+    if (this.lockdownIn !== null && (this.lockdownIn -= dt) <= 0) return this.finish(false, 'Lockdown. The exits sealed with the squad inside.');
     this.reinforce(dt);
     if (this.alarm && (this.calmIn -= dt) <= 0) this.standDown();
     this.updateVisibility();
