@@ -6,7 +6,7 @@ import { ABILITY_STATS, CLASS_STATS } from '../game/classes.ts';
 import type { Threat } from '../game/campaign.ts';
 import type { EnemyKind } from '../game/mapgen.ts';
 import type { Snapshot } from '../game/simulation.ts';
-import { BADGE_COPY, Clearance, clock, CM_LEVEL, CONTRACTS, countermeasuresEffect, Credits, pad, Pips, rewardLines, SaveWarning, threat, useScrollEdges } from './common.tsx';
+import { BADGE_COPY, Clearance, clock, CM_LEVEL, CONTRACTS, countermeasuresEffect, Credits, MODIFIER_COPY, ModifierChips, modifierPay, pad, Pips, rewardLines, SaveWarning, threat, useScrollEdges } from './common.tsx';
 import { Icon, Portrait } from './icons.tsx';
 import type { IconName } from './icons.tsx';
 import { ContractIntro } from './Tips.tsx';
@@ -34,7 +34,7 @@ export function MissionSelect({ state, titleRef, onChoose, onDeploy, onRecenter,
           const on = c.id === contract?.id;
           return <button key={c.id} className={`offer${on ? ' selected' : ''}`} aria-pressed={on} style={threat(c.tier)} onClick={() => onChoose(c.id)}>
             <span className="offer-icon"><Icon name={c.type} /></span>
-            <span className="offer-copy"><strong>{CONTRACTS[c.type].title}</strong><small>Sector {pad(c.sector)} · {c.district}</small><ThreatRead level={threatFor(campaign, c.tier)} /></span>
+            <span className="offer-copy"><strong>{CONTRACTS[c.type].title}</strong><small>Sector {pad(c.sector)} · {c.district}</small><ThreatRead level={threatFor(campaign, c.tier)} />{c.modifiers?.length ? <span className="offer-mods"><ModifierChips c={c} /></span> : null}</span>
             <span className="offer-side"><Credits value={c.payout} /><span className="offer-tier">T{c.tier}<Pips value={c.tier} max={MAX_TIER} label="Threat tier" /></span><small className="offer-par">Par {clock(parSeconds(c.type, c.tier))}</small></span>
           </button>;
         })}</div>
@@ -56,6 +56,7 @@ export function MissionSelect({ state, titleRef, onChoose, onDeploy, onRecenter,
           <ThreatRead level={threatFor(campaign, contract.tier)} />
           <h3>{CONTRACTS[contract.type].title}</h3>
           <p className="brief-copy">{CONTRACTS[contract.type].brief}</p>
+          {contract.modifiers?.length ? <ul className="brief-mods" aria-label="Modifiers">{contract.modifiers.map(m => <li key={m}><b>{MODIFIER_COPY[m].title}</b><span>{MODIFIER_COPY[m].effect}</span></li>)}<li className="brief-mods-pay">{modifierPay}</li></ul> : null}
           <ContractIntro type={contract.type} />
           {state.countermeasuresOpen ? <div className="countermeasures">
             <div className="cm-head"><small>Countermeasures</small><div className="cm-levels" role="group" aria-label="Countermeasures level">{CM_LEVEL.map((name, level) =>

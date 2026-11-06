@@ -69,10 +69,10 @@ export default {
       const r = await player.startMission(contractId, squad, countermeasures);
       return r.ok ? json({ missionId: r.missionId, campaign: r.campaign }, 201) : json({ error: r.error }, r.status);
     }
-    // POST /missions/:id/complete  { stealth: boolean, badges?: Badge[], results?: { caches?, prisoners?, tagged? } }
+    // POST /missions/:id/complete  { stealth: boolean, badges?: Badge[], results?: { caches?, prisoners?, tagged? }, kills?: number }
     if (rest.length === 3 && rest[0] === 'missions' && rest[2] === 'complete' && method === 'POST') {
-      const { stealth, badges, results } = body(text), report = missionReport(stealth, badges, results);
-      if (!report) return json({ error: 'Unknown badge or result.' }, 400);
+      const { stealth, badges, results, kills } = body(text), report = missionReport(stealth, badges, results, kills);
+      if (!report) return json({ error: 'Unknown badge, result or kill count.' }, 400);
       return reply(await player.completeMission(rest[1], report));
     }
     if (rest.length === 2 && rest[0] === 'upgrades' && method === 'POST') {

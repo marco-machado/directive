@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Simulation, parseCampaign, CALM_SECONDS, COUNTERMEASURES, EXTENDED_RANGE, HEAVY_HP, LIGHT_CONCEALMENT, PIERCING_BONUS, SUPPRESSOR_STEP, CALM_STEP, escalation, FIRST_WAVE_SECONDS, waveSize, REPEAT_REINFORCEMENTS, VIP_DAMAGE_TAKEN, VIP_SECURE_SECONDS, CAMERA_DETECT, COVER_FACTOR, DETECT_DRAIN, detectSeconds, GHOST_SECONDS, HACK_SECONDS, LOOK_ANGLE, LOOK_EVERY, LOOK_PAUSE, QUEUE_SPACING, REINFORCE_CAP, ROUTE_MAX, SUSPICIOUS, REINFORCE_SECONDS, REVIVE_SECONDS, SIGHT_RANGE, TAKEDOWN_REACH, TAKEDOWN_SECONDS, tierDamage, tierHp, WAIT_MAX, WAIT_STEP } from '../src/game/simulation.ts';
 import type { CampaignSync, Unit, Upgrade } from '../src/game/simulation.ts';
-import { CAMPAIGN_VERSION, CONTRACT_TYPES, contractPayout, FIRST_CONTRACT, freshCampaign, MAX_LEVEL, MAX_TIER, parSeconds } from '../src/game/campaign.ts';
+import { CAMPAIGN_VERSION, CONTRACT_TYPES, contractPayout, LOCKDOWN_SECONDS, FIRST_CONTRACT, freshCampaign, MAX_LEVEL, MAX_TIER, parSeconds } from '../src/game/campaign.ts';
 import type { ArmorMode, Campaign, ContractType, MissionReport, WeaponMode } from '../src/game/campaign.ts';
 import { abilityCooldown, CLASS_STATS } from '../src/game/classes.ts';
 import { COURIER_DELAY, COURIER_MIN_RUN, interceptable, mapSize, planMission, TARGET_AREA_OFFSET, TARGET_AREA_RADIUS } from '../src/game/mapgen.ts';
@@ -1471,7 +1471,7 @@ test('Elimination counts down the district it started with; reinforcements never
   extractAll(sim, squad);
   assert.equal(sim.result, 'success');
   assert.deepEqual(sim.getSnapshot().badges, ['ghost', 'untouched', 'swift']);
-  assert.deepEqual(reports, [{ stealth: true, badges: ['ghost', 'untouched', 'swift'], results: {} }]);
+  assert.deepEqual(reports, [{ stealth: true, badges: ['ghost', 'untouched', 'swift'], results: {}, kills: 2 }]);
   assert.equal(sim.campaign.badges.purge, 0);
 });
 
@@ -1597,4 +1597,21 @@ test('a courier stunned mid-leg finishes that leg before the next, and only esca
   step(sim, 300);
   assert.equal(sim.failReason, 'The courier got away.');
   assert.ok(distance(courier, courier.patrol[last]) < 1, `escaped ${distance(courier, courier.patrol[last]).toFixed(2)} m from its exit`);
+});
+
+test('Lockdown seals the exits a set time after the first alarm, even once it stands down', () => {
+  const { sim, squad, hostile, raise } = alarmed('heist');
+  sim.contract = sim.plan!.contract = { ...sim.plan!.contract, modifiers: ['lockdown'] };
+  hostile('guard', 15, 15, 0);
+  raise({ x: 15, z: 15 });
+  assert.equal(sim.lockdownIn, LOCKDOWN_SECONDS);
+  squad.forEach(u => { u.hp = u.maxHp = 1e9; });
+  sim.units.filter(u => u.faction === 'hostile').forEach(u => { u.hp = 0; });
+  step(sim, LOCKDOWN_SECONDS - 1);
+  assert.equal(sim.phase, 'mission'); assert.equal(sim.alarm, false, 'stood down meanwhile');
+  step(sim, 2);
+  assert.equal(sim.result, 'failure'); assert.match(sim.failReason, /Lockdown/);
+  // Without the modifier an alarm starts no clock.
+  const plain = alarmed('heist'); plain.raise({ x: 15, z: 15 });
+  assert.equal(plain.sim.lockdownIn, null);
 });

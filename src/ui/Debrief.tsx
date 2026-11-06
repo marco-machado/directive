@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { RefObject } from 'react';
 import type { ClassId } from '../game/classes.ts';
-import { badgesFor, MAX_COUNTERMEASURES, parSeconds } from '../game/campaign.ts';
+import { badgesFor, MAX_COUNTERMEASURES, noKillShare, parSeconds } from '../game/campaign.ts';
 import { HOSTILE_STATS, isReinforcement } from '../game/simulation.ts';
 import type { AlarmCause, Snapshot, Unit } from '../game/simulation.ts';
 import { BADGE_COPY, Clearance, clock, CM_LEVEL, CONTRACTS, Credits, earnedLines, SaveCode, SaveWarning, threat } from './common.tsx';
@@ -83,7 +83,9 @@ export function Debrief({ state, saveCode, titleRef, onBoard, onHeadquarters }: 
   const success = state.result === 'success', c = state.contract;
   const kills = state.units.filter(u => u.faction === 'hostile' && u.hp <= 0).length;
   const squad = state.squad.map(id => state.units.find(u => u.id === id)).filter((u): u is Unit => !!u);
-  const extra = success ? state.reward.credits : 0, fee = success && c ? c.payout : 0, bonus = success ? state.payout - fee : 0, total = useCountUp(success ? state.payout + extra : 0);
+  // A no-kill clause cuts the fee before the stealth bonus is added.
+  const slain = state.units.filter(u => u.faction === 'hostile' && u.hp <= 0 && u.kind !== 'target').length, cut = success && c ? c.payout - Math.round(c.payout * noKillShare(c, slain)) : 0;
+  const extra = success ? state.reward.credits : 0, fee = success && c ? c.payout : 0, bonus = success ? state.payout - fee + cut : 0, total = useCountUp(success ? state.payout + extra : 0);
   return <section className={`debrief ${success ? 'success' : 'failure'}`} aria-labelledby="ops-title">
     <div className="debrief-card panel">
       <p className="debrief-stamp"><Icon name={success ? 'check' : 'alert'} />{success ? 'Contract complete' : 'Mission failed'}</p>
@@ -98,6 +100,7 @@ export function Debrief({ state, saveCode, titleRef, onBoard, onHeadquarters }: 
         </div>
         <dl className="ledger">
           <div><dt>Contract fee</dt><dd>{success ? <Credits value={fee} /> : 'Forfeit'}</dd></div>
+          {cut ? <div className="void"><dt>No-kill clause</dt><dd>−<Credits value={cut} /></dd></div> : null}
           <div className={bonus ? 'bonus' : 'void'}><dt>Stealth bonus</dt><dd>{bonus ? <>+<Credits value={bonus} /></> : state.stealth ? '—' : 'Alarm raised'}</dd></div>
           {extra ? <div className="bonus"><dt>Rewards</dt><dd>+<Credits value={extra} /></dd></div> : null}
           <div className="total"><dt>Payout</dt><dd><span aria-hidden="true">+<Credits value={total} /></span><span className="sr-only">₡ {success ? state.payout + extra : 0}</span></dd></div>

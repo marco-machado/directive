@@ -7,8 +7,8 @@
 // With --loadouts it instead plays the fully upgraded four with every loadout (tiers 4 and 5 unless --tiers says), and with
 // --cm 0,1,2,3 it plays the fully upgraded four at those Countermeasures levels (tier 5 unless --tiers says).
 import { Simulation } from '../src/game/simulation.ts';
-import { ARMOR_MODES, BADGES, CONTRACT_TYPES, contractPayout, freshCampaign, isLoadout, MAX_COUNTERMEASURES, MAX_LEVEL, MAX_TIER, WEAPON_MODES } from '../src/game/campaign.ts';
-import type { Badge, Campaign, ContractType, Loadout } from '../src/game/campaign.ts';
+import { ARMOR_MODES, BADGES, CONTRACT_TYPES, contractPayout, freshCampaign, isLoadout, isModifier, MODIFIER_FITS, MODIFIERS, MAX_COUNTERMEASURES, MAX_LEVEL, MAX_TIER, WEAPON_MODES } from '../src/game/campaign.ts';
+import type { Badge, Campaign, ContractType, Loadout, Modifier } from '../src/game/campaign.ts';
 import { mulberry32 } from '../src/game/rng.ts';
 import { noTactics } from './bots.ts';
 import type { Bot } from './bots.ts';
@@ -19,6 +19,9 @@ const SEEDS = Number(option('seeds') ?? 12);
 const TIERS = option('tiers')?.split(',').map(Number) ?? Array.from({ length: MAX_TIER }, (_, i) => i + 1);
 const TYPES = (option('types')?.split(',') ?? CONTRACT_TYPES) as ContractType[];
 const QUIET_ONLY = process.argv.includes('--quiet-only');
+// `--modifier lockdown` (or nokill) plays every contract with that modifier, on the types it fits.
+const MODIFIER = option('modifier') as Modifier | undefined;
+if (MODIFIER && !isModifier(MODIFIER)) throw new Error(`Unknown modifier ${MODIFIER}: give one of ${MODIFIERS.join(', ')}.`);
 const [weapon, armor] = option('loadout')?.split('/') ?? [], LOADOUT = option('loadout') ? { weapon, armor } : null;
 if (LOADOUT && !isLoadout(LOADOUT)) throw new Error(`Unknown loadout ${option('loadout')}: give weapon/armor, for example suppressed/light.`);
 const TIME_LIMIT = 300; // seconds of mission time before the run counts as a loss
@@ -44,7 +47,8 @@ const TARGETS = [
 type Run = { win: boolean; alarm: boolean; time: number; hpLost: number; reason: string; badges: Badge[] };
 
 function play(bot: Bot, type: ContractType, tier: number, seed: number, extra: Partial<Campaign>, countermeasures = 0): Run {
-  const contract = { id: 'c', type, tier, seed, payout: contractPayout(tier), district: 'GLASS DISTRICT', sector: 1 };
+  const modifiers = MODIFIER && MODIFIER_FITS[MODIFIER].includes(type) ? [MODIFIER] : [];
+  const contract = { id: 'c', type, tier, seed, payout: contractPayout(tier, modifiers.length), district: 'GLASS DISTRICT', sector: 1, ...(modifiers.length ? { modifiers } : {}) };
   const sim = new Simulation({ ...freshCampaign(mulberry32(1)), ...extra, offers: [contract] });
   sim.chooseCountermeasures(countermeasures);
   sim.deploy();
@@ -72,7 +76,7 @@ const checkTarget = (t: typeof TARGETS[number], v: number, note = '') =>
   console.log(`${v >= t.min && v <= t.max ? 'PASS' : 'FAIL'}  ${t.bot.padEnd(11)} ${t.roster.padEnd(9)} tier ${t.tier}: ${Math.round(v)}%${note} (target ${t.max >= 100 ? `${t.min}% or more` : `${t.min}–${t.max}%`})`);
 
 function report() {
-  console.log(`Balance: ${BOT_NAMES.join(' and ')} bots, ${SEEDS} seeds per cell, ${TIME_LIMIT} s limit${LOADOUT ? `, loadout ${LOADOUT.weapon}/${LOADOUT.armor}` : ''}${QUIET_ONLY ? ', tactical bot never goes loud on its own' : ''}.`);
+  console.log(`Balance: ${BOT_NAMES.join(' and ')} bots, ${SEEDS} seeds per cell, ${TIME_LIMIT} s limit${LOADOUT ? `, loadout ${LOADOUT.weapon}/${LOADOUT.armor}` : ''}${QUIET_ONLY ? ', tactical bot never goes loud on its own' : ''}${MODIFIER ? `, modifier ${MODIFIER}` : ''}.`);
   console.log('win = contracts won, quiet = won without an alarm, alarm = runs that raised the alarm, time = median seconds of the wins, swift = wins under par, hp = mean squad HP lost in the wins, fails = loss reasons.\n');
   for (const roster of ROSTERS.filter(r => !option('roster') || r.name === option('roster'))) for (const name of BOT_NAMES) {
     console.log(`## ${roster.name} · ${name}`);
