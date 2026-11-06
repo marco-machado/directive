@@ -2,7 +2,7 @@
 import type { Campaign, Contract } from '../src/game/campaign.ts';
 import type { AbilityId, ClassId } from '../src/game/classes.ts';
 import type { Area, EnemyKind } from '../src/game/mapgen.ts';
-import { apparentHealth, GHOST_SECONDS, isReinforcement } from '../src/game/simulation.ts';
+import { apparentHealth, CACHE_SECONDS, GHOST_SECONDS, isReinforcement, SQUAD_SPEED } from '../src/game/simulation.ts';
 import type { Cargo, Objective, Pickup, Pending, Simulation, Unit } from '../src/game/simulation.ts';
 import { distance } from '../src/game/world.ts';
 import type { Point, World } from '../src/game/world.ts';
@@ -13,6 +13,16 @@ export type Bot = (sim: Simulation, options: { quietOnly: boolean }) => () => vo
 // ---- No tactics ----
 // Select all, click the objective, then extraction; revive the downed; no abilities. It reads the simulation directly
 // (it walks to the target's true position), as it always has, so its numbers stay comparable with older runs.
+// The objective a bot goes for next. Smash and grab's optional caches are taken, nearest first, only while the lockdown
+// clock leaves time to walk there, open it, and walk on to extraction with `margin` seconds to spare.
+const walk = (world: World, a: Point, b: Point) => { const path = world.findPath(a, b); return path.reduce((sum, q, i) => sum + distance(i ? path[i - 1] : a, q), 0); };
+export function nextObjective(objectives: readonly Objective[], from: Point, world: World, lockdownIn: number | null, margin: number): Objective {
+  const required = objectives.find(o => !o.done && !o.optional && o.kind !== 'extract'), zone = objectives.at(-1)!;
+  if (required) return required;
+  const time = (o: Objective) => (walk(world, from, o) + walk(world, o, zone)) / SQUAD_SPEED + CACHE_SECONDS + margin;
+  const extra = objectives.filter(o => !o.done && o.optional).sort((a, b) => distance(a, from) - distance(b, from)).find(o => lockdownIn !== null && time(o) <= lockdownIn);
+  return extra ?? zone;
+}
 export const noTactics: Bot = sim => {
   let order = '', point: Point | null = null;
   const squad = () => sim.units.filter(u => u.faction === 'squad');
@@ -20,7 +30,7 @@ export const noTactics: Bot = sim => {
   return () => {
     const living = squad().filter(u => u.hp > 0), idle = living.every(u => !u.path.length && !u.targetId && !u.takedownId && !u.reviveTarget);
     const down = squad().find(u => u.hp <= 0);
-    const goal = sim.objectives.find(o => !o.done)!;
+    const goal = nextObjective(sim.objectives, living[0] ?? squad()[0], sim.plan!.world, sim.lockdownIn, 8);
     // A downed operative is revived before anything else; a move order would cancel the revive.
     if (down) { if (!living.some(u => u.reviveTarget)) { sim.selectAll(); sim.revive(down.id); order = ''; } }
     // A dropped package is fetched before anything else but a revive.
@@ -59,7 +69,7 @@ export type Op = {
 };
 export type Knowledge = {
   time: number; alarm: boolean; detected: boolean; world: World; contract: Contract; campaign: Campaign; extract: Point; kills: number;
-  squad: Op[]; hostiles: Seen[]; objectives: Objective[]; targetArea: Area | null; cargo: Cargo | null; pickup: Pickup | null; vip: (Point & { joined: boolean }) | null; pending: Pending;
+  squad: Op[]; hostiles: Seen[]; objectives: Objective[]; targetArea: Area | null; cargo: Cargo | null; pickup: Pickup | null; lockdownIn: number | null; vip: (Point & { joined: boolean }) | null; pending: Pending;
 };
 // The orders a player can give, and the hover preview of an attack.
 export type Orders = Pick<Simulation, 'select' | 'selectAll' | 'move' | 'addWait' | 'hold' | 'attack' | 'attackPreview' | 'revive' | 'ability' | 'unitClick' | 'groundClick' | 'cancelAbility' | 'armPickup'>;
@@ -100,7 +110,7 @@ export function observer(sim: Simulation): () => Knowledge {
     });
     return {
       time: sim.time, alarm: sim.alarm, detected: sim.detected, world: plan.world, contract: plan.contract, campaign: sim.campaign, extract: plan.extract, kills: dead.size,
-      squad, hostiles: [...known.values()], objectives: sim.objectives, targetArea: sim.targetArea, cargo: sim.cargo, pickup: sim.pickup, pending: sim.pending,
+      squad, hostiles: [...known.values()], objectives: sim.objectives, targetArea: sim.targetArea, cargo: sim.cargo, pickup: sim.pickup, lockdownIn: sim.lockdownIn, pending: sim.pending,
       vip: vip ? { x: vip.x, z: vip.z, joined: sim.objectives.some(o => o.kind === 'vip' && o.done) } : null,
     };
   };

@@ -9,7 +9,7 @@ import type { Bounds, Building, Point, Rect } from './world.ts';
 export type EnemyKind = 'guard' | 'heavy' | 'camera' | 'turret' | 'target';
 // `escort` marks a guard that walks beside an Intercept courier (the plan's target) instead of keeping a patrol or a post.
 export type EnemySpawn = Point & { kind: EnemyKind; heading: number; patrol: Point[]; escort?: true };
-export type ObjectiveSite = Point & { kind: 'terminal' | 'charge' };
+export type ObjectiveSite = Point & { kind: 'terminal' | 'charge' | 'cache' };
 export type Area = Point & { r: number };
 export type MissionPlan = {
   contract: Contract; world: World; label: string;
@@ -171,6 +171,13 @@ function attempt(contract: Contract, rng: Rng, withCover: boolean): MissionPlan 
     if (!second) return null;
     sites.push({ ...primary, kind: 'charge' }, { ...second, kind: 'charge' });
   }
+  // Smash and grab: three caches spread over the far side, each at least 8 m from the others.
+  if (type === 'smash') {
+    const caches = [primary];
+    for (const pool of [shuffle(rng, farthest), far]) for (const p of pool) if (caches.length < 3 && caches.every(c => distance(c, p) >= 8)) caches.push(p);
+    if (caches.length < 3) return null;
+    sites.push(...caches.map(p => ({ ...p, kind: 'cache' as const })));
+  }
   if (type === 'escort') { primary = pick(rng, far.slice(0, Math.ceil(far.length * .5))); vip = primary; }
   if (type === 'assassination') enemies.push({ ...primary, kind: 'target', heading: headingTo(primary, start), patrol: [] });
   // Intercept: the courier starts at its entry exit with two escorts beside it; the posted guards hold the route's middle.
@@ -200,8 +207,12 @@ function attempt(contract: Contract, rng: Rng, withCover: boolean): MissionPlan 
 
   for (const p of escorts) enemies.push({ ...p, kind: 'guard', heading: enemies[0].heading, patrol: enemies[0].patrol, escort: true });
   // Two posted guards hold every objective; the rest walk the streets. The courier's escorts stand in for Intercept's.
-  if (type !== 'intercept') for (const site of (sites.length ? sites : [primary]).slice(0, 2)) {
-    for (let k = 0; k < (sites.length > 1 ? 1 : 2); k++) { const p = post(site); if (p) add('guard', p, []); }
+  if (type !== 'intercept') for (const site of (sites.length ? sites : [primary]).slice(0, type === 'smash' ? 3 : 2)) {
+    for (let k = 0; k < (sites.length > 1 ? 1 : 2); k++) {
+      const p = post(site);
+      // Every Smash and grab cache is held; a layout with no post by one is tried again.
+      if (p) add('guard', p, []); else if (type === 'smash') return null;
+    }
   }
   const guarding = () => enemies.filter(e => e.kind === 'guard' && !e.escort).length;
   const guards = contract.patrols === undefined ? 3 + contract.tier - (type === 'intercept' ? 2 : 0) : guarding() + contract.patrols;

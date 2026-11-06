@@ -1,7 +1,7 @@
 import { Component, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { CSSProperties, ErrorInfo, FormEvent, ReactNode, RefObject } from 'react';
 import { client, sim } from '../app.ts';
-import { BADGE_POINTS, BADGES, CARRY_SPEED, PICKUP_SECONDS, CONTRACT_POINTS, IDENTIFY_RANGE, IDENTIFY_SECONDS, LOCKDOWN_SECONDS, MAX_TIER, MODIFIER_PAY, NO_KILL_CUT, NO_KILL_FLOOR, nextTypeUnlock, RECRUIT_COST, REWARDS, nextUnlock, OPENING_CONTRACTS, parSeconds, topTier, unlockedTypes } from '../game/campaign.ts';
+import { BADGE_POINTS, BADGES, CACHE_BONUS, CACHES, CARRY_SPEED, PICKUP_SECONDS, CONTRACT_POINTS, IDENTIFY_RANGE, IDENTIFY_SECONDS, LOCKDOWN_SECONDS, MAX_TIER, MODIFIER_PAY, NO_KILL_CUT, NO_KILL_FLOOR, nextTypeUnlock, RECRUIT_COST, REWARDS, nextUnlock, OPENING_CONTRACTS, parSeconds, topTier, unlockedTypes } from '../game/campaign.ts';
 import type { Badge, Campaign, Contract, ContractType, Modifier, Operative, Reward, ResultField } from '../game/campaign.ts';
 import { ABILITY_STATS, CLASS_STATS } from '../game/classes.ts';
 import { formatSaveCode, normalizeSaveCode } from '../game/saveCode.ts';
@@ -24,6 +24,10 @@ export const CONTRACTS: Record<ContractType, { title: string; brief: string; int
   intercept: {
     title: 'Intercept', brief: 'A courier and two escorts cross the district from one edge exit to another. Stop the courier before it leaves, then extract. Once the alarm sounds, it runs for its exit.',
     intro: `The courier sets off ${COURIER_DELAY} s after you deploy. Watch it reach a street corner and its whole route is drawn, like a patrol's. Pick the ground and the moment: a volley that kills drops an escort quietly.`,
+  },
+  smash: {
+    title: 'Smash and grab', brief: `Open one of ${CACHES} caches, then extract before the exits seal. Opening the first starts the lockdown clock, alarm or not; each further cache pays ${CACHE_BONUS} credits.`,
+    intro: 'Plan everything before the first cache: takedowns, positions, the way out. The clock starts the moment one opens, and the tracker counts it down. Take another cache only if the time allows.',
   },
   escort: { title: 'Escort', brief: `Stay beside the VIP for ${VIP_SECURE_SECONDS} seconds to free them, then escort them to extraction. Under fire, the VIP ducks behind cover near the squad; if they die, the contract fails.` },
 };

@@ -44,7 +44,7 @@ const TARGETS = [
   { bot: 'tactical', roster: 'starters', tier: 1, min: 90, max: 100 },
 ];
 
-type Run = { win: boolean; alarm: boolean; time: number; hpLost: number; reason: string; badges: Badge[] };
+type Run = { win: boolean; alarm: boolean; time: number; hpLost: number; reason: string; badges: Badge[]; caches: number };
 
 function play(bot: Bot, type: ContractType, tier: number, seed: number, extra: Partial<Campaign>, countermeasures = 0): Run {
   const modifiers = MODIFIER && MODIFIER_FITS[MODIFIER].includes(type) ? [MODIFIER] : [];
@@ -60,7 +60,7 @@ function play(bot: Bot, type: ContractType, tier: number, seed: number, extra: P
   }
   const team = sim.units.filter(u => u.faction === 'squad');
   const hpLost = 1 - team.reduce((s, u) => s + u.hp, 0) / team.reduce((s, u) => s + u.maxHp, 0);
-  return { win: sim.result === 'success', alarm: sim.detected, time: sim.time, hpLost, reason: sim.result ? sim.failReason : 'timeout', badges: sim.getSnapshot().badges };
+  return { win: sim.result === 'success', alarm: sim.detected, time: sim.time, hpLost, reason: sim.result ? sim.failReason : 'timeout', badges: sim.getSnapshot().badges, caches: sim.objectives.filter(o => o.kind === 'cache' && o.done).length };
 }
 
 const withLoadout = (extra: Partial<Campaign>, loadout: Loadout | null = LOADOUT as Loadout | null) => loadout ? { ...extra, loadout } : extra;
@@ -68,7 +68,7 @@ const pct = (n: number, of: number) => `${Math.round(100 * n / of)}%`.padStart(4
 const median = (xs: number[]) => { if (!xs.length) return NaN; const s = [...xs].sort((a, b) => a - b); return s[Math.floor(s.length / 2)]; };
 const seeds = Array.from({ length: SEEDS }, (_, k) => 1000 + k * 7919);
 const wins = new Map<string, number[]>(); // `${bot}|${roster}|${tier}` → win rate per contract type
-const earned = new Map<string, Run[]>(); // `${bot}|${roster}` → its wins, for the badge rates
+const earned = new Map<string, Run[]>(), caches = new Map<string, Run[]>(); // `${bot}|${roster}` → its wins, for the badge rates
 
 const typesLabel = TYPES.length === CONTRACT_TYPES.length ? 'every contract type' : TYPES.join(', ');
 const average = (xs: number[]) => xs.reduce((s, x) => s + x, 0) / xs.length;
@@ -89,6 +89,7 @@ function report() {
       const key = `${name}|${roster.name}|${tier}`;
       wins.set(key, [...wins.get(key) ?? [], 100 * won.length / runs.length]);
       earned.set(`${name}|${roster.name}`, [...earned.get(`${name}|${roster.name}`) ?? [], ...won]);
+      if (type === 'smash') caches.set(`${name}|${roster.name}`, [...caches.get(`${name}|${roster.name}`) ?? [], ...won]);
       console.log(`${type.padEnd(14)} ${String(tier).padStart(4)}  ${pct(won.length, runs.length)}  ${pct(won.filter(r => !r.alarm).length, runs.length)}  ${pct(runs.filter(r => r.alarm).length, runs.length)}  ${Number.isNaN(time) ? '   -' : time.toFixed(0).padStart(4)}  ${won.length ? pct(won.filter(r => r.badges.includes('swift')).length, won.length) : '   -'}  ${Number.isNaN(hp) ? '   -' : pct(hp * 100, 100)}  ${[...reasons].map(([r, n]) => `${n}× ${r}`).join('; ')}`);
     }
     console.log('');
@@ -107,6 +108,14 @@ function report() {
     const won = earned.get(`${name}|${roster.name}`);
     if (!won?.length) continue;
     console.log(`${roster.name.padEnd(11)} ${name.padEnd(12)} ${BADGES.map(b => pct(won.filter(r => r.badges.includes(b)).length, won.length).padStart(10)).join('')}`);
+  }
+  if (caches.size) {
+    console.log(`\n## Smash and grab: caches taken (share of wins over the tiers played)`);
+    console.log(`roster      bot               1         2         3`);
+    for (const [key, won] of caches) if (won.length) {
+      const [name, roster] = key.split('|');
+      console.log(`${roster.padEnd(11)} ${name.padEnd(12)} ${[1, 2, 3].map(n => pct(won.filter(r => r.caches === n).length, won.length).padStart(10)).join('')}`);
+    }
   }
   if (TYPES.length !== CONTRACT_TYPES.length || QUIET_ONLY) return;
   console.log(`\n## Targets${LOADOUT ? '' : ' (default loadout; --loadouts checks each bot\'s best one for the fully upgraded four)'}`);

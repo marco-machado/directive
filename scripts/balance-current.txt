@@ -33,6 +33,11 @@ intercept         2   50%    8%   92%    25   83%   48%  6× The squad was wiped
 intercept         3   58%    8%   92%    20  100%   49%  5× The squad was wiped out.
 intercept         4   25%    8%   92%    13  100%   27%  9× The squad was wiped out.
 intercept         5   33%    8%   92%    13  100%   26%  8× The squad was wiped out.
+smash             1  100%    0%  100%    34    8%   37%  
+smash             2   58%    0%  100%    36  100%   60%  5× The squad was wiped out.
+smash             3   58%    0%  100%    39  100%   53%  5× The squad was wiped out.
+smash             4    0%    0%  100%     -     -     -  12× The squad was wiped out.
+smash             5    0%    0%  100%     -     -     -  12× The squad was wiped out.
 
 ## starters · tactical
 type           tier   win quiet alarm  time swift    hp  fails
@@ -66,6 +71,11 @@ intercept         2   92%    0%  100%    22   82%   12%  1× The courier got awa
 intercept         3   58%    0%  100%    29   71%   23%  4× The courier got away.; 1× timeout
 intercept         4   50%    0%   83%    80   50%   14%  2× The squad was wiped out.; 4× The courier got away.
 intercept         5   25%    0%   75%     7  100%   16%  6× The squad was wiped out.; 3× The courier got away.
+smash             1   92%   83%    8%    41   27%    3%  1× Lockdown. The squad was trapped.
+smash             2   92%   50%   42%    59   27%   11%  1× Lockdown. The squad was trapped.
+smash             3   58%   33%   33%    47   57%   11%  4× Lockdown. The squad was trapped.; 1× The squad was wiped out.
+smash             4   17%    0%   92%   170    0%   21%  7× The squad was wiped out.; 3× Lockdown. The squad was trapped.
+smash             5    8%    8%   83%    78    0%    0%  10× The squad was wiped out.; 1× Lockdown. The squad was trapped.
 
 ## four · no-tactics
 type           tier   win quiet alarm  time swift    hp  fails
@@ -99,6 +109,11 @@ intercept         2   75%    0%  100%    20  100%   23%  2× The squad was wiped
 intercept         3   92%    0%  100%    19  100%   22%  1× The squad was wiped out.
 intercept         4   83%    0%  100%    19  100%   31%  2× The squad was wiped out.
 intercept         5   75%    8%   92%    18  100%   23%  3× The squad was wiped out.
+smash             1  100%    0%  100%    34    8%   12%  
+smash             2  100%    0%  100%    37  100%   24%  
+smash             3  100%    0%  100%    39  100%   30%  
+smash             4   58%    0%  100%    40  100%   48%  5× The squad was wiped out.
+smash             5    0%    0%  100%     -     -     -  12× The squad was wiped out.
 
 ## four · tactical
 type           tier   win quiet alarm  time swift    hp  fails
@@ -132,6 +147,11 @@ intercept         2   83%   58%   25%    17  100%    1%  2× The courier got awa
 intercept         3   83%   17%   75%    26   90%    5%  2× The courier got away.
 intercept         4   83%    8%   83%    48   60%    9%  2× The courier got away.
 intercept         5   92%    0%  100%    20   82%   10%  1× The courier got away.
+smash             1  100%  100%    0%    31   50%    0%  
+smash             2  100%  100%    0%    42   50%    0%  
+smash             3   92%   75%   17%    50   73%    1%  1× Lockdown. The squad was trapped.
+smash             4   92%   42%   58%    81   27%    4%  1× Lockdown. The squad was trapped.
+smash             5   42%   17%   75%    85   40%    6%  4× Lockdown. The squad was trapped.; 2× The squad was wiped out.; 1× timeout
 
 ## four+max · no-tactics
 type           tier   win quiet alarm  time swift    hp  fails
@@ -165,6 +185,11 @@ intercept         2  100%   25%   75%    20  100%    8%
 intercept         3  100%    8%   92%    19  100%   11%  
 intercept         4  100%   42%   58%    19  100%    9%  
 intercept         5   83%    8%   92%    18  100%   15%  2× The squad was wiped out.
+smash             1  100%    0%  100%    34    8%    6%  
+smash             2  100%    0%  100%    37  100%   13%  
+smash             3  100%    0%  100%    38  100%   18%  
+smash             4   92%    0%  100%    41  100%   34%  1× The squad was wiped out.
+smash             5   50%    0%  100%    49  100%   62%  6× The squad was wiped out.
 
 ## four+max · tactical
 type           tier   win quiet alarm  time swift    hp  fails
@@ -198,69 +223,83 @@ intercept         2   83%   58%   25%    17  100%    1%  2× The courier got awa
 intercept         3   83%   25%   58%    24   90%    2%  2× The courier got away.
 intercept         4   92%    8%   83%    28   82%    6%  1× The courier got away.
 intercept         5   92%   33%   58%    16   91%    4%  1× The courier got away.
+smash             1  100%  100%    0%    31   50%    0%  
+smash             2  100%  100%    0%    44   42%    0%  
+smash             3   92%   83%    8%    52   55%    0%  1× Lockdown. The squad was trapped.
+smash             4   92%   67%   33%    61   55%    3%  1× Lockdown. The squad was trapped.
+smash             5   92%   42%   58%    81   36%    7%  1× Lockdown. The squad was trapped.
 
 ## Mean win rate over every contract type
 roster      bot             T1   T2   T3   T4   T5
-starters    no-tactics     82%  67%  44%  10%   6%
-starters    tactical       97%  93%  89%  36%   7%
-four        no-tactics    100%  93%  89%  51%  15%
-four        tactical      100%  96%  96%  85%  83%
-four+max    no-tactics    100% 100% 100%  89%  57%
-four+max    tactical       99%  97%  94%  90%  96%
+starters    no-tactics     85%  65%  46%   8%   5%
+starters    tactical       96%  93%  85%  33%   7%
+four        no-tactics    100%  94%  90%  52%  13%
+four        tactical      100%  96%  95%  86%  77%
+four+max    no-tactics    100% 100% 100%  89%  56%
+four+max    tactical       99%  98%  94%  90%  95%
 
 ## Badges (share of wins over the tiers played)
 roster      bot               ghost untouched     swift bloodless     purge
-starters    no-tactics           5%       98%       89%        6%        5%
-starters    tactical            29%      100%       29%       14%        4%
-four        no-tactics           6%       91%       93%        1%        8%
-four        tactical            58%       97%       44%       12%        1%
-four+max    no-tactics          12%       93%       97%        8%        6%
-four+max    tactical            74%      100%       53%       12%        1%
+starters    no-tactics           5%       98%       84%        5%        8%
+starters    tactical            34%      100%       29%       17%        4%
+four        no-tactics           5%       91%       90%        1%       11%
+four        tactical            60%       97%       45%       13%        1%
+four+max    no-tactics          10%       93%       94%        7%        9%
+four+max    tactical            76%      100%       52%       12%        1%
+
+## Smash and grab: caches taken (share of wins over the tiers played)
+roster      bot               1         2         3
+starters    no-tactics           0%       12%       88%
+starters    tactical            28%       59%       13%
+four        no-tactics           0%        7%       93%
+four        tactical            29%       43%       27%
+four+max    no-tactics           0%        6%       94%
+four+max    tactical            23%       47%       30%
 
 ## Targets (default loadout; --loadouts checks each bot's best one for the fully upgraded four)
-PASS  no-tactics  four+max  tier 5: 57% (target 40–60%)
-PASS  tactical    four+max  tier 5: 96% (target 85% or more)
-PASS  no-tactics  starters  tier 1: 82% (target 78–88%)
-PASS  tactical    starters  tier 1: 97% (target 90% or more)
+PASS  no-tactics  four+max  tier 5: 56% (target 40–60%)
+PASS  tactical    four+max  tier 5: 95% (target 85% or more)
+PASS  no-tactics  starters  tier 1: 85% (target 78–88%)
+PASS  tactical    starters  tier 1: 96% (target 90% or more)
 
 Loadouts: no-tactics and tactical bots with the fully upgraded four, 12 seeds per cell; mean over every contract type of contracts won / won without an alarm.
 
 loadout              bot                  T4        T5
-piercing/heavy       no-tactics       89%/8%    57%/1%
-piercing/heavy       tactical        90%/58%   96%/38%
-piercing/light       no-tactics      79%/10%    35%/3%
-piercing/light       tactical        92%/64%   96%/39%
-suppressed/heavy     no-tactics       79%/1%    19%/1%
-suppressed/heavy     tactical        92%/61%   92%/28%
-suppressed/light     no-tactics       61%/4%    14%/3%
-suppressed/light     tactical        93%/65%   88%/28%
-extended/heavy       no-tactics       86%/0%    44%/1%
-extended/heavy       tactical        93%/56%   92%/22%
-extended/light       no-tactics       71%/1%    21%/3%
-extended/light       tactical        94%/63%   94%/28%
+piercing/heavy       no-tactics       89%/7%    56%/1%
+piercing/heavy       tactical        90%/60%   95%/38%
+piercing/light       no-tactics       80%/8%    32%/2%
+piercing/light       tactical        90%/64%   95%/40%
+suppressed/heavy     no-tactics       79%/1%    18%/1%
+suppressed/heavy     tactical        89%/61%   89%/27%
+suppressed/light     no-tactics       58%/4%    12%/2%
+suppressed/light     tactical        92%/63%   86%/29%
+extended/heavy       no-tactics       86%/0%    43%/1%
+extended/heavy       tactical        92%/56%   90%/24%
+extended/light       no-tactics       68%/1%    19%/2%
+extended/light       tactical        93%/62%   92%/29%
 
 ## Best loadout
 no-tactics   T4 wins :  89% with piercing/heavy
-no-tactics   T4 quiet:  10% with piercing/light
-no-tactics   T5 wins :  57% with piercing/heavy
-no-tactics   T5 quiet:   3% with piercing/light
-tactical     T4 wins :  94% with extended/light
-tactical     T4 quiet:  65% with suppressed/light
-tactical     T5 wins :  96% with piercing/heavy
-tactical     T5 quiet:  39% with piercing/light
+no-tactics   T4 quiet:   8% with piercing/light
+no-tactics   T5 wins :  56% with piercing/heavy
+no-tactics   T5 quiet:   2% with piercing/light
+tactical     T4 wins :  93% with extended/light
+tactical     T4 quiet:  64% with piercing/light
+tactical     T5 wins :  95% with piercing/heavy
+tactical     T5 quiet:  40% with piercing/light
 
 ## Targets (each bot's best loadout for winning)
-PASS  no-tactics  four+max  tier 5: 57% with piercing/heavy (target 40–60%)
-PASS  tactical    four+max  tier 5: 96% with piercing/heavy (target 85% or more)
+PASS  no-tactics  four+max  tier 5: 56% with piercing/heavy (target 40–60%)
+PASS  tactical    four+max  tier 5: 95% with piercing/heavy (target 85% or more)
 
 Countermeasures: no-tactics and tactical bots with the fully upgraded four, 12 seeds per cell; mean over every contract type of contracts won / won without an alarm.
 
 level  bot                  T5
-0      no-tactics       57%/1%
-0      tactical        96%/38%
-1      no-tactics       58%/1%
-1      tactical        96%/29%
-2      no-tactics       58%/1%
-2      tactical        96%/29%
-3      no-tactics       58%/1%
-3      tactical        75%/29%
+0      no-tactics       56%/1%
+0      tactical        95%/38%
+1      no-tactics       56%/1%
+1      tactical        96%/32%
+2      no-tactics       56%/1%
+2      tactical        96%/32%
+3      no-tactics       56%/1%
+3      tactical        75%/32%

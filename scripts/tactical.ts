@@ -4,11 +4,11 @@
 // Knowledge holds and acts only through Orders.
 import { abilityPower, ABILITY_STATS, CLASS_STATS } from '../src/game/classes.ts';
 import { hasModifier } from '../src/game/campaign.ts';
-import { COVER_FACTOR, gearRange, HOSTILE_STATS, posted, ROUTE_MAX, TAKEDOWN_REACH, watchedBy } from '../src/game/simulation.ts';
+import { COVER_FACTOR, gearRange, HOSTILE_STATS, objectivesMet, posted, ROUTE_MAX, TAKEDOWN_REACH, watchedBy } from '../src/game/simulation.ts';
 import type { AttackPreview, Objective } from '../src/game/simulation.ts';
 import { distance } from '../src/game/world.ts';
 import type { Point, World } from '../src/game/world.ts';
-import { observer } from './bots.ts';
+import { nextObjective, observer } from './bots.ts';
 import type { Bot, Knowledge, Op, Orders, Seen } from './bots.ts';
 
 const STALL = 45;      // s without progress before the bot goes loud
@@ -78,7 +78,7 @@ class Tactician {
     this.living = k.squad.filter(op => op.hp > 0);
     if (!this.living.length) return;
     // A called extraction: with the objectives done, the squad calls its pickup where its lead stands (or by the start).
-    if (hasModifier(k.contract, 'called') && !k.pickup && k.objectives.every(o => o.kind === 'extract' || o.done)) {
+    if (hasModifier(k.contract, 'called') && !k.pickup && objectivesMet(k.objectives)) {
       const spot = [this.living[0], k.extract].find(p => k.world.walkable(p, .6)) ?? k.extract;
       this.o.armPickup(); this.o.groundClick(spot);
     }
@@ -100,7 +100,8 @@ class Tactician {
 
   // ---- Where the squad is going ----
   private goal(): Goal {
-    const k = this.k, o = k.objectives.find(o => !o.done)!;
+    // A tactical squad sneaks round sight lines, so it keeps a wider margin on the lockdown clock.
+    const k = this.k, o = nextObjective(k.objectives, this.living[0], k.world, k.lockdownIn, 15);
     if (k.cargo && !k.cargo.carrier) return { key: 'package', kind: 'search', point: k.cargo };
     if (o.kind === 'target') {
       const target = k.hostiles.find(h => h.kind === 'target') ?? this.suspect();

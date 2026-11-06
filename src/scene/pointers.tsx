@@ -2,13 +2,14 @@ import { useEffect, useMemo, useRef } from 'react';
 import type { RefObject } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import { Vector3 } from 'three';
+import { cacheLetter } from '../game/simulation.ts';
 import type { Objective, Simulation } from '../game/simulation.ts';
 import type { Point } from '../game/world.ts';
 
 // Canvas pixels covered by HUD panels on each side, measured by the camera rig.
 export type Insets = { l: number; t: number; r: number; b: number };
 const MARGIN = 34;
-const name = (o: Objective) => o.kind === 'terminal' ? 'VAULT' : o.kind === 'charge' ? `CHARGE ${o.label.at(-1)}` : o.kind === 'vip' ? 'VIP' : 'EXTRACT';
+const name = (o: Objective) => o.kind === 'terminal' ? 'VAULT' : o.kind === 'charge' ? `CHARGE ${o.label.at(-1)}` : o.kind === 'cache' ? `CACHE ${cacheLetter(o)}` : o.kind === 'vip' ? 'VIP' : 'EXTRACT';
 
 // Edge arrows toward hostiles noticing the squad, a fleeing target's exit, and open objectives that are outside
 // the free frame. Watchers and the exit come first, in red; the target points at its last known area until seen. Plain DOM nodes, positioned every frame without React renders.

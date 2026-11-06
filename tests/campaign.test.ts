@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyDismiss, applyLoadout, applyPayout, applyPurchase, applyRecruit, BADGE_POINTS, baseTier, CAMPAIGN_VERSION, clampCampaign, clearancePoints, CONTRACT_POINTS, completeMission, contractPayout, dealBoard, DEFAULT_LOADOUT, FIRST_CONTRACT, freshCampaign, isLoadout, MAX_TIER, MAX_COUNTERMEASURES, MAX_LEVEL, MIN_MISSION_MS, missionReport, nextUnlock, offerTiers, OPENING_CONTRACTS, PAR_PER_TIER, PAR_SECONDS, parSeconds, RECRUIT_COST, ROSTER_CAP, SILENT_CLASSES, squadRating, startMission, threatFor, topTier, unlockedCountermeasures, upgradeLedger, UNLOCK_TIER, unlockedTypes, nextTypeUnlock, MODIFIER_FITS, MODIFIER_TIER, MODIFIER_UNLOCK, missionPayout, NO_KILL_FLOOR, NO_REWARD, resultsFit, rewardFor } from '../src/game/campaign.ts';
+import { CACHE_BONUS, applyDismiss, applyLoadout, applyPayout, applyPurchase, applyRecruit, BADGE_POINTS, baseTier, CAMPAIGN_VERSION, clampCampaign, clearancePoints, CONTRACT_POINTS, completeMission, contractPayout, dealBoard, DEFAULT_LOADOUT, FIRST_CONTRACT, freshCampaign, isLoadout, MAX_TIER, MAX_COUNTERMEASURES, MAX_LEVEL, MIN_MISSION_MS, missionReport, nextUnlock, offerTiers, OPENING_CONTRACTS, PAR_PER_TIER, PAR_SECONDS, parSeconds, RECRUIT_COST, ROSTER_CAP, SILENT_CLASSES, squadRating, startMission, threatFor, topTier, unlockedCountermeasures, upgradeLedger, UNLOCK_TIER, unlockedTypes, nextTypeUnlock, MODIFIER_FITS, MODIFIER_TIER, MODIFIER_UNLOCK, missionPayout, NO_KILL_FLOOR, NO_REWARD, resultsFit, rewardFor } from '../src/game/campaign.ts';
 import type { Ledger, MissionReport, MissionResults, RewardTable, UnlockTiers } from '../src/game/campaign.ts';
 import { mulberry32 } from '../src/game/rng.ts';
 import { formatSaveCode, generateSaveCode, normalizeSaveCode } from '../src/game/saveCode.ts';
@@ -214,15 +214,15 @@ test('Countermeasures open once fully upgraded, refuse a locked level, and a bad
 
 test('contract types join the board as clearance rises, each guaranteed on the first board after it unlocks', () => {
   // A table with later types, as new types will have; the four current types all deal from tier 1.
-  assert.deepEqual(UNLOCK_TIER, { assassination: 1, heist: 1, sabotage: 1, escort: 1, elimination: 2, intercept: 2 });
-  const unlock: UnlockTiers = { assassination: 1, heist: 1, sabotage: 2, escort: 3, elimination: 9, intercept: 9 };
+  assert.deepEqual(UNLOCK_TIER, { assassination: 1, heist: 1, sabotage: 1, escort: 1, elimination: 2, intercept: 2, smash: 3 });
+  const unlock: UnlockTiers = { assassination: 1, heist: 1, sabotage: 2, escort: 3, elimination: 9, intercept: 9, smash: 9 };
   assert.deepEqual(unlockedTypes(done(0), unlock), ['assassination', 'heist']);
   assert.deepEqual(unlockedTypes(done(2), unlock), ['assassination', 'heist', 'sabotage']);
   assert.deepEqual(nextTypeUnlock(done(1), unlock), { type: 'sabotage', tier: 2, points: 2, contracts: 1, progress: .5 });
   assert.deepEqual(nextTypeUnlock(done(2), unlock), { type: 'escort', tier: 3, points: 4, contracts: 2, progress: 0 });
-  assert.equal(nextTypeUnlock(done(4), { ...unlock, elimination: 1, intercept: 1 }), null);
+  assert.equal(nextTypeUnlock(done(4), { ...unlock, elimination: 1, intercept: 1, smash: 1 }), null);
   assert.deepEqual(nextTypeUnlock(done(0)), { type: 'elimination', tier: 2, points: 4, contracts: 2, progress: 0 });
-  assert.equal(nextTypeUnlock(done(2)), null);
+  assert.deepEqual(nextTypeUnlock(done(2))?.type, 'smash');
   for (let seed = 1; seed <= 30; seed++) {
     const r = mulberry32(seed);
     // Only unlocked types are dealt, with repeats once there are fewer types than offers.
@@ -323,4 +323,10 @@ test('modifiers are dealt from tier 2 after the opening, fit their type, pay mor
   assert.equal(missionPayout({ ...clause, modifiers: undefined }, false, 5), 1000);
   assert.deepEqual(missionReport(true, [], {}, 3), { stealth: true, badges: ['ghost'], results: {}, kills: 3 });
   assert.equal(missionReport(true, [], {}, -1), null);
+});
+
+test('Smash and grab reports its caches, at most three, and pays a bonus for each past the first', () => {
+  const c = { id: 'c', type: 'smash' as const, tier: 3, seed: 1, payout: contractPayout(3), district: 'X', sector: 1 };
+  assert.ok(resultsFit(c, { caches: 3 })); assert.ok(!resultsFit(c, { caches: 4 })); assert.ok(!resultsFit(c, { prisoners: 1 }));
+  assert.deepEqual([1, 2, 3].map(n => rewardFor(c, { caches: n }).credits), [0, CACHE_BONUS, 2 * CACHE_BONUS]);
 });
