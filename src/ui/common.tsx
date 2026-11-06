@@ -1,7 +1,7 @@
 import { Component, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { CSSProperties, ErrorInfo, FormEvent, ReactNode, RefObject } from 'react';
 import { client, sim } from '../app.ts';
-import { BADGE_POINTS, BADGES, CARRY_SPEED, CONTRACT_POINTS, IDENTIFY_RANGE, IDENTIFY_SECONDS, LOCKDOWN_SECONDS, MAX_TIER, MODIFIER_PAY, NO_KILL_CUT, NO_KILL_FLOOR, nextTypeUnlock, RECRUIT_COST, REWARDS, nextUnlock, OPENING_CONTRACTS, parSeconds, topTier, unlockedTypes } from '../game/campaign.ts';
+import { BADGE_POINTS, BADGES, CARRY_SPEED, PICKUP_SECONDS, CONTRACT_POINTS, IDENTIFY_RANGE, IDENTIFY_SECONDS, LOCKDOWN_SECONDS, MAX_TIER, MODIFIER_PAY, NO_KILL_CUT, NO_KILL_FLOOR, nextTypeUnlock, RECRUIT_COST, REWARDS, nextUnlock, OPENING_CONTRACTS, parSeconds, topTier, unlockedTypes } from '../game/campaign.ts';
 import type { Badge, Campaign, Contract, ContractType, Modifier, Operative, Reward, ResultField } from '../game/campaign.ts';
 import { ABILITY_STATS, CLASS_STATS } from '../game/classes.ts';
 import { formatSaveCode, normalizeSaveCode } from '../game/saveCode.ts';
@@ -56,6 +56,8 @@ export const MODIFIER_COPY: Record<Modifier, { title: string; chip: string; effe
   nokill: { title: 'No-kill clause', chip: 'NO KILL', effect: `Each kill but a target cuts the fee by ${NO_KILL_CUT * 100}%, down to ${NO_KILL_FLOOR * 100}% of it.` },
   unknown: { title: 'Unknown target', chip: 'UNKNOWN', effect: `The target passes as a guard. Watch it, unaware, from ${IDENTIFY_RANGE} m for ${IDENTIFY_SECONDS} s, or mark it with Recon. A wrong kill is a guard kill.` },
   carry: { title: 'Carry out', chip: 'CARRY', effect: `The vault gives up a package, not data. Its carrier walks at ${CARRY_PERCENT}% and can't fire or use its ability; it drops where its carrier goes down. Send one operative to stand beside the carrier to take it over. Extraction needs it in the zone.` },
+  through: { title: 'Through-run', chip: 'THROUGH', effect: 'The squad goes in at one corner and extracts at the opposite one, across ground it has not seen.' },
+  called: { title: 'Called extraction', chip: 'CALLED', effect: `No fixed extraction. With the objectives done, call a pickup on an open street; it lands ${PICKUP_SECONDS} s later, and the whole squad must be in its zone. Reinforcements then come in nearest the pickup.` },
 };
 export const modifierPay = `Each modifier adds ${MODIFIER_PAY * 100}% to the fee.`;
 export const ModifierChips = ({ c }: { c: Contract }) => c.modifiers?.length

@@ -1,3 +1,4 @@
+import { hasModifier } from './campaign.ts';
 import type { Contract } from './campaign.ts';
 import { SQUAD_SPEED } from './classes.ts';
 import { between, mulberry32, pick, shuffle } from './rng.ts';
@@ -12,7 +13,9 @@ export type ObjectiveSite = Point & { kind: 'terminal' | 'charge' };
 export type Area = Point & { r: number };
 export type MissionPlan = {
   contract: Contract; world: World; label: string;
-  spawn: Point[]; extract: Point; enemies: EnemySpawn[]; sites: ObjectiveSite[]; vip: Point | null; exits: Point[];
+  // The squad's start corner, and where it extracts: the same corner, but the opposite one on a through-run. A called
+  // extraction has no fixed one; its `extract` is the start, where reinforcements enter until a pickup is called.
+  spawn: Point[]; start: Point; extract: Point; enemies: EnemySpawn[]; sites: ObjectiveSite[]; vip: Point | null; exits: Point[];
   targetArea: Area | null; // assassination intel: where the target was last reported; Intercept: where the courier enters
 };
 
@@ -145,12 +148,16 @@ function attempt(contract: Contract, rng: Rng, withCover: boolean): MissionPlan 
   const { nodes, mids } = streetPoints(lattice);
   const candidates = [...nodes.map(n => n.p), ...mids].filter(p => bare.walkable(p, .6));
   const corner = pick(rng, [[0, 0], [lattice.cols, 0], [0, lattice.rows], [lattice.cols, lattice.rows]]);
-  const extract = lattice.node(corner[0], corner[1]);
-  // The squad lines up along the two edge streets that meet at the extraction corner.
-  const sx = Math.sign(-extract.x), sz = Math.sign(-extract.z);
-  const spawn = [{ x: extract.x + sx * 1.2, z: extract.z }, { x: extract.x, z: extract.z + sz * 1.2 }, { x: extract.x + sx * 2.2, z: extract.z }, { x: extract.x, z: extract.z + sz * 2.2 }];
+  const start = lattice.node(corner[0], corner[1]);
+  // A through-run extracts at the opposite corner; every other contract where it started.
+  const through = hasModifier(contract, 'through'), extract = through ? lattice.node(lattice.cols - corner[0], lattice.rows - corner[1]) : start;
+  // The squad lines up along the two edge streets that meet at its start corner.
+  const sx = Math.sign(-start.x), sz = Math.sign(-start.z);
+  const spawn = [{ x: start.x + sx * 1.2, z: start.z }, { x: start.x, z: start.z + sz * 1.2 }, { x: start.x + sx * 2.2, z: start.z }, { x: start.x, z: start.z + sz * 2.2 }];
   if (!spawn.every(p => bare.walkable(p))) return null;
-  const far = candidates.filter(p => distance(p, extract) > SAFE_RADIUS + 4).sort((a, b) => distance(b, extract) - distance(a, extract));
+  // Objectives lie far from the start; on a through-run far from both corners, so the way out still crosses the district.
+  const reach = (p: Point) => through ? Math.min(distance(p, start), distance(p, extract)) : distance(p, start);
+  const far = candidates.filter(p => reach(p) > SAFE_RADIUS + 4).sort((a, b) => reach(b) - reach(a));
   const farthest = far.slice(0, Math.max(3, Math.ceil(far.length * .4)));
   if (farthest.length < 2) return null;
 
@@ -165,30 +172,30 @@ function attempt(contract: Contract, rng: Rng, withCover: boolean): MissionPlan 
     sites.push({ ...primary, kind: 'charge' }, { ...second, kind: 'charge' });
   }
   if (type === 'escort') { primary = pick(rng, far.slice(0, Math.ceil(far.length * .5))); vip = primary; }
-  if (type === 'assassination') enemies.push({ ...primary, kind: 'target', heading: headingTo(primary, extract), patrol: [] });
+  if (type === 'assassination') enemies.push({ ...primary, kind: 'target', heading: headingTo(primary, start), patrol: [] });
   // Intercept: the courier starts at its entry exit with two escorts beside it; the posted guards hold the route's middle.
   let escorts: Point[] = [];
   if (type === 'intercept') {
-    const route = courierRoute(rng, lattice, bare, spawn[0], extract, bounds.maxX - bounds.minX);
+    const route = courierRoute(rng, lattice, bare, spawn[0], start, bounds.maxX - bounds.minX);
     if (!route) return null;
-    const start = route[0], ahead = headingTo(start, route[1]);
+    const entry = route[0], ahead = headingTo(entry, route[1]);
     // The entry is on the map edge, so they stand at its shoulders a step in, or in file ahead where a shoulder is off the map.
-    const at = ([along, side]: number[]) => ({ x: start.x + Math.sin(ahead) * along + Math.cos(ahead) * side, z: start.z + Math.cos(ahead) * along - Math.sin(ahead) * side });
+    const at = ([along, side]: number[]) => ({ x: entry.x + Math.sin(ahead) * along + Math.cos(ahead) * side, z: entry.z + Math.cos(ahead) * along - Math.sin(ahead) * side });
     escorts = [[.5, .9], [.5, -.9], [1.2, .7], [1.2, -.7], [1.4, 0], [2.4, 0]].map(at).filter(p => bare.walkable(p, .4)).slice(0, 2);
     if (escorts.length < 2) return null;
-    enemies.push({ ...start, kind: 'target', heading: ahead, patrol: route });
+    enemies.push({ ...entry, kind: 'target', heading: ahead, patrol: route });
     primary = route[Math.floor(route.length / 2)];
   }
 
   const used: Point[] = [primary, ...sites, ...enemies.flatMap(e => [e, ...e.patrol]), ...escorts];
-  const free = (p: Point, gap = 1.5) => distance(p, extract) > SAFE_RADIUS && used.every(u => distance(u, p) >= gap);
-  const add = (kind: EnemyKind, p: Point, patrol: Point[], heading = headingTo(p, extract)) => { enemies.push({ ...p, kind, heading, patrol }); used.push(p); };
+  const free = (p: Point, gap = 1.5) => distance(p, start) > SAFE_RADIUS && used.every(u => distance(u, p) >= gap);
+  const add = (kind: EnemyKind, p: Point, patrol: Point[], heading = headingTo(p, start)) => { enemies.push({ ...p, kind, heading, patrol }); used.push(p); };
   const near = (center: Point, r: number, ok = (_: Point) => true) => shuffle(rng, candidates).find(p => distance(p, center) <= r && free(p) && ok(p)) ??
     [0, 1, 2, 3, 4, 5].map(k => ({ x: center.x + Math.cos(k) * 1.6, z: center.z + Math.sin(k) * 1.6 })).find(p => bare.walkable(p, .5) && free(p, 1) && ok(p));
   // A posted guard faces the extraction, so its back is to the map's far side, where the objectives are.
   // Takedowns end just behind it, so it never stands with its back to the map edge; near an edge that can
   // push its post out past 4 m from the objective it holds.
-  const backRoom = (p: Point) => { const h = headingTo(p, extract); return bare.inBounds({ x: p.x - Math.sin(h) * BACK_ROOM, z: p.z - Math.cos(h) * BACK_ROOM }); };
+  const backRoom = (p: Point) => { const h = headingTo(p, start); return bare.inBounds({ x: p.x - Math.sin(h) * BACK_ROOM, z: p.z - Math.cos(h) * BACK_ROOM }); };
   const post = (site: Point) => near(site, 4, backRoom) ?? near(site, 6, backRoom) ?? near(site, 8, backRoom);
 
   for (const p of escorts) enemies.push({ ...p, kind: 'guard', heading: enemies[0].heading, patrol: enemies[0].patrol, escort: true });
@@ -200,16 +207,16 @@ function attempt(contract: Contract, rng: Rng, withCover: boolean): MissionPlan 
   const guards = contract.patrols === undefined ? 3 + contract.tier - (type === 'intercept' ? 2 : 0) : guarding() + contract.patrols;
   const nodeStarts = shuffle(rng, nodes).filter(n => free(n.p, 3));
   while (guarding() < guards && nodeStarts.length) {
-    const n = nodeStarts.pop()!, route = patrolRoute(rng, lattice, n.i, n.j, 2 + Math.floor(rng() * 2), extract);
-    add('guard', n.p, route, headingTo(route[0], route[1] ?? extract));
+    const n = nodeStarts.pop()!, route = patrolRoute(rng, lattice, n.i, n.j, 2 + Math.floor(rng() * 2), start);
+    add('guard', n.p, route, headingTo(route[0], route[1] ?? start));
   }
   for (let k = 0; k < Math.floor(contract.tier / 2) && nodeStarts.length; k++) {
-    const n = nodeStarts.pop()!, route = patrolRoute(rng, lattice, n.i, n.j, 1, extract);
-    add('heavy', n.p, route, headingTo(route[0], route[1] ?? extract));
+    const n = nodeStarts.pop()!, route = patrolRoute(rng, lattice, n.i, n.j, 1, start);
+    add('heavy', n.p, route, headingTo(route[0], route[1] ?? start));
   }
   for (let k = 0; k < contract.tier - 1 && nodeStarts.length; k++) {
     const n = nodeStarts.pop()!;
-    add('camera', n.p, [], headingTo(n.p, pick(rng, candidates.filter(c => distance(c, n.p) > 3)) ?? extract));
+    add('camera', n.p, [], headingTo(n.p, pick(rng, candidates.filter(c => distance(c, n.p) > 3)) ?? start));
   }
   for (let k = 0; k < contract.tier - 3; k++) {
     const site = (sites.length ? sites : [primary])[k % Math.max(1, sites.length)];
@@ -218,7 +225,7 @@ function attempt(contract: Contract, rng: Rng, withCover: boolean): MissionPlan 
 
   const cover: Rect[] = [];
   if (withCover) {
-    const keyPoints = [extract, ...spawn, ...used, ...enemies.flatMap(e => e.patrol)];
+    const keyPoints = [start, extract, ...spawn, ...used, ...enemies.flatMap(e => e.patrol)];
     const clear = (r: Rect) => keyPoints.every(p => Math.abs(p.x - r.x) > r.w / 2 + .9 || Math.abs(p.z - r.z) > r.d / 2 + .9) &&
       nodes.every(n => distance(n.p, r) > 1.6) && cover.every(c => distance(c, r) > 2) && bare.walkable(r, .5);
     const segments = nodes.flatMap(a => [[1, 0], [0, 1]].filter(([di, dj]) => a.i + di <= lattice.cols && a.j + dj <= lattice.rows).map(([di, dj]) => [a.p, lattice.node(a.i + di, a.j + dj)] as const));
@@ -235,16 +242,16 @@ function attempt(contract: Contract, rng: Rng, withCover: boolean): MissionPlan 
   }
 
   const world = new World(bounds, buildings, cover);
-  const exits = nodes.filter(n => (n.i === 0 || n.j === 0 || n.i === lattice.cols || n.j === lattice.rows) && distance(n.p, extract) > 14).map(n => n.p);
+  const exits = nodes.filter(n => (n.i === 0 || n.j === 0 || n.i === lattice.cols || n.j === lattice.rows) && distance(n.p, start) > 14 && distance(n.p, extract) > 14).map(n => n.p);
   if (!exits.length) return null;
   // Every place a unit must reach has to be reachable from the squad's start.
-  const reach = [extract, ...used, ...exits, ...enemies.flatMap(e => e.patrol)];
-  if (!reach.every(p => world.findPath(spawn[0], p).length)) return null;
+  const needed = [start, extract, ...used, ...exits, ...enemies.flatMap(e => e.patrol)];
+  if (!needed.every(p => world.findPath(spawn[0], p).length)) return null;
   const label = `SECTOR ${String(contract.sector).padStart(2, '0')} / ${contract.district}`;
   // Barriers can lengthen the squad's way to the route, so the margin is checked again on the finished streets.
   const courier = enemies.find(e => e.kind === 'target' && e.patrol.length);
   if (courier && !interceptable(world, spawn[0], courier.patrol)) return null;
-  return { contract, world, label, spawn, extract, enemies, sites, vip, exits, targetArea: null };
+  return { contract, world, label, spawn, start, extract, enemies, sites, vip, exits, targetArea: null };
 }
 
 // Drawn from its own stream so the intel never shifts the district's layout.

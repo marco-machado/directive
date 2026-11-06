@@ -40,7 +40,7 @@ export function Pointers({ sim, labels, insets }: { sim: Simulation; labels: Ref
     if (sim.phase === 'mission' && sim.cargo && !sim.cargo.carrier) targets.push({ p: sim.cargo, kind: 'package', label: 'PACKAGE' });
     if (sim.phase === 'mission') for (const o of sim.objectives) {
       // Elimination's sweep has no place to point at: hostiles in sight already get their own arrows.
-      if (o.done || o.kind === 'sweep' || (o.kind === 'extract' && !ready)) continue;
+      if (o.done || o.kind === 'sweep' || (o.kind === 'extract' && (!ready || sim.calledExtraction && !sim.pickup))) continue;
       if (o.kind === 'target') {
         if (target?.visible && !target.guise) targets.push({ p: target, kind: 'target', label: target.name === 'COURIER' ? 'COURIER' : 'TARGET' });
         else if (target && sim.targetArea) targets.push({ p: sim.targetArea, kind: 'target', label: target.name === 'COURIER' ? 'COURIER AREA' : 'TARGET AREA' });
