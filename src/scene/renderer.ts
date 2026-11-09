@@ -6,7 +6,7 @@ import { WebGPURenderer } from 'three/webgpu';
 // warning on every load without WebGPU. `?renderer=webgl` forces the WebGL 2 backend, for testing it on any machine.
 export type Backend = 'webgpu' | 'webgl2';
 
-export async function chooseBackend(): Promise<Backend> {
+async function chooseBackend(): Promise<Backend> {
   if (new URLSearchParams(location.search).get('renderer') === 'webgl') return 'webgl2';
   try {
     return navigator.gpu && await navigator.gpu.requestAdapter() ? 'webgpu' : 'webgl2';

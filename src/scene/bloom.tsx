@@ -11,7 +11,7 @@ import { backendOf, useRenderer } from './renderer.ts';
 // pixels bloom. The pass takes the renderer's 4x MSAA and keeps a stencil buffer for the unit silhouettes
 // (units.tsx). The pipeline applies the renderer's tone mapping and color space at the end. BLOOM.strength is on
 // UnrealBloomPass's scale, which triples it; three's BloomNode does not, so it gets the tripled value.
-export const BLOOM = { threshold: 1, strength: .62, radius: .45 };
+const BLOOM = { threshold: 1, strength: .62, radius: .45 };
 const UNREAL_GAIN = 3;
 // WebGPU always renders to half-float targets; WebGL 2 needs an extension for it.
 export const bloomSupported = (gl: WebGPURenderer) => {

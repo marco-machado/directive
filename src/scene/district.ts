@@ -16,9 +16,9 @@ type Vec4 = [number, number, number, number];
 // `data` is per-instance shader input: roughness and metalness for solid parts, the facade parameters for building
 // tiers, the atlas rectangle for sign faces. `building` makes a part fade with that building.
 export type Part = { x: number; y: number; z: number; w: number; h: number; d: number; rx?: number; ry?: number; rz?: number; color: string; glow?: number; data?: Vec4; building?: number };
-export type Pool = { x: number; z: number; r: number; color: string; strength: number };
+type Pool = { x: number; z: number; r: number; color: string; strength: number };
 export type Practical = { x: number; y: number; z: number; color: string; intensity: number };
-export type BoardText = { title: string; glyphs: number[] };
+type BoardText = { title: string; glyphs: number[] };
 export type District = {
   solid: Part[]; cylinders: Part[]; facade: Part[]; neon: Part[]; signs: Part[]; masts: Part[];
   pools: Pool[]; puddles: Part[]; practicals: Practical[];
@@ -31,21 +31,21 @@ export type District = {
 // Facade layout, shared with the facade shader: window floors start at FLOOR0 and repeat every ROW; a face is split
 // into bays of about BAY. The atlas is ATLAS_CELLS bays square (see textures.ts).
 export const FLOOR0 = 1.25, ROW = .56, BAY = .52, ATLAS_CELLS = 32;
-export const PLINTH_TOP = .24;
+const PLINTH_TOP = .24;
 // Flat street dressing stays under every gameplay ground overlay (vision cones, patrol routes, unit and objective
 // markers, combat decals: the lowest sits at OVERLAY_FLOOR), so it never hides one. Paint, puddles, sidewalks and
 // curbs also lie under the tactical grid, which city.tsx draws at GRID_Y.
 export const OVERLAY_FLOOR = .012, GRID_Y = .011;
 const PAINT_TOP = .004, WALK_TOP = .008, CURB_TOP = .01;
 const SIDEWALK = .55;        // walkway past the plinth
-export const RING = { road: 3.4, park: 4.3, walk: 5.3, blocks: 5.5, depth: 3.2 }; // outer ring, meters past the bounds
+const RING = { road: 3.4, park: 4.3, walk: 5.3, blocks: 5.5, depth: 3.2 }; // outer ring, meters past the bounds
 export const MAX_PRACTICALS = 8;
-export const GLYPHS = 24;    // size of the generated sign script
+const GLYPHS = 24;    // size of the generated sign script
 export const BLADE_CELLS = 16, BOARD_CELLS = 8;
 const GLYPH_STROKES = 4;
 
 // Material roles for solid parts: [roughness, metalness].
-const CONCRETE: Vec4 = [.92, 0, 0, 0], ASPHALT: Vec4 = [.9, 0, 0, 0], PAINT: Vec4 = [.6, .1, 0, 0], METAL: Vec4 = [.42, .8, 0, 0];
+const CONCRETE: Vec4 = [.92, 0, 0, 0], PAINT: Vec4 = [.6, .1, 0, 0], METAL: Vec4 = [.42, .8, 0, 0];
 const FABRIC: Vec4 = [.95, 0, 0, 0], PLASTIC: Vec4 = [.55, 0, 0, 0], CAR: Vec4 = [.3, .55, 0, 0], GLASS: Vec4 = [.12, .3, 0, 0], RUBBER: Vec4 = [.85, 0, 0, 0];
 
 // The map generator's muted accents, pushed to neon.
@@ -292,7 +292,7 @@ function lamp(k: Kit, x: number, z: number, toward: Point, rank: number) {
 }
 
 function parkedCar(k: Kit, rng: Rng, x: number, z: number, alongX: boolean) {
-  const L = between(rng, 1.6, 1.95), W = .78, paint = pick(rng, CAR_PAINT), ry = alongX ? 0 : Math.PI / 2, flip = rng() < .5 ? 1 : -1;
+  const L = between(rng, 1.6, 1.95), W = .78, paint = pick(rng, CAR_PAINT), flip = rng() < .5 ? 1 : -1;
   const at = (a: number, s: number) => alongX ? { x: x + a, z: z + s } : { x: x + s, z: z + a };
   const c = at(0, 0);
   k.box(c.x, .27, c.z, alongX ? L : W, .26, alongX ? W : L, paint, CAR);

@@ -7,9 +7,9 @@ import type { Point } from '../game/world.ts';
 export type Cue = 'click' | 'select' | 'order' | 'aim' | 'purchase' | 'deploy' | 'alarm' | 'objective' | 'down' | 'revive' | 'reinforce'
   | 'grenade' | 'emp' | 'heal' | 'snipe' | 'shot' | 'hostileShot' | 'turretShot' | 'impact' | 'kill' | 'destroy' | 'suspicious';
 export type Volume = 'master' | 'music' | 'ambience' | 'sfx' | 'ui';
-export type AudioSettings = Record<Volume, number> & { muted: boolean };
+type AudioSettings = Record<Volume, number> & { muted: boolean };
 // What the game is doing, which decides the music and ambience loops.
-export type Mood = { mission: boolean; alarm: boolean; paused: boolean };
+type Mood = { mission: boolean; alarm: boolean; paused: boolean };
 
 // gain levels the generated files against each other (measured RMS and peak), before the group volume.
 // gap: the fewest milliseconds between two plays, for cues that can fire many times a second.

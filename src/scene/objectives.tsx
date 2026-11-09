@@ -4,6 +4,7 @@ import { useFrame } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
 import { AdditiveBlending, CylinderGeometry, DoubleSide } from 'three';
 import type { Group, Mesh } from 'three';
+import { MISSIONS } from '../game/missions.ts';
 import { cacheLetter, PICKUP_RADIUS, VIP_REACH } from '../game/simulation.ts';
 import type { Objective, Simulation } from '../game/simulation.ts';
 import { Box, ProgressRing, STILL } from './parts.tsx';
@@ -169,7 +170,7 @@ function Target({ sim, index, labels }: Props) {
       <mesh rotation={[-Math.PI / 2, 0, 0]}><ringGeometry args={[r - .09, r, 64]} /><meshBasicMaterial color={TARGET_RED} transparent opacity={.75} depthWrite={false} toneMapped={false} /></mesh>
       <mesh ref={spin} rotation={[-Math.PI / 2, 0, 0]} position={[0, .005, 0]}><ringGeometry args={[r + .18, r + .3, 48, 1, 0, Math.PI / 6]} /><meshBasicMaterial color={TARGET_RED} transparent opacity={.55} depthWrite={false} toneMapped={false} /></mesh>
       <mesh rotation={[-Math.PI / 2, 0, 0]}><circleGeometry args={[r, 64]} /><meshBasicMaterial color={TARGET_RED} transparent opacity={.06} depthWrite={false} /></mesh>
-      <Html portal={labels} center position={[0, .05, 0]} style={{ pointerEvents: 'none' }}><span ref={areaLabel} hidden className="objective-label target">{sim.plan?.contract.type === 'intercept' ? 'COURIER AREA' : 'TARGET AREA'}</span></Html>
+      <Html portal={labels} center position={[0, .05, 0]} style={{ pointerEvents: 'none' }}><span ref={areaLabel} hidden className="objective-label target">{sim.plan && MISSIONS[sim.plan.contract.type].target === 'courier' ? 'COURIER AREA' : 'TARGET AREA'}</span></Html>
     </group>
     <group ref={reticle} visible={false}>
       <mesh rotation={[-Math.PI / 2, 0, 0]}><ringGeometry args={[.85, .95, 4, 1, Math.PI / 4]} /><meshBasicMaterial color={TARGET_RED} transparent opacity={.9} depthWrite={false} toneMapped={false} /></mesh>

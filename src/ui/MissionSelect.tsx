@@ -5,6 +5,7 @@ import { badgesFor, hasModifier, MAX_COUNTERMEASURES, MAX_TIER, missionPayout, p
 import { ABILITY_STATS, CLASS_STATS } from '../game/classes.ts';
 import type { Threat } from '../game/campaign.ts';
 import type { EnemyKind } from '../game/mapgen.ts';
+import { MISSIONS } from '../game/missions.ts';
 import type { Snapshot } from '../game/simulation.ts';
 import { BADGE_COPY, Clearance, clock, CM_LEVEL, CONTRACTS, countermeasuresEffect, Credits, MODIFIER_COPY, ModifierChips, modifierPay, pad, Pips, rewardLines, SaveWarning, threat, useScrollEdges } from './common.tsx';
 import { Icon, Portrait } from './icons.tsx';
@@ -72,7 +73,7 @@ export function MissionSelect({ state, titleRef, onChoose, onDeploy, onRecenter,
             <ol className="brief-objectives">{objectives.map((o, i) => <li key={i}><Icon name={o.kind === 'extract' ? 'flag' : 'diamond'} />{o.label}</li>)}</ol>
             <ul className="intel" aria-label="Known hostiles">{INTEL.map(({ kind, label, icon }) => {
               const n = plan?.enemies.filter(e => e.kind === kind).length ?? 0;
-              return <li key={kind} className={n ? '' : 'none'}><Icon name={icon} /><b>{n}</b><small>{kind === 'target' && contract.type === 'intercept' ? 'Courier' : kind === 'target' && contract.type === 'surveillance' ? 'Executives' : kind === 'target' && hasModifier(contract, 'unknown') ? 'Target: unidentified' : label}</small></li>;
+              return <li key={kind} className={n ? '' : 'none'}><Icon name={icon} /><b>{n}</b><small>{kind === 'target' && MISSIONS[contract.type].target === 'courier' ? 'Courier' : kind === 'target' && MISSIONS[contract.type].target === 'executive' ? 'Executives' : kind === 'target' && hasModifier(contract, 'unknown') ? 'Target: unidentified' : label}</small></li>;
             })}</ul>
             <div className="brief-pay">
               <div><small>Payout</small><Credits value={contract.payout} /></div>

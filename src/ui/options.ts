@@ -1,6 +1,6 @@
 // Gameplay and graphics options, remembered on this device. Low graphics quality drops the bloom pass.
-export type Quality = 'high' | 'low';
-export type Options = { autoPause: boolean; quality: Quality };
+type Quality = 'high' | 'low';
+type Options = { autoPause: boolean; quality: Quality };
 const KEY = 'ndOptions';
 let options: Options = (() => {
   try {

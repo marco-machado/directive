@@ -13,7 +13,7 @@ export const DIAMOND = new OctahedronGeometry(.13);
 // Unit-sized shapes for instanced parts: a cylinder one meter across and a plane facing +z.
 export const ROUND = new CylinderGeometry(.5, .5, 1, 14), PLANE = new PlaneGeometry();
 const solids = new Map<string, MeshStandardMaterial>(), glows = new Map<string, MeshBasicMaterial>();
-export function solid(color: string, emissive?: string) {
+function solid(color: string, emissive?: string) {
   const key = `${color}|${emissive ?? ''}`;
   let m = solids.get(key);
   if (!m) { m = new MeshStandardMaterial({ color, roughness: .75, metalness: .18, emissive: emissive ?? '#000000', emissiveIntensity: .7 }); solids.set(key, m); }

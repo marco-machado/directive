@@ -18,7 +18,12 @@ export class World {
   private readonly open: Uint8Array;
   private readonly edges: Uint8Array;
 
-  constructor(readonly bounds: Bounds, readonly buildings: Building[], readonly cover: Rect[]) {
+  readonly bounds: Bounds;
+  readonly buildings: Building[];
+  readonly cover: Rect[];
+
+  constructor(bounds: Bounds, buildings: Building[], cover: Rect[]) {
+    this.bounds = bounds; this.buildings = buildings; this.cover = cover;
     this.cols = Math.floor(bounds.maxX) - Math.ceil(bounds.minX) + 1;
     this.rows = Math.floor(bounds.maxZ) - Math.ceil(bounds.minZ) + 1;
     this.open = new Uint8Array(this.cols * this.rows);

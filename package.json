@@ -2,12 +2,15 @@
   "name": "neon-directive",
   "version": "2.0.0",
   "private": true,
+  "engines": {
+    "node": ">=24"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
     "typecheck": "tsc --noEmit && tsc --noEmit -p worker",
-    "test": "node --test --experimental-transform-types tests/*.test.ts",
+    "test": "node --test tests/*.test.ts",
     "test:release": "npm run build && playwright test -c tests/release",
     "preview": "vite preview --host 0.0.0.0",
     "deploy": "vite build && wrangler deploy",
@@ -22,8 +25,8 @@
     "three": "0.187.0"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "1.64.0",
-    "@cloudflare/workers-types": "5.20261015.1",
+    "@cloudflare/vite-plugin": "1.68.0",
+    "@cloudflare/workers-types": "5.20261109.1",
     "@playwright/test": "1.64.1",
     "@types/node": "26.6.6",
     "@types/react": "19.3.0",
@@ -33,6 +36,6 @@
     "patch-package": "8.0.1",
     "typescript": "7.0.2",
     "vite": "8.3.5",
-    "wrangler": "4.151.0"
+    "wrangler": "4.159.0"
   }
 }

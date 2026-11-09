@@ -3,7 +3,7 @@ import { addAfterEffect, addEffect } from '@react-three/fiber';
 import { backendOf, useRenderer } from './renderer.ts';
 import type { Backend } from './renderer.ts';
 
-export type RendererCounts = { backend: Backend; calls: number; triangles: number; lines: number; geometries: number; textures: number };
+type RendererCounts = { backend: Backend; calls: number; triangles: number; lines: number; geometries: number; textures: number };
 declare global { interface Window { __THREE_GAME_DIAGNOSTICS__?: { renderer: RendererCounts } } }
 
 // Dev builds publish the active backend and the last frame's renderer counts on window.__THREE_GAME_DIAGNOSTICS__ for measurement

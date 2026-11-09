@@ -1,241 +1,27 @@
-import { abilityCooldown, abilityPower, ABILITY_STATS, CLASS_STATS, effectScale, EMP_CAMERA_SECONDS, MARK_RADIUS, MARK_SECONDS, SQUAD_SPEED } from './classes.ts';
+import { ABILITY_STATS, CLASS_STATS, EMP_CAMERA_SECONDS, MARK_RADIUS, MARK_SECONDS, SQUAD_SPEED, abilityCooldown, abilityPower, effectScale } from './classes.ts';
 import type { AbilityId, ClassId } from './classes.ts';
-import { applyDismiss, applyLoadout, applyPayout, applyPurchase, applyRecruit, badgesFor, CARRY_SPEED, dealBoard, HANDOVER_REACH, HANDOVER_SECONDS, hasModifier, CACHE_BONUS, EXECUTIVES_NEEDED, PRISONER_BONUS, smashSeconds, TAG_RANGE, TAG_SECONDS, IDENTIFY_RANGE, PICKUP_REACH, IDENTIFY_SECONDS, LOCKDOWN_SECONDS, PICKUP_SECONDS, NO_REWARD, RECRUIT_COST, rewardFor, ROSTER_CAP, freshCampaign, missionPayout, parSeconds, SQUAD_MAX, unlockedCountermeasures } from './campaign.ts';
-import type { Badge, Campaign, Contract, ContractType, Loadout, MissionReport, MissionResults, Reward, Upgrade } from './campaign.ts';
-import { COURIER_DELAY, COURIER_PAUSE, COURIER_SPEED, planMission } from './mapgen.ts';
-import type { Area, EnemyKind, MissionPlan } from './mapgen.ts';
+import { CARRY_SPEED, NO_REWARD, PICKUP_SECONDS, SQUAD_MAX, applyDismiss, applyLoadout, applyPayout, applyPurchase, applyRecruit, dealBoard, freshCampaign, hasModifier, missionPayout, rewardFor, unlockedCountermeasures } from './campaign.ts';
+import type { Badge, Campaign, Contract, Loadout, MissionReport, Reward, Upgrade } from './campaign.ts';
+import { COURIER_DELAY, planMission } from './mapgen.ts';
+import type { Area, MissionPlan } from './mapgen.ts';
 import { mulberry32 } from './rng.ts';
 import type { Rng } from './rng.ts';
 import { distance } from './world.ts';
-import type { Point, World } from './world.ts';
+import type { Point } from './world.ts';
+import { CALM_SECONDS, COVER_FACTOR, HOSTILE_STATS, PRISONER_HP, QUEUE_SPACING, REINFORCE_CAP, REVIVE_HP, REVIVE_SECONDS, ROUTE_MAX, SUSPICIOUS, TAKEDOWN_REACH, TAKEDOWN_SECONDS, TAKEDOWN_STANDOFF, VIP_DAMAGE_TAKEN, VIP_HP, WAIT_MAX, WAIT_STEP, angleDiff, apparentHealth, gearDamage, gearHp, gearRange, headingTo, objectivesMet, pointBack, posted, routeLength, seenAs, suppressedAlert, takedownable, tierHp, watchedBy } from './rules.ts';
+import type { AlarmCause, AttackPreview, Blast, CampaignSync, Cargo, CoverSnap, CoverStatus, Faction, Milestone, Objective, Pending, Phase, Pickup, Shot, Sighting, Snapshot, Unit, UnitKind, Waypoint } from './rules.ts';
+import { contact, escalate, raiseAlarm, reinforce, standDown, suspicious } from './alarm.ts';
+import { oneWay, route, updateHostile, updateVisibility } from './hostiles.ts';
+import { MISSIONS, countsAsKill, earnedBadges, earnedReward, mission, objectivesFor, results, updateCargo, updateFollower, updateObjectives, watchExecutives, watchForTarget } from './missions.ts';
+
 export { freshCampaign, parseCampaign } from './campaign.ts';
 export type { Campaign, Upgrade } from './campaign.ts';
 
-export type Faction = 'squad' | 'hostile' | 'vip';
-export type UnitKind = ClassId | EnemyKind | 'vip';
-// A queued leg of an operative's move order: the path from the previous leg's end, and how long to hold at its own end.
-export type Leg = { path: Point[]; wait: number };
-// A stop on a planned route, as the scene numbers it.
-export type Waypoint = Point & { wait: number };
-export type Unit = Point & {
-  id: string; name: string; kind: UnitKind; faction: Faction; hp: number; maxHp: number; cooldown: number;
-  // `path` is the leg being walked. An operative holds `wait` seconds at its end, then takes the next leg of `route`.
-  path: Point[]; route: Leg[]; targetId: string | null; heading: number; moving: boolean; repath: number;
-  ability: AbilityId | null; abilityCd: number; reviveTarget: string | null; revive: number; hurt: number;
-  patrol: Point[]; patrolIndex: number; exit: Point | null; wait: number; detect: number; stunned: number; marked: number; visible: boolean; hunting: boolean; sweep: number;
-  // Takedowns: the hostile an operative is closing on, and how long a hostile has been held.
-  takedownId: string | null; held: number;
-  // An Intercept escort: the courier it walks beside.
-  escort: string | null;
-  // A posted guard's look-around: seconds into the current cycle, that cycle's length, and its count.
-  look: number; lookEvery: number; lookCycle: number;
-  // An unknown target: the kind it passes as until identified, and how long an operative has watched it (seconds).
-  // Surveillance's executives reuse `watched` toward a tag, and `tagged` once tagged.
-  guise: EnemyKind | null; watched: number; tagged: boolean;
-  // Whether an operative's last move order was its own, not the squad's (only that hands a carrier's package over).
-  solo: boolean;
-};
-// A carry contract's package: where it is, who carries it (null once dropped), and the squadmate taking it over and for how long.
-export type Cargo = Point & { carrier: string | null; to: string | null; hand: number };
-export type Pickup = Point & { in: number };
-// Where a hostile was, and which way it faced, when the squad lost sight of it (`at` is mission time).
-export type Sighting = Point & { heading: number; at: number };
-export type Shot = { id: number; from: Point; to: Point; faction: Faction; shooter: UnitKind; kind: 'bullet' | 'snipe'; ttl: number };
-export type Blast = { id: number; kind: 'grenade' | 'heal' | 'emp'; x: number; z: number; radius: number; ttl: number };
-// A 'sweep' (Elimination) has no place of its own: its point is the district's center, and nothing draws or points at it.
-// An `optional` objective (Smash and grab's caches past the first, a Surveillance executive past the second or lost, a
-// Jailbreak cell once a freed prisoner lives) never holds extraction back. A 'tag' objective follows its executive
-// (`unit`) while the squad can see it, and is `lost` once that executive is killed or gets away; a 'cell' holds its
-// prisoner (`unit`), and is `lost` once that prisoner is killed.
-export type Objective = Point & { kind: 'target' | 'terminal' | 'charge' | 'cache' | 'vip' | 'cell' | 'sweep' | 'tag' | 'extract'; label: string; progress: number; done: boolean; optional: boolean; unit?: string; lost?: boolean };
-export const cacheLetter = (o: Objective) => /(?:cache|executive|prisoner) ([A-Z])/i.exec(o.label)?.[1] ?? '';
-// Whether extraction is open: every objective but extraction is done or optional.
-export const objectivesMet = (objectives: readonly Objective[]) => objectives.every(o => o.kind === 'extract' || o.done || o.optional);
-export type Phase = 'briefing' | 'mission' | 'headquarters';
-export type Pending = { unitId: string; ability: AbilityId } | null;
-// 'covered' when every threat fires into the barrier the unit crouches behind, 'flanked' when one of them has a clear shot.
-export type Shield = 'covered' | 'flanked' | null;
-export type CoverStatus = { threats: { id: string; covered: boolean }[]; shield: Shield };
-export type CoverSnap = Point & { along: Point; span: { lo: number; hi: number } | null };
-// Situations a first-time player meets, each recorded the first time it happens in a mission, in order.
-export type Milestone = 'hostileSeen' | 'suspicious' | 'alarm' | 'abilityReady' | 'downed' | 'extractOpen';
-// What raised the mission's first alarm, the one that cost the stealth bonus: how, the hostile that raised it (null for a
-// grenade), the operative that gave the squad away (null when there was none), where, the nearest objective, and mission time.
-export type AlarmTrigger = 'sighting' | 'takedown' | 'gunfire' | 'grenade';
-export type AlarmCause = Point & { trigger: AlarmTrigger | null; hostile: EnemyKind | null; operative: string | null; near: string; at: number };
-export type Snapshot = {
-  phase: Phase; paused: boolean; selected: string[]; squad: string[]; squadPick: string[]; units: Unit[]; campaign: Campaign;
-  contract: Contract | null; plan: MissionPlan | null; objectives: Objective[]; alarm: boolean; calmIn: number; reinforceIn: number; reinforced: number;
-  // How many alarms the mission has had, this alarm's reinforcement cap and stand-down time, and what the next alarm brings.
-  alarms: number; reinforceCap: number; calmFor: number; nextAlarm: Escalation;
-  result: 'success' | 'failure' | null; failReason: string; payout: number; stealth: boolean; alarmCause: AlarmCause | null; time: number; message: string;
-  saveUnavailable: boolean; syncing: boolean; pending: Pending; cover: Record<string, Shield>; milestones: Milestone[];
-  // The badges a won contract earned, and how many times an operative went down.
-  badges: Badge[]; downs: number;
-  // What a won contract earned beyond its payout, and whether the mission started with an intel reward's routes.
-  reward: Reward; intelReward: boolean;
-  cargo: Cargo | null; // a carry contract's package, once the vault gives it up
-  // A called extraction: where the pickup was called and the seconds until it lands, and whether the squad is choosing where.
-  pickup: Pickup | null; calling: boolean;
-  lockdownIn: number | null; // seconds until a Lockdown contract's exits seal, once its first alarm has sounded
-  // The Countermeasures level picked for (or fixed by) the mission, and the highest one open.
-  countermeasures: number; countermeasuresOpen: number;
-};
-// Reports campaign events to the server; the server answers through applyCampaign.
-export type CampaignSync = {
-  deployed(contractId: string, squad: string[], countermeasures: number): void; completed(report: MissionReport): void;
-  bought(type: Upgrade): void; equipped(loadout: Loadout): void; recruited(id: string): void; dismissed(id: string): void;
-  picked(squad: string[]): void; // the briefing's squad pick, which stays in this browser
-};
+export * from './rules.ts';
 
-export type HostileStats = { name: string; hp: number; damage: number; range: number; fireCooldown: number; speed: number; alertSpeed: number; vision: number; fov: number };
-export const HOSTILE_STATS: Record<EnemyKind, HostileStats> = {
-  guard: { name: 'SECURITY', hp: 75, damage: 14, range: 5.5, fireCooldown: 1.25, speed: 1.8, alertSpeed: 3, vision: 7, fov: .87 },
-  heavy: { name: 'HEAVY', hp: 180, damage: 16, range: 5, fireCooldown: 1.4, speed: 1.5, alertSpeed: 2.2, vision: 6, fov: .87 },
-  camera: { name: 'CAMERA', hp: 40, damage: 0, range: 0, fireCooldown: 0, speed: 0, alertSpeed: 0, vision: 8, fov: .61 },
-  turret: { name: 'TURRET', hp: 140, damage: 18, range: 7, fireCooldown: 1.1, speed: 0, alertSpeed: 0, vision: 7, fov: .79 },
-  target: { name: 'TARGET', hp: 110, damage: 0, range: 0, fireCooldown: 0, speed: 0, alertSpeed: 1.8, vision: 6, fov: .87 },
-};
-// Hostiles grow 5% tougher and 4% deadlier per tier up to tier 3, then a further 10% and 15% per tier.
-export const tierHp = (tier: number) => 1 + .05 * (tier - 1) + .1 * Math.max(0, tier - 3);
-export const tierDamage = (tier: number) => 1 + .04 * (tier - 1) + .15 * Math.max(0, tier - 3);
-export { SQUAD_SPEED };
-export const VIP_SPEED = 3.2;
-export const VIP_HP = 160;
-export const VIP_REACH = 3;           // an operative this close to the VIP
-export const VIP_SECURE_SECONDS = 5; // takes this long to free them
-export const VIP_DAMAGE_TAKEN = .5; // the VIP wears body armor: hostile fire does half damage
-export const VIP_COVER_REACH = 4;   // under fire, the VIP ducks behind cover this close to its operative
-export const PRISONER_HP = 100;     // a Jailbreak prisoner: freed like the VIP, but with no body armor
-export const FLEE_DELAY = 5;        // the target hesitates before running for an exit
-export const FLEE_MIN_EXIT = 16;    // and picks an exit at least this far away
-export const EXECUTIVE_SPEED = 1.2; // a Surveillance executive strolls its beat
-export const SIGHT_RANGE = 10;      // fog of war: hostiles beyond this or behind buildings are hidden
-export const GHOST_SECONDS = 12;    // a hostile that drops out of sight leaves a last-seen marker this long
-export const CONVERGE_RADIUS = 14;  // guards this close to the alarm hunt the squad
-export const SUSPICIOUS = .3;       // detection above this makes a guard stop and stare
-// Detection fills in DETECT_BASE + DETECT_PER_METER × distance seconds: 1.5 s at 2 m, 4 s at a guard's full 7 m.
-export const DETECT_BASE = .5;
-export const DETECT_PER_METER = .5;
-export const CAMERA_DETECT = .75;   // a camera fills in this share of a guard's time at the same distance
-export const DETECT_DRAIN = .25;    // per second, with nobody in sight
-export const detectSeconds = (kind: EnemyKind, d: number) => (DETECT_BASE + DETECT_PER_METER * d) * (kind === 'camera' ? CAMERA_DETECT : 1);
-export const FIRST_WAVE_SECONDS = 5; // the first reinforcement wave follows the alarm this quickly
-export const REINFORCE_SECONDS = 20; // and later waves this far apart
-export const CALM_SECONDS = 25;     // the alarm stands down after this long without contact
-export const SEARCH_TURN = 1.5;     // a hunter at the last known position turns this fast (rad/s)
-export const REINFORCE_CAP = 8;     // reinforcements the first alarm of a mission can bring
-export const REPEAT_REINFORCEMENTS = 4; // each later alarm in the mission brings this many more
-export const CALM_STEP = 10;        // and takes this much longer to stand down
-// What a mission's `n`th alarm brings (n counts from 1; the first is the plain alarm): how many reinforcements the
-// mission can have had by its end (any an earlier alarm never sent still come), how many heavies lead each wave,
-// and how long the squad must stay out of contact for it to stand down.
-// Each alarm puts one more heavy at the head of its waves than the one before, until whole waves are heavies.
-export type Escalation = { cap: number; heavies: number; calm: number };
-export const escalation = (n: number, tier: number): Escalation =>
-  ({ cap: REINFORCE_CAP + REPEAT_REINFORCEMENTS * (n - 1), heavies: Math.min(n - 1, waveSize(tier)), calm: CALM_SECONDS + CALM_STEP * (n - 1) });
-// What each Countermeasures level does (see campaign.ts), each adding to the one before: hostiles notice intruders in
-// `detect` times the usual time, alarms take `calm` s longer to stand down, and with `uncapped` reinforcements never stop.
-export const COUNTERMEASURES = [
-  { detect: 1, calm: 0, uncapped: false },
-  { detect: .8, calm: 0, uncapped: false },
-  { detect: .8, calm: 15, uncapped: false },
-  { detect: .8, calm: 15, uncapped: true },
-] as const;
-// Reinforcements enter in waves of this many.
-export const waveSize = (tier: number) => tier >= 4 ? 3 : 2;
-export const REVIVE_SECONDS = 3;
-export const REVIVE_HP = .4;
-export const HACK_SECONDS = 12;
-export const PLANT_SECONDS = 3;
-export const CACHE_SECONDS = 3; // an operative at a Smash and grab cache opens it in this long
-export const COVER_FACTOR = .5;
-// What each gear level buys, by how the squad spends it (Campaign.loadout). At level 0 every mode is plain issue.
-export const PIERCING_BONUS = 4;       // damage a weapon level adds with piercing rounds
-export const SUPPRESSOR_STEP = .2;     // with suppressors, a hostile that survives a rifle hit gains 1 − this × level detection, not the alarm
-export const EXTENDED_RANGE = .6;      // m of rifle range a weapon level adds with extended barrels
-export const HEAVY_HP = 12;            // health an armor level adds with heavy plating
-export const LIGHT_CONCEALMENT = .15;  // with light weave, hostiles take 1 + this × level times as long to notice an operative
-export const gearDamage = (c: Campaign) => c.loadout.weapon === 'piercing' ? c.weapon * PIERCING_BONUS : 0;
-export const gearRange = (c: Campaign) => c.loadout.weapon === 'extended' ? c.weapon * EXTENDED_RANGE : 0;
-export const suppressedAlert = (c: Campaign) => c.loadout.weapon === 'suppressed' ? 1 - SUPPRESSOR_STEP * c.weapon : 1;
-export const gearHp = (c: Campaign) => c.loadout.armor === 'heavy' ? c.armor * HEAVY_HP : 0;
-export const concealment = (c: Campaign) => c.loadout.armor === 'light' ? 1 + LIGHT_CONCEALMENT * c.armor : 1;
-export const PICKUP_RADIUS = 3;     // a called pickup's zone (a fixed extraction's is 2 m)
-export const QUEUE_SPACING = .9;    // gap between operatives, side by side or in single file
-export const ROUTE_MAX = 8;         // waypoints an operative's route can hold, the one it is walking to included
-export const WAIT_STEP = 2;         // each wait order adds this many seconds at the last waypoint
-export const WAIT_MAX = 10;         // and one past this clears the wait
-export const TAKEDOWN_REACH = 1.2;  // an operative this close to an unaware hostile starts the takedown
-export const TAKEDOWN_SECONDS = 1.5;
-const TAKEDOWN_STANDOFF = .9;       // where the approach route ends, behind the hostile
-export const LOOK_ANGLE = Math.PI / 3; // posted guards look this far to either side of their post
-export const LOOK_PAUSE = 2;        // and hold that look this long
-export const LOOK_EVERY = [6, 8] as const; // seconds between the starts of two look-arounds
-export const LOOK_TURN = 1.5;       // rad/s while looking around
-// Cameras and turrets sweep this far (rad) to either side of the way they were set up to face.
-export const SWEEP: Record<'camera' | 'turret', number> = { camera: .7, turret: 1 };
-
-const angleDiff = (a: number, b: number) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
-// Turns `u` toward `heading` by at most `step` radians, the short way round.
-const turnTo = (u: Unit, heading: number, step: number) => {
-  const d = Math.atan2(Math.sin(heading - u.heading), Math.cos(heading - u.heading));
-  u.heading = Math.abs(d) <= step ? heading : u.heading + Math.sign(d) * step;
-};
-// A number in [0, 1) fixed by the contract seed, a unit id and a counter, so look-arounds replay exactly.
-const hashed = (seed: number, id: string, n: number) => {
-  let h = seed ^ 0x2545f491;
-  for (let i = 0; i < id.length; i++) h = Math.imul(h ^ id.charCodeAt(i), 0x01000193);
-  return mulberry32((h ^ Math.imul(n + 1, 0x9e3779b1)) >>> 0)();
-};
-// How the debrief names each objective as a landmark (charges carry their letter from the label).
-const LANDMARK: Record<Objective['kind'], string> = { target: 'the target', terminal: 'the vault terminal', charge: 'a charge site', cache: 'a cache', tag: 'an executive', vip: 'the VIP', cell: 'a cell', sweep: 'the district', extract: 'extraction' };
-// Elimination's objective, with how many of the district's own hostiles are still standing.
-export const sweepLabel = (left: number) => left ? `Down every hostile (${left} left)` : 'Down every hostile';
-// Reinforcements are numbered r0, r1, … as they enter (see reinforce); the district's own hostiles are h0, h1, ….
-export const isReinforcement = (u: Pick<Unit, 'id' | 'faction'>) => u.faction === 'hostile' && /^r\d+$/.test(u.id);
-// What a hostile shows the squad: an unknown target passes for the guard it is disguised as.
-export const seenAs = (u: Pick<Unit, 'kind'> & { guise?: EnemyKind | null }) => HOSTILE_STATS[(u.guise ?? u.kind) as EnemyKind];
-// The health and full health the squad reads off a hostile: an unknown target reads as the guard it passes for, at the
-// same share of its health.
-export const apparentHealth = (u: Pick<Unit, 'hp' | 'maxHp' | 'guise'>, tier: number) => {
-  if (!u.guise) return { hp: u.hp, maxHp: u.maxHp };
-  const maxHp = Math.round(HOSTILE_STATS[u.guise].hp * tierHp(tier));
-  return { hp: maxHp * u.hp / u.maxHp, maxHp };
-};
-// Whether a dead hostile counts as a kill (for Bloodless and a no-kill clause): every one but the target of an
-// assassination or intercept. Surveillance's executives are to be watched, not killed.
-export const countsAsKill = (u: Pick<Unit, 'kind'>, type: ContractType | undefined) => u.kind !== 'target' || type === 'surveillance';
-const takedownable = (u: Unit) => u.kind === 'guard' || u.kind === 'heavy' || u.kind === 'target';
-export const posted = (u: Pick<Unit, 'kind' | 'patrol'> & { guise?: EnemyKind | null }) => (u.kind === 'guard' || u.kind === 'heavy' || !!u.guise) && u.patrol.length < 2;
-const headingTo = (a: Point, b: Point) => Math.atan2(b.x - a.x, b.z - a.z);
-const routeLength = (from: Point, path: Point[]) => path.reduce((sum, p, i) => sum + distance(i ? path[i - 1] : from, p), 0);
-// The point `d` back from the end of a route, walking toward its start.
-const pointBack = (route: Point[], d: number): Point => {
-  for (let i = route.length - 1; i > 0; i--) {
-    const a = route[i], b = route[i - 1], len = distance(a, b);
-    if (!len || len < d) { d -= len; continue; }
-    return { x: a.x + (b.x - a.x) * d / len, z: a.z + (b.z - a.z) * d / len };
-  }
-  return { x: route[0].x, z: route[0].z };
-};
-// Ground a hostile can see, widened by `margin` for planning, wherever it will look: a posted guard's whole look-around
-// and a camera's or turret's whole sweep count, not only the way it faces now.
-export function watchedBy(world: World, v: Pick<Unit, 'x' | 'z' | 'kind' | 'heading' | 'sweep' | 'patrol'>, margin = 1) {
-  const stats = seenAs(v), range = stats.vision + .8 * margin, fov = stats.fov + .25 * margin;
-  const turn = posted(v) ? LOOK_ANGLE : v.kind === 'camera' || v.kind === 'turret' ? SWEEP[v.kind] : null;
-  return (p: Point) => {
-    if (distance(v, p) > range) return false;
-    const a = headingTo(v, p);
-    if (angleDiff(a, v.heading) > fov && !(turn !== null && angleDiff(a, v.sweep) <= turn + fov)) return false;
-    return world.sightClear(v, p);
-  };
-}
-// What an attack order would do with the current selection: a takedown by the listed operatives, a volley that kills
-// silently, one that leaves the hostile alive and raises the alarm, or (during the alarm) just a volley.
-// With suppressed rifles, a volley that leaves the hostile alive can turn it suspicious instead of raising the alarm.
-export type AttackPreview = { outcome: 'takedown' | 'kill' | 'suspicious' | 'alert' | 'volley'; takedown: string[]; damage: number; hp: number; short: number };
-
+// The single source of game state: the campaign, the contract board and the mission in play. The class keeps orders,
+// combat and the update loop; alarm.ts, hostiles.ts and missions.ts hold the rest of the rules as functions over it,
+// which is why the mission state they read and write is public here. Nothing outside src/game writes it.
 export class Simulation {
   campaign: Campaign;
   phase: Phase = 'briefing';
@@ -272,31 +58,31 @@ export class Simulation {
   lastSeen = new Map<string, Sighting>();
   intel = new Map<string, Point[]>();
   milestones: Milestone[] = [];
-  private reinforced = 0;
+  reinforced = 0;
   private badges: Badge[] = [];
   private reward: Reward = NO_REWARD;
   // Seconds until a Lockdown contract's exits seal; null until its first alarm (and on any other contract).
   lockdownIn: number | null = null;
-  private escaped = new Set<string>(); // Surveillance executives that got away, taken off the map
+  escaped = new Set<string>(); // Surveillance executives that got away, taken off the map
   cargo: Cargo | null = null;
   pickup: Pickup | null = null;
   calling = false;
   private intelReward = false;
-  private downs = 0;
-  private alarms = 0;
-  private reinforceCap = REINFORCE_CAP;
-  private calmFor = CALM_SECONDS;
-  private waves = 0; // waves the current alarm has sent
+  downs = 0;
+  alarms = 0;
+  reinforceCap = REINFORCE_CAP;
+  calmFor = CALM_SECONDS;
+  waves = 0; // waves the current alarm has sent
   // Followers: the escort VIP and Jailbreak's prisoners (faction 'vip'), freed one by one; `joined` holds the freed.
-  private joined = new Set<string>();
-  private vipThreat: Point | null = null; // where the last shot at a follower came from
-  private lastKnown: Point | null = null;
-  private holdup = '';
+  joined = new Set<string>();
+  vipThreat: Point | null = null; // where the last shot at a follower came from
+  lastKnown: Point | null = null;
+  holdup = '';
   private casts: { unitId: string; ability: AbilityId; point: Point; targetId: string | null }[] = [];
   private hitThisFrame = new Map<Unit, { by: Unit | null; rifle: boolean }>(); // hostiles hit this frame, by whom, and whether only by the squad's rifles
   private volleyReady = new Set<Unit>();
-  private autoPaused = new Set<string>();
-  private rng: Rng = Math.random;
+  autoPaused = new Set<string>();
+  rng: Rng = Math.random;
   private nextId = 0;
   private listeners = new Set<() => void>();
   private snapshot!: Snapshot;
@@ -308,12 +94,12 @@ export class Simulation {
   }
   subscribe = (callback: () => void) => { this.listeners.add(callback); return () => { this.listeners.delete(callback); }; };
   getSnapshot = () => this.snapshot;
-  private emit() {
+  emit() {
     this.snapshot = {
       phase: this.phase, paused: this.paused, selected: [...this.selected], squad: [...this.squad], squadPick: [...this.squadPick],
       units: this.units.map(u => ({ ...u })), campaign: this.campaign, contract: this.contract, plan: this.plan,
       objectives: this.objectives.map(o => ({ ...o })), alarm: this.alarm, calmIn: this.calmIn, reinforceIn: this.reinforceIn, reinforced: this.reinforced, result: this.result,
-      alarms: this.alarms, reinforceCap: this.reinforceCap, calmFor: this.calmFor, nextAlarm: this.escalate(this.alarms + 1),
+      alarms: this.alarms, reinforceCap: this.reinforceCap, calmFor: this.calmFor, nextAlarm: escalate(this, this.alarms + 1),
       failReason: this.failReason, payout: this.payout, stealth: !this.detected, alarmCause: this.alarmCause, time: this.time, message: this.message,
       saveUnavailable: this.saveUnavailable, syncing: this.syncing, pending: this.pending, badges: this.badges, reward: this.reward, intelReward: this.intelReward, lockdownIn: this.lockdownIn, cargo: this.cargo && { ...this.cargo }, pickup: this.pickup && { ...this.pickup }, calling: this.calling, downs: this.downs, countermeasures: this.countermeasures, countermeasuresOpen: unlockedCountermeasures(this.campaign),
       milestones: this.milestones,
@@ -321,7 +107,7 @@ export class Simulation {
     };
     this.listeners.forEach(fn => fn());
   }
-  private reach(m: Milestone) { if (this.phase === 'mission' && !this.milestones.includes(m)) this.milestones = [...this.milestones, m]; }
+  reach(m: Milestone) { if (this.phase === 'mission' && !this.milestones.includes(m)) this.milestones = [...this.milestones, m]; }
   private report(send: (sync: CampaignSync) => void) { if (this.sync) try { send(this.sync); } catch { this.saveUnavailable = true; } }
   applyCampaign(campaign: Campaign) { this.campaign = campaign; if (this.phase !== 'mission') this.refreshBoard(); this.emit(); }
   setSaveUnavailable(unavailable: boolean) { if (this.saveUnavailable !== unavailable) { this.saveUnavailable = unavailable; this.emit(); } }
@@ -382,7 +168,7 @@ export class Simulation {
   }
 
   // ---- Mission setup ----
-  private makeUnit(id: string, name: string, kind: UnitKind, faction: Faction, p: Point, maxHp: number, heading = 0): Unit {
+  makeUnit(id: string, name: string, kind: UnitKind, faction: Faction, p: Point, maxHp: number, heading = 0): Unit {
     return {
       id, name, kind, faction, x: p.x, z: p.z, hp: maxHp, maxHp, cooldown: faction === 'hostile' ? 1 : 0, path: [], route: [], targetId: null, heading, moving: false, repath: 0,
       ability: null, abilityCd: 0, reviveTarget: null, revive: 0, hurt: 0, patrol: [], patrolIndex: 0, exit: null, wait: 0, detect: 0, stunned: 0, marked: 0, visible: false, hunting: false, sweep: heading,
@@ -403,41 +189,27 @@ export class Simulation {
       const u = this.makeUnit(id, op.name, op.cls, 'squad', plan.spawn[i % plan.spawn.length], stats.hp + gearHp(this.campaign), headingTo(plan.start, { x: 0, z: 0 }));
       u.ability = stats.ability; this.units.push(u);
     });
-    const courier = plan.contract.type === 'intercept' ? plan.enemies.findIndex(e => e.kind === 'target') : -1;
+    const rules = MISSIONS[plan.contract.type], courier = rules.target === 'courier' ? plan.enemies.findIndex(e => e.kind === 'target') : -1;
     plan.enemies.forEach((e, i) => {
       const stats = HOSTILE_STATS[e.kind];
-      const u = this.makeUnit(`h${i}`, i === courier ? 'COURIER' : stats.name, e.kind, 'hostile', e, Math.round(stats.hp * tierHp(plan.contract.tier)), e.heading);
+      const u = this.makeUnit(`h${i}`, e.kind === 'target' && rules.target ? rules.target.toUpperCase() : stats.name, e.kind, 'hostile', e, Math.round(stats.hp * tierHp(plan.contract.tier)), e.heading);
       u.patrol = e.patrol; this.units.push(u);
       if (i === courier) u.wait = COURIER_DELAY;
       // An escort walks the courier's route, so it reads as a walker, not a posted guard.
       if (e.escort) u.escort = `h${courier}`;
       // An unknown target holds its post as a guard would, under a guard's name, until it is identified.
-      if (e.kind === 'target' && plan.contract.type === 'assassination' && hasModifier(plan.contract, 'unknown')) { u.guise = 'guard'; u.name = HOSTILE_STATS.guard.name; }
-      if (e.kind === 'target' && plan.contract.type === 'surveillance') u.name = 'EXECUTIVE';
+      if (e.kind === 'target' && !rules.target && hasModifier(plan.contract, 'unknown')) { u.guise = 'guard'; u.name = HOSTILE_STATS.guard.name; }
     });
     if (plan.vip) this.units.push(this.makeUnit('vip', 'VIP', 'vip', 'vip', plan.vip, VIP_HP, headingTo(plan.vip, plan.extract)));
     plan.sites.filter(s => s.kind === 'cell').forEach((s, i) => this.units.push(this.makeUnit(`p${i}`, 'PRISONER', 'vip', 'vip', s, PRISONER_HP, headingTo(s, plan.extract))));
     this.selected = [...this.squad];
-    const o = (kind: Objective['kind'], label: string, p: Point): Objective => ({ kind, label, x: p.x, z: p.z, progress: 0, done: false, optional: false });
-    const t = plan.contract.type, target = plan.enemies.find(e => e.kind === 'target');
-    if (t === 'assassination' && target) this.objectives.push(o('target', 'Neutralize the target', target));
-    if (t === 'intercept' && target) this.objectives.push(o('target', 'Stop the courier', target));
-    if (t === 'heist') this.objectives.push(o('terminal', 'Download the vault data', plan.sites[0]));
-    if (t === 'sabotage') plan.sites.forEach((s, i) => this.objectives.push(o('charge', `Plant charge ${'AB'[i]}`, s)));
-    if (t === 'smash') plan.sites.forEach((s, i) => this.objectives.push(o('cache', `Open cache ${'ABC'[i]}`, s)));
-    if (t === 'surveillance') this.units.filter(u => u.kind === 'target').forEach((u, i) => this.objectives.push({ ...o('tag', `Tag executive ${'ABC'[i]}`, u), unit: u.id }));
-    if (t === 'escort' && plan.vip) this.objectives.push({ ...o('vip', 'Free the VIP', plan.vip), unit: 'vip' });
-    if (t === 'jailbreak') plan.sites.filter(s => s.kind === 'cell').forEach((s, i) => this.objectives.push({ ...o('cell', `Free prisoner ${'ABC'[i]}`, s), unit: `p${i}` }));
-    if (t === 'elimination') this.objectives.push(o('sweep', sweepLabel(plan.enemies.length), { x: 0, z: 0 }));
-    // A called extraction's zone sits at the start until the pickup is called, and nothing shows or points at it till then.
-    const who = t === 'escort' ? 'the VIP and the whole squad' : t === 'jailbreak' ? 'the freed prisoners and the whole squad' : 'the whole squad';
-    this.objectives.push(o('extract', hasModifier(plan.contract, 'called') ? `Call a pickup, then get ${who} to it` : t === 'escort' ? 'Escort the VIP and the whole squad to extraction' : `Get ${who} to extraction`, plan.extract));
+    this.objectives = objectivesFor(plan, this.units);
     // An intel reward spent on this deployment: every route is known from the start, as if each had been watched.
     if (this.intelReward) for (const u of this.units) {
       if (u.faction !== 'hostile' || u.patrol.length < 2 || u.escort) continue;
-      this.intel.set(u.id, u.kind === 'target' && this.plan?.contract.type === 'intercept' ? this.oneWay(u.patrol) : this.route(u.patrol));
+      this.intel.set(u.id, u.kind === 'target' && rules.target === 'courier' ? oneWay(this, u.patrol) : route(this, u.patrol));
     }
-    this.updateVisibility();
+    updateVisibility(this);
   }
   // While a save is in flight the board may be one the client dealt itself (the first payout replaces contract 01),
   // so a deploy waits for the server's offers: the server would reject an id it never dealt.
@@ -459,7 +231,7 @@ export class Simulation {
 
   // ---- Orders ----
   private livingSquad() { return this.units.filter(u => u.faction === 'squad' && u.hp > 0); }
-  private unit(id: string) { return this.units.find(u => u.id === id); }
+  unit(id: string) { return this.units.find(u => u.id === id); }
   select(id: string, additive = false) {
     const u = this.unit(id);
     if (!u || u.faction !== 'squad' || u.hp <= 0) return;
@@ -699,66 +471,6 @@ export class Simulation {
     else this.move(u, additive); // the VIP stands on the street, so a click on it is a move order
   }
 
-  // ---- Combat rules ----
-  // `by` is the hostile that raised it and `culprit` the operative that gave the squad away, when there is one.
-  private raiseAlarm(at: Point, reason: string, seen?: Point, cause: { trigger?: AlarmTrigger; by?: Unit; culprit?: Unit } = {}) {
-    if (!this.plan) return;
-    // A fresh trigger during the alarm only restarts the stand-down countdown.
-    this.contact(null);
-    if (this.alarm) return;
-    this.alarm = true; this.detected = true; this.reach('alarm');
-    if (hasModifier(this.plan.contract, 'lockdown') && this.lockdownIn === null) this.lockdownIn = LOCKDOWN_SECONDS;
-    // Every alarm sends its first wave as quickly; a later one sends more, and takes longer to stand down.
-    const e = this.escalate(++this.alarms);
-    this.reinforceCap = e.cap; this.calmFor = this.calmIn = e.calm; this.waves = 0; this.reinforceIn = FIRST_WAVE_SECONDS;
-    const known = seen ?? at; this.lastKnown = { x: known.x, z: known.z };
-    this.alarmCause ??= { x: known.x, z: known.z, trigger: cause.trigger ?? null, hostile: (cause.by?.kind as EnemyKind | undefined) ?? null, operative: cause.culprit?.name ?? null, near: this.landmarkNear(known), at: this.time };
-    for (const u of this.units) {
-      if (u.faction !== 'hostile' || u.hp <= 0) continue;
-      u.detect = 1;
-      if ((u.kind === 'guard' || u.kind === 'heavy') && distance(u, at) <= CONVERGE_RADIUS) { u.hunting = true; u.repath = 0; }
-      // A target already running from an earlier alarm keeps its exit and does not hesitate again.
-      // An Intercept courier runs on for its own exit, at once.
-      if (u.kind === 'target' && !u.exit && this.plan.contract.type === 'intercept') { u.exit = u.patrol.at(-1)!; u.wait = 0; u.path = []; }
-      if (u.kind === 'target' && !u.exit && !u.tagged) {
-        const exits = [...this.plan.exits].sort((a, b) => distance(u, a) - distance(u, b));
-        u.exit = [...exits.filter(e => distance(u, e) >= FLEE_MIN_EXIT), ...exits].find(e => this.plan!.world.findPath(u, e).length) ?? null;
-        u.wait = FLEE_DELAY;
-      }
-    }
-    this.message = `ALARM: ${reason}. Weapons free.`;
-  }
-  // The objective closest to a point, named for the debrief.
-  private landmarkNear(p: Point) {
-    const o = this.objectives.filter(o => o.kind !== 'sweep').sort((a, b) => distance(a, p) - distance(b, p))[0];
-    if (!o) return 'the district';
-    return o.kind === 'charge' ? o.label.replace('Plant charge', 'Charge') : o.kind === 'cache' ? `Cache ${cacheLetter(o)}` : LANDMARK[o.kind];
-  }
-  // While alarmed, anything that gives the squad away restarts the countdown; a sighting or gunfire also updates where hunters search.
-  private contact(seen: Point | null) {
-    if (!this.alarm) return;
-    this.calmIn = this.calmFor;
-    if (seen) this.lastKnown = { x: seen.x, z: seen.z };
-  }
-  private standDown() {
-    this.alarm = false; this.calmIn = 0; this.lastKnown = null;
-    // A fleeing target keeps running for its exit.
-    // A posted guard that left its post to hunt keeps watch where it ends up.
-    for (const u of this.units) if (u.faction === 'hostile' && u.hp > 0) { if (u.hunting && posted(u)) u.sweep = u.heading; u.detect = 0; u.hunting = false; if (!u.exit) u.path = []; }
-    const next = this.escalate(this.alarms + 1), more = Number.isFinite(next.cap) ? `${REPEAT_REINFORCEMENTS} more reinforcements` : 'reinforcements without end';
-    this.message = `Contact lost. Alarm standing down. Holding fire. Next alarm: ${more}, ${next.heavies} ${next.heavies === 1 ? 'heavy' : 'heavies'} leading each wave, ${next.calm} s to stand down.`;
-  }
-  // A mission's `n`th alarm, as its Countermeasures level hardens it.
-  private escalate(n: number): Escalation {
-    const e = escalation(n, this.plan?.contract.tier ?? 1), cm = COUNTERMEASURES[this.countermeasures];
-    return { ...e, calm: e.calm + cm.calm, cap: cm.uncapped ? Infinity : e.cap };
-  }
-  // With auto-pause on, the first time a hostile turns suspicious pauses the mission so the player can react.
-  private suspicious(u: Unit) {
-    if (!this.autoPause || this.autoPaused.has(u.id)) return;
-    this.autoPaused.add(u.id); this.paused = true;
-    this.message = `${u.name} is suspicious. Auto-paused.`;
-  }
   // `rifle`: a squad rifle round, which suppressors quieten (sniper shots and grenades are never quiet).
   private damage(target: Unit, amount: number, from: Unit | null, rifle = false) {
     if (target.hp <= 0) return;
@@ -772,9 +484,9 @@ export class Simulation {
       if (target.hp <= 0) { target.path = []; this.clearOrders(target); if (target.faction === 'squad') { this.reach('downed'); this.downs++; this.message = `${target.name} is down.`; } }
     }
   }
-  private shoot(from: Unit, to: Unit, amount: number, kind: Shot['kind'] = 'bullet') {
+  shoot(from: Unit, to: Unit, amount: number, kind: Shot['kind'] = 'bullet') {
     this.damage(to, amount, from, kind === 'bullet' && from.faction === 'squad');
-    this.contact(from.faction === 'hostile' ? to : from);
+    contact(this, from.faction === 'hostile' ? to : from);
     this.shots.push({ id: this.nextId++, from: { x: from.x, z: from.z }, to: { x: to.x, z: to.z }, faction: from.faction, shooter: from.kind, kind, ttl: kind === 'snipe' ? .35 : .12 });
   }
   private resolveCast(c: Simulation['casts'][number]) {
@@ -786,7 +498,7 @@ export class Simulation {
     if (c.ability === 'grenade') {
       hostiles.filter(u => distance(u, c.point) <= stats.radius).forEach(u => this.damage(u, power, null));
       this.blasts.push({ id: this.nextId++, kind: 'grenade', ...c.point, radius: stats.radius, ttl: .7 });
-      this.raiseAlarm(c.point, 'Grenade detonation', undefined, { trigger: 'grenade', culprit: caster });
+      raiseAlarm(this, c.point, 'Grenade detonation', undefined, { trigger: 'grenade', culprit: caster });
     } else if (c.ability === 'heal') {
       this.units.filter(u => u.faction !== 'hostile' && u.hp > 0 && distance(u, caster) <= stats.radius).forEach(u => { u.hp = Math.min(u.maxHp, u.hp + power); });
       this.blasts.push({ id: this.nextId++, kind: 'heal', x: caster.x, z: caster.z, radius: stats.radius, ttl: .8 });
@@ -802,46 +514,21 @@ export class Simulation {
     }
   }
 
-  private finish(success: boolean, reason = '') {
+  finish(success: boolean, reason = '') {
     if (this.phase !== 'mission' || !this.contract) return;
     this.phase = 'headquarters'; this.result = success ? 'success' : 'failure'; this.failReason = reason; this.pending = null;
     if (success) {
       const kills = this.units.filter(u => u.faction === 'hostile' && u.hp <= 0 && countsAsKill(u, this.contract!.type)).length;
-      const report: MissionReport = { stealth: !this.detected, badges: this.earnedBadges(), results: this.results(), ...(kills ? { kills } : {}) };
-      this.badges = report.badges; this.payout = missionPayout(this.contract, report.stealth, kills); this.reward = this.earnedReward(rewardFor(this.contract, report.results));
+      const report: MissionReport = { stealth: !this.detected, badges: earnedBadges(this), results: results(this), ...(kills ? { kills } : {}) };
+      this.badges = report.badges; this.payout = missionPayout(this.contract, report.stealth, kills); this.reward = earnedReward(this, rewardFor(this.contract, report.results));
       this.campaign = applyPayout(this.campaign, this.contract, this.countermeasures, report, Math.random); this.report(s => s.completed(report));
     }
     this.emit();
   }
-  // The per-contract results a won contract reports (see RewardSpec in campaign.ts), from the types that have any.
-  private results(): MissionResults {
-    const type = this.plan?.contract.type;
-    if (type === 'smash') return { caches: this.objectives.filter(o => o.kind === 'cache' && o.done).length };
-    if (type === 'surveillance') return { tagged: this.objectives.filter(o => o.kind === 'tag' && o.done).length };
-    if (type === 'jailbreak') return { prisoners: this.rescued().length };
-    return {};
-  }
-  // As applyPayout pays it: an operative for a full roster comes as RECRUIT_COST credits.
-  private earnedReward(r: Reward): Reward {
-    const full = this.campaign.roster.length >= ROSTER_CAP;
-    return { ...r, credits: r.credits + (r.operative && full ? RECRUIT_COST : 0), operative: r.operative && !full };
-  }
-  // The badges a won contract earns (see Badge in campaign.ts). Purge counts the hostiles the district started with, not
-  // reinforcements, which an alarm can keep sending.
-  private earnedBadges(): Badge[] {
-    const c = this.contract!, hostiles = this.units.filter(u => u.faction === 'hostile'), district = hostiles.filter(u => !isReinforcement(u));
-    const earned: Record<Badge, boolean> = {
-      ghost: !this.detected, untouched: !this.downs, swift: this.time <= parSeconds(c.type, c.tier),
-      bloodless: hostiles.every(u => u.hp > 0 || !countsAsKill(u, c.type)), purge: district.length > 0 && district.every(u => u.hp <= 0),
-    };
-    return badgesFor(c.type).filter(b => earned[b]);
-  }
   private intruders() { return this.units.filter(u => u.hp > 0 && (u.faction === 'squad' || (u.faction === 'vip' && this.joined.has(u.id)))); }
   // Whether a follower (the VIP or a prisoner) has been freed and walks with the squad.
   following(u: Pick<Unit, 'id'>) { return this.joined.has(u.id); }
-  // Jailbreak's freed prisoners still alive.
-  private rescued() { return this.units.filter(u => u.faction === 'vip' && u.id !== 'vip' && u.hp > 0 && this.joined.has(u.id)); }
-  private walk(u: Unit, speed: number, dt: number) {
+  walk(u: Unit, speed: number, dt: number) {
     const next = u.path[0]; if (!next) return;
     const d = distance(u, next);
     u.heading = headingTo(u, next);
@@ -849,177 +536,11 @@ export class Simulation {
     else { u.x += (next.x - u.x) / d * speed * dt; u.z += (next.z - u.z) / d * speed * dt; }
     u.moving = true;
   }
-  private updateVisibility() {
-    const eyes = this.units.filter(u => u.faction === 'squad' && u.hp > 0), world = this.plan?.world;
-    for (const u of this.units) {
-      if (u.faction !== 'hostile') { u.visible = true; continue; }
-      const was = u.visible;
-      u.visible = u.marked > 0 || (!!world && eyes.some(e => distance(e, u) <= SIGHT_RANGE && world.sightClear(e, u)));
-      if (u.visible && u.hp > 0) this.reach('hostileSeen');
-      if (u.kind === 'target' && !u.guise && u.visible && u.hp > 0 && this.targetArea) { this.targetArea.x = u.x; this.targetArea.z = u.z; }
-      if (u.visible || u.hp <= 0) this.lastSeen.delete(u.id);
-      else if (was) this.lastSeen.set(u.id, { x: u.x, z: u.z, heading: u.heading, at: this.time });
-    }
-    for (const [id, s] of this.lastSeen) if (this.time - s.at >= GHOST_SECONDS) this.lastSeen.delete(id);
-  }
 
-  private updateHostile(u: Unit, dt: number, intruders: Unit[]) {
-    const world = this.plan!.world, stats = HOSTILE_STATS[u.kind as EnemyKind];
-    u.marked = Math.max(0, u.marked - dt);
-    u.moving = false;
-    if (u.held > 0) return; // pinned by a takedown
-    if (u.stunned > 0) { u.stunned -= dt; return; }
-    u.cooldown -= dt;
-    const mobile = u.kind === 'guard' || u.kind === 'heavy' || !!u.guise;
-    if (u.kind === 'camera' || u.kind === 'turret') u.heading = u.sweep + Math.sin(this.time * .6 + u.x) * SWEEP[u.kind];
-    // An unknown target sees as the guard it passes for.
-    const eyes = seenAs(u);
-    const seen = intruders.filter(v => distance(u, v) <= eyes.vision && angleDiff(headingTo(u, v), u.heading) <= eyes.fov && world.sightClear(u, v))
-      .sort((a, b) => distance(u, a) - distance(u, b))[0];
-    if (this.alarm) { if (seen) this.contact(seen); }
-    else if (seen) {
-      const was = u.detect;
-      const time = detectSeconds(u.kind as EnemyKind, distance(u, seen)) * (seen.faction === 'squad' ? concealment(this.campaign) : 1) * COUNTERMEASURES[this.countermeasures].detect;
-      u.detect = Math.min(1, u.detect + dt / time);
-      if (u.detect >= 1) { this.raiseAlarm(u, `${eyes.name} spotted the squad`, seen, { trigger: 'sighting', by: u, culprit: seen }); return; }
-      if (was <= SUSPICIOUS && u.detect > SUSPICIOUS) { this.reach('suspicious'); this.suspicious(u); }
-    } else u.detect = Math.max(0, u.detect - DETECT_DRAIN * dt);
-    if (!this.alarm && !(u.kind === 'target' && u.exit)) {
-      // A suspicious guard stops and stares instead of walking on.
-      if (seen && u.detect > SUSPICIOUS && mobile) { u.heading = headingTo(u, seen); return; }
-      if (u.kind === 'target' && this.plan!.contract.type === 'surveillance') this.patrol(u, EXECUTIVE_SPEED, dt);
-      else if (u.kind === 'target' && u.patrol.length) this.courier(u, dt);
-      else if (u.escort) this.follow(u, dt);
-      else if (mobile) this.patrol(u, stats.speed, dt);
-      return;
-    }
-    if (u.kind === 'target') {
-      if (u.wait > 0 || !u.exit) { u.wait -= dt; return; }
-      // An unknown target gives itself away by running.
-      if (u.guise) this.identify(u, 'The target broke from its post. Target identified.');
-      // Re-plan after anything (an EMP) cleared the route.
-      if (!u.path.length) u.path = world.findPath(u, u.exit);
-      this.walk(u, stats.alertSpeed, dt);
-      if (distance(u, u.exit) >= 1) return;
-      // An executive that gets away leaves the district; Surveillance fails only once too few are left to tag.
-      if (this.plan!.contract.type === 'surveillance') { this.escaped.add(u.id); this.message = `${this.execName(u)} got away.`; return; }
-      this.finish(false, this.plan!.contract.type === 'intercept' ? 'The courier got away.' : 'The target escaped.');
-      return;
-    }
-    if (u.kind === 'camera') return;
-    // Operatives draw fire before the VIP does.
-    const inRange = intruders.filter(v => distance(u, v) <= stats.range && world.sightClear(u, v))
-      .sort((a, b) => (a.faction === 'vip' ? 1 : 0) - (b.faction === 'vip' ? 1 : 0) || distance(u, a) - distance(u, b))[0];
-    if (inRange) {
-      u.heading = headingTo(u, inRange);
-      if (u.cooldown <= 0) { this.shoot(u, inRange, stats.damage * tierDamage(this.plan!.contract.tier)); u.cooldown = stats.fireCooldown; }
-      return;
-    }
-    if (!mobile) return;
-    // Hunters close on where the squad was last seen, then turn on the spot to search.
-    const goal = this.lastKnown;
-    if (u.hunting && goal) {
-      if (distance(u, goal) <= 1) { u.path = []; u.heading += SEARCH_TURN * dt; return; }
-      const end = u.path.at(-1);
-      u.repath -= dt;
-      if (u.repath <= 0 && !(end && end.x === goal.x && end.z === goal.z)) { u.repath = 1; u.path = world.findPath(u, goal); }
-      this.walk(u, stats.alertSpeed, dt);
-    } else if (u.escort) this.follow(u, dt);
-    else this.patrol(u, stats.speed, dt);
-  }
-  // An Intercept courier: waits out its delay, then walks its route corner to corner, pausing at each, and leaves at the
-  // last one. Watching it stand at a corner it walked to gives its whole route away, as a patrol's.
-  private courier(u: Unit, dt: number) {
-    if (!u.path.length) {
-      if (u.wait > 0) {
-        if (u.visible && u.patrolIndex > 0 && !this.intel.has(u.id)) this.intel.set(u.id, this.oneWay(u.patrol));
-        u.wait -= dt; return;
-      }
-      // A leg cut short (an EMP clears the path) is walked to its end before the next one starts.
-      const corner = u.patrol[u.patrolIndex];
-      if (distance(u, corner) > .05) u.path = this.plan!.world.findPath(u, corner);
-      else if (u.patrolIndex >= u.patrol.length - 1) { this.finish(false, 'The courier got away.'); return; }
-      else { u.patrolIndex++; u.path = this.plan!.world.findPath(u, u.patrol[u.patrolIndex]); u.wait = COURIER_PAUSE; }
-    }
-    this.walk(u, COURIER_SPEED, dt);
-  }
-  private oneWay(points: Point[]): Point[] {
-    const world = this.plan!.world, route = [{ x: points[0].x, z: points[0].z }];
-    points.slice(1).forEach((p, i) => route.push(...world.findPath(points[i], p)));
-    return route;
-  }
-  // An escort keeps a step behind the courier and to one side, catching up at its own pace; it holds where the courier
-  // fell, or stood until it sets off.
-  private follow(u: Unit, dt: number) {
-    const c = this.unit(u.escort!), world = this.plan!.world;
-    if (!c || c.hp <= 0 || !c.moving && !c.path.length && c.patrolIndex === 0) return this.lookAround(u, dt);
-    const side = Number(u.id.slice(1)) % 2 ? 1 : -1;
-    const spot = { x: c.x - Math.sin(c.heading) * .9 + Math.cos(c.heading) * side * .8, z: c.z - Math.cos(c.heading) * .9 - Math.sin(c.heading) * side * .8 };
-    const goal = world.walkable(spot, .3) ? spot : { x: c.x, z: c.z };
-    if (distance(u, goal) < .3) { u.path = []; turnTo(u, c.heading, 4 * dt); u.sweep = u.heading; return; }
-    u.repath -= dt;
-    if (u.repath <= 0 || !u.path.length) { u.repath = .5; u.path = world.findPath(u, goal); }
-    this.walk(u, distance(u, goal) > 1.5 ? HOSTILE_STATS.guard.speed : COURIER_SPEED, dt);
-    u.sweep = u.heading;
-  }
-  private patrol(u: Unit, speed: number, dt: number) {
-    if (u.patrol.length < 2) return this.lookAround(u, dt);
-    if (!u.path.length) {
-      // Watching a guard stand at the end of a leg it just walked (its pause there is still running) gives away its whole route.
-      const end = u.patrol[u.patrolIndex];
-      if (u.visible && u.wait > 0 && u.x === end.x && u.z === end.z && !this.intel.has(u.id)) this.intel.set(u.id, this.route(u.patrol));
-      if (u.wait > 0) { u.wait -= dt; return; }
-      u.patrolIndex = (u.patrolIndex + 1) % u.patrol.length;
-      u.path = this.plan!.world.findPath(u, u.patrol[u.patrolIndex]); u.wait = 1.2;
-    }
-    this.walk(u, speed, dt);
-  }
-  // The loop a patrol walks, leg by leg, as the paths the guard takes between its points.
-  private route(patrol: Point[]): Point[] {
-    const world = this.plan!.world, route = [{ x: patrol[0].x, z: patrol[0].z }];
-    patrol.forEach((p, i) => route.push(...world.findPath(p, patrol[(i + 1) % patrol.length])));
-    return route;
-  }
 
-  // A posted guard faces its post, and every 6 to 8 s turns 60° to one side (alternating), holds that look
-  // for 2 s and turns back. The schedule follows the contract seed; a guard pulled off it turns back to it.
-  private lookAround(u: Unit, dt: number) {
-    const seed = this.plan!.contract.seed, every = (n: number) => LOOK_EVERY[0] + (LOOK_EVERY[1] - LOOK_EVERY[0]) * hashed(seed, u.id, n);
-    if (!u.lookEvery) { u.lookEvery = every(0); u.look = hashed(seed, u.id, -1) * u.lookEvery; }
-    u.look += dt;
-    if (u.look >= u.lookEvery) { u.look -= u.lookEvery; u.lookEvery = every(++u.lookCycle); }
-    const turn = LOOK_ANGLE / LOOK_TURN, t = u.look - (u.lookEvery - 2 * turn - LOOK_PAUSE);
-    const offset = t <= 0 ? 0 : t < turn ? t * LOOK_TURN : t < turn + LOOK_PAUSE ? LOOK_ANGLE : Math.max(0, LOOK_ANGLE - (t - turn - LOOK_PAUSE) * LOOK_TURN);
-    turnTo(u, u.sweep + (u.lookCycle % 2 ? -1 : 1) * offset, 2 * LOOK_TURN * dt);
-  }
 
   private carrying(u: Unit) { return !!this.cargo && this.cargo.carrier === u.id; }
   private speedOf(u: Unit) { return SQUAD_SPEED * (this.carrying(u) ? CARRY_SPEED : 1); }
-  // The package follows its carrier and drops where the carrier goes down. A dropped one goes to whoever stands on it;
-  // a carried one to a squadmate sent on its own to stand beside the carrier for HANDOVER_SECONDS, both holding still.
-  private updateCargo(dt: number, squad: Unit[]) {
-    const c = this.cargo; if (!c) return;
-    const carrier = c.carrier ? this.unit(c.carrier) : undefined;
-    if (carrier && carrier.hp <= 0) { c.carrier = c.to = null; c.hand = 0; c.x = carrier.x; c.z = carrier.z; this.message = `${carrier.name} dropped the package.`; return; }
-    if (carrier) {
-      c.x = carrier.x; c.z = carrier.z;
-      const still = (u: Unit) => !u.path.length && !u.route.length;
-      const taker = still(carrier) ? squad.find(u => u !== carrier && u.solo && still(u) && distance(u, carrier) <= HANDOVER_REACH) : undefined;
-      c.hand = taker && taker.id === c.to ? c.hand + dt : taker ? dt : 0; c.to = taker?.id ?? null;
-      if (taker && c.hand >= HANDOVER_SECONDS) this.carry(taker, `${carrier.name} handed the package to ${taker.name}.`, carrier);
-      return;
-    }
-    const finder = squad.filter(u => distance(u, c) <= PICKUP_REACH).sort((a, b) => distance(a, c) - distance(b, c))[0];
-    if (finder) this.carry(finder, `${finder.name} picked up the package.`);
-  }
-  private carry(u: Unit, message: string, from?: Unit) {
-    const c = this.cargo!;
-    c.carrier = u.id; c.to = null; c.hand = 0; c.x = u.x; c.z = u.z;
-    // A carrier drops its attack orders; neither operative hands the package straight back.
-    u.targetId = u.takedownId = null; u.solo = false; if (from) from.solo = false;
-    if (this.pending?.unitId === u.id) this.pending = null;
-    this.message = message; this.emit();
-  }
   private updateOperative(u: Unit, dt: number, hostiles: Unit[]) {
     const world = this.plan!.world, stats = CLASS_STATS[u.kind as ClassId];
     u.moving = false;
@@ -1044,7 +565,7 @@ export class Simulation {
     if (!ordered) u.targetId = null;
     else if (!canHit(ordered) && !u.path.length) { u.repath -= dt; if (u.repath <= 0) { u.repath = .75; u.path = world.findPath(u, ordered); } }
     // Before the alarm the squad holds fire except at ordered targets. It never fires on a Surveillance executive unordered.
-    const watchOnly = this.plan?.contract.type === 'surveillance', free = (h: Unit) => canHit(h) && !(watchOnly && h.kind === 'target');
+    const watchOnly = mission(this).target === 'executive', free = (h: Unit) => canHit(h) && !(watchOnly && h.kind === 'target');
     const target = this.carrying(u) ? undefined : ordered && canHit(ordered) ? ordered : this.alarm ? hostiles.filter(free).sort((a, b) => distance(u, a) - distance(u, b))[0] : undefined;
     if (u.path.length && !(target && target === ordered)) this.walk(u, this.speedOf(u), dt);
     else if (!u.path.length) this.nextLeg(u, dt);
@@ -1122,37 +643,12 @@ export class Simulation {
       if (!v.held && (this.alarm || v.detect > SUSPICIOUS)) continue;
       v.held += dt; v.moving = false; v.path = [];
       const witness = this.units.find(h => h !== v && h.faction === 'hostile' && h.hp > 0 && h.stunned <= 0 && !h.held && [v, ...crew].some(p => this.sees(h, p)));
-      if (witness && !this.alarm) this.raiseAlarm(witness, `${witness.name} saw the takedown`, crew[0], { trigger: 'takedown', by: witness, culprit: crew[0] });
+      if (witness && !this.alarm) raiseAlarm(this, witness, `${witness.name} saw the takedown`, crew[0], { trigger: 'takedown', by: witness, culprit: crew[0] });
       if (v.held >= TAKEDOWN_SECONDS) {
         v.hp = 0; v.held = 0; crew.forEach(u => { u.takedownId = null; });
         this.message = `${crew.map(u => u.name).join(' and ')} took down ${v.kind === 'target' ? 'the target' : v.name}.`;
       }
     }
-  }
-  private updateFollower(u: Unit, dt: number, squad: Unit[]) {
-    u.moving = false; u.hurt = Math.max(0, u.hurt - dt);
-    const leader = [...squad].sort((a, b) => distance(u, a) - distance(u, b))[0];
-    if (!leader) return;
-    if (!this.joined.has(u.id)) {
-      const secure = this.objectives.find(o => o.unit === u.id);
-      if (!secure || distance(u, leader) > VIP_REACH) return;
-      secure.progress = Math.min(1, secure.progress + dt / VIP_SECURE_SECONDS);
-      if (secure.progress < 1) return;
-      this.joined.add(u.id);
-      const left = this.objectives.filter(o => o.kind === 'cell' && o.unit !== u.id && !this.joined.has(o.unit!) && !o.lost).length;
-      this.message = u.id === 'vip' ? 'VIP secured. Escort them to extraction.'
-        : `Prisoner ${cacheLetter(secure)} freed. ${left ? `Extraction is open; ${left === 1 ? 'one more cell' : `${left} more cells`} for a bonus.` : 'Bring everyone out.'}`;
-    }
-    // A follower walks with the nearest operative; under fire it ducks behind cover near that operative instead.
-    // At an open extraction it walks into the zone.
-    const extract = this.objectives.at(-1)!;
-    const shelter = u.hurt > 0 && this.vipThreat ? this.shelter(u, leader, this.vipThreat) : null;
-    const goal = this.extractReady && distance(leader, extract) < 2 ? extract : shelter ?? leader;
-    if (distance(u, goal) <= (goal === leader ? 1.6 : .3)) { u.path = []; return; }
-    u.repath -= dt;
-    const end = u.path.at(-1);
-    if (u.repath <= 0 || !end || distance(end, goal) > 1) { u.repath = .5; u.path = this.plan!.world.findPath(u, { x: goal.x, z: goal.z }); }
-    this.walk(u, VIP_SPEED, dt);
   }
   // ---- Cover ----
   // Who can shoot at `u`: during the alarm, armed hostiles with `u` in range and in sight; before it, every armed
@@ -1184,169 +680,6 @@ export class Simulation {
     const spot = threat && this.plan.world.coverSpot(p, threat);
     return spot ? { ...spot.point, along: spot.along, span: spot.span } : null;
   }
-  // The nearest spot behind a barrier, as seen from `threat`, within VIP_COVER_REACH of the operative.
-  private shelter(u: Unit, leader: Unit, threat: Point): Point | null {
-    const world = this.plan!.world;
-    let best: Point | null = null;
-    for (const r of world.cover) {
-      if (distance(r, leader) > VIP_COVER_REACH) continue;
-      const d = distance(r, threat) || 1;
-      for (const depth of [Math.min(r.w, r.d) / 2 + .45, Math.max(r.w, r.d) / 2 + .45]) {
-        const spot = { x: r.x + (r.x - threat.x) / d * depth, z: r.z + (r.z - threat.z) / d * depth };
-        if (!world.walkable(spot) || !world.coverBetween(threat, spot)) continue;
-        if (!best || distance(u, spot) < distance(u, best)) best = spot;
-        break;
-      }
-    }
-    return best;
-  }
-  // An unknown target is identified by Recon's mark, or once an operative has watched it, unaware, from IDENTIFY_RANGE
-  // or closer for IDENTIFY_SECONDS; the watch drains as fast while broken off.
-  private watchForTarget(dt: number, squad: Unit[]) {
-    const world = this.plan!.world;
-    for (const u of this.units) {
-      if (!u.guise || u.hp <= 0) continue;
-      if (u.marked > 0) { this.identify(u, 'Recon marked the target. Target identified.'); continue; }
-      const eye = u.detect <= SUSPICIOUS && squad.find(s => distance(s, u) <= IDENTIFY_RANGE && world.sightClear(s, u));
-      u.watched = eye ? u.watched + dt : Math.max(0, u.watched - dt);
-      if (eye && u.watched >= IDENTIFY_SECONDS) this.identify(u, `${eye.name} identified the target.`);
-    }
-  }
-  private identify(u: Unit, message: string) {
-    u.guise = null; u.watched = 0; u.name = HOSTILE_STATS.target.name; this.message = message;
-    if (this.targetArea) { this.targetArea.x = u.x; this.targetArea.z = u.z; }
-    this.emit();
-  }
-  // Surveillance: an operative tags an executive by keeping it, unaware, in sight within TAG_RANGE for TAG_SECONDS (the
-  // watch drains as fast while broken off); Recon's mark tags it at once.
-  private watchExecutives(dt: number, squad: Unit[]) {
-    if (this.plan!.contract.type !== 'surveillance') return;
-    const world = this.plan!.world;
-    for (const u of this.units) {
-      if (u.kind !== 'target' || u.tagged || u.hp <= 0) continue;
-      if (u.marked > 0) { this.tag(u, `Recon marked ${this.execName(u).toLowerCase()}. Tagged.`); continue; }
-      const eye = !this.alarm && u.detect <= SUSPICIOUS && squad.find(s => distance(s, u) <= TAG_RANGE && world.sightClear(s, u));
-      u.watched = eye ? u.watched + dt : Math.max(0, u.watched - dt);
-      if (eye && u.watched >= TAG_SECONDS) this.tag(u, `${eye.name} tagged ${this.execName(u).toLowerCase()}.`);
-    }
-  }
-  private execName(u: Unit) { const o = this.objectives.find(o => o.unit === u.id); return `Executive ${o ? cacheLetter(o) : ''}`.trim(); }
-  private tag(u: Unit, message: string) {
-    u.tagged = true; u.watched = TAG_SECONDS; this.message = message;
-    // Counted from the executives, not the objectives: two tagged in one update (one mark over both) both count.
-    const tags = this.objectives.filter(o => o.kind === 'tag'), isTagged = (o: Objective) => !!this.unit(o.unit!)?.tagged;
-    if (tags.filter(isTagged).length === EXECUTIVES_NEEDED) {
-      tags.forEach(o => { if (!isTagged(o) && !o.lost) { o.optional = true; o.label = `${o.label} (intel)`; } });
-      if (tags.some(o => o.optional && !o.lost)) this.message = `${message} Extraction open; tag the last for intel on the next contract.`;
-    }
-    this.emit();
-  }
-  // A Surveillance executive killed or gone is lost; the contract fails once fewer than EXECUTIVES_NEEDED can still be tagged.
-  private updateTags() {
-    const tags = this.objectives.filter(o => o.kind === 'tag');
-    if (!tags.length) return;
-    for (const o of tags) {
-      const u = this.unit(o.unit!);
-      if (o.done || o.lost) continue;
-      if (u && u.hp > 0) {
-        if (u.visible) { o.x = u.x; o.z = u.z; }
-        o.progress = Math.min(1, u.watched / TAG_SECONDS); o.done = u.tagged;
-        continue;
-      }
-      o.lost = true; o.optional = true; o.progress = 0; o.label = `Executive ${cacheLetter(o)} ${u ? 'killed' : 'got away'}`;
-    }
-    if (tags.filter(o => !o.lost).length < EXECUTIVES_NEEDED) this.finish(false, 'Too many executives lost. The contract is blown.');
-  }
-  // Smash and grab: the first cache opened starts the lockdown clock and opens extraction; the others become optional.
-  private openedCache(o: Objective) {
-    const caches = this.objectives.filter(c => c.kind === 'cache'), open = caches.filter(c => c.done).length, letter = cacheLetter(o);
-    if (open === 1) {
-      this.lockdownIn = smashSeconds(this.plan!.contract.tier);
-      caches.forEach(c => { if (!c.done) { c.optional = true; c.label = `${c.label} (+${CACHE_BONUS} cr)`; } });
-      this.message = `Cache ${letter} open. Lockdown: the exits seal in ${this.lockdownIn} s.`;
-    } else this.message = `Cache ${letter} open (${open} of ${caches.length}).`;
-  }
-  // Jailbreak: a cell is done once its prisoner is freed and alive, and lost once that prisoner is killed. While a freed
-  // prisoner lives, the other cells are optional and pay a bonus; the contract fails once every prisoner is dead.
-  private updateCells() {
-    const cells = this.objectives.filter(o => o.kind === 'cell');
-    if (!cells.length) return;
-    const out = this.rescued().length;
-    for (const o of cells) {
-      const u = this.unit(o.unit!), base = `prisoner ${cacheLetter(o)}`;
-      if (!u || u.hp <= 0) { o.lost = true; o.done = false; o.optional = true; o.progress = 0; o.label = `Prisoner ${cacheLetter(o)} killed`; continue; }
-      o.done = this.joined.has(u.id); o.optional = !o.done && out > 0;
-      o.label = `Free ${base}${o.optional ? ` (+${PRISONER_BONUS} cr)` : ''}`;
-    }
-    if (cells.every(o => o.lost)) this.finish(false, 'Every prisoner was killed.');
-  }
-  private updateObjectives(dt: number, squad: Unit[]) {
-    this.updateTags();
-    this.updateCells();
-    if (this.phase !== 'mission') return;
-    for (const o of this.objectives) {
-      if (o.done) continue;
-      if (o.kind === 'target') o.done = this.units.some(u => u.kind === 'target' && u.hp <= 0);
-      if (o.kind === 'vip') o.done = this.joined.has('vip');
-      // Elimination counts the hostiles the district started with, as Purge does; reinforcements never count.
-      if (o.kind === 'sweep') {
-        const district = this.units.filter(u => u.faction === 'hostile' && !isReinforcement(u)), left = district.filter(u => u.hp > 0).length;
-        o.progress = district.length ? 1 - left / district.length : 1; o.label = sweepLabel(left);
-        if (!left) { o.done = true; this.message = 'District swept. Head for extraction.'; }
-      }
-      if (o.kind === 'terminal' || o.kind === 'charge' || o.kind === 'cache') {
-        const seconds = o.kind === 'terminal' ? HACK_SECONDS : o.kind === 'cache' ? CACHE_SECONDS : PLANT_SECONDS, reach = o.kind === 'terminal' ? 1.5 : 1.2;
-        if (squad.some(s => distance(s, o) <= reach)) o.progress = Math.min(1, o.progress + dt / seconds);
-        if (o.progress >= 1) { o.done = true; this.message = o.kind === 'terminal' ? 'Vault data secured. Head for extraction.' : `${o.label.replace('Plant', 'Planted')}.`; }
-        if (o.done && o.kind === 'cache') this.openedCache(o);
-        // Under carry, the vault gives up a package instead, to the operative nearest the terminal.
-        if (o.done && o.kind === 'terminal' && hasModifier(this.plan?.contract, 'carry')) {
-          const by = [...squad].sort((a, b) => distance(a, o) - distance(b, o))[0];
-          this.cargo = { x: by.x, z: by.z, carrier: null, to: null, hand: 0 };
-          this.carry(by, `${by.name} has the package. Carry it to extraction.`);
-        }
-      }
-      if (o.kind === 'target' && o.done) this.message = this.plan?.contract.type === 'intercept' ? 'Courier stopped. Return to the extraction zone.' : 'Target neutralized. Return to the extraction zone.';
-    }
-    // Extraction counts only with every deployed operative standing in the zone; the downed must be revived first.
-    const extract = this.objectives.at(-1)!, team = this.units.filter(u => u.faction === 'squad');
-    // A called pickup's zone is wider: it lands on an open street, where a squad sent to it lines up in single file.
-    const reach = this.calledExtraction ? PICKUP_RADIUS : 2, inZone = (s: Unit) => distance(s, extract) < reach;
-    extract.progress = team.filter(s => s.hp > 0 && inZone(s)).length / team.length;
-    if (!this.extractReady) return;
-    this.reach('extractOpen');
-    // A called pickup lifts off with the squad only once it has landed.
-    if (this.calledExtraction && !(this.pickup && this.pickup.in <= 0)) return;
-    // Every freed follower still alive has to be in the zone too; a prisoner left in its cell stays behind.
-    const followers = this.units.filter(u => u.faction === 'vip' && u.hp > 0 && this.joined.has(u.id));
-    const vipIn = followers.every(u => distance(u, extract) < reach + .4), cargoIn = !this.cargo || distance(this.cargo, extract) < reach;
-    if (extract.progress === 1 && vipIn && cargoIn) { extract.done = true; this.finish(true); return; }
-    const down = team.find(s => s.hp <= 0);
-    const holdup = !squad.every(inZone) ? '' : down ? `${down.name} is down. Revive them before extracting.` : !vipIn ? (followers.some(u => u.id === 'vip') ? 'Bring the VIP into the zone.' : 'Bring the freed prisoners into the zone.') : cargoIn ? '' : 'Bring the package into the zone.';
-    if (holdup && holdup !== this.holdup) this.message = holdup;
-    this.holdup = holdup;
-  }
-  private reinforce(dt: number) {
-    if (!this.alarm || this.reinforced >= this.reinforceCap || !this.plan) return;
-    this.reinforceIn -= dt;
-    if (this.reinforceIn > 0) return;
-    this.reinforceIn = REINFORCE_SECONDS;
-    // An alarm's first wave flanks: it enters at the exit nearest extraction, between the squad and its way out; later
-    // waves enter at a random edge exit. A called extraction has no way out to flank until the pickup is called, so
-    // every wave until then enters at a random exit, and every wave after it comes in nearest the pickup.
-    const exits = this.plan.exits, extract = this.pickup ?? this.plan.extract, tier = this.plan.contract.tier;
-    const nearest = () => exits.reduce((a, b) => distance(b, extract) < distance(a, extract) ? b : a);
-    const first = this.waves++ === 0, random = () => exits[Math.floor(this.rng() * exits.length)];
-    const exit = this.pickup ? nearest() : this.calledExtraction || !first ? random() : nearest();
-    const count = Math.min(waveSize(tier), this.reinforceCap - this.reinforced), heavies = this.escalate(this.alarms).heavies;
-    for (let k = 0; k < count; k++) {
-      const kind = k < heavies ? 'heavy' : 'guard', stats = HOSTILE_STATS[kind];
-      const u = this.makeUnit(`r${this.reinforced++}`, stats.name, kind, 'hostile', { x: exit.x + (k - 1) * .6, z: exit.z }, Math.round(stats.hp * tierHp(tier)));
-      if (!this.plan.world.walkable(u)) { u.x = exit.x; u.z = exit.z; }
-      u.hunting = true; u.detect = 1; this.units.push(u);
-    }
-    this.message = `Reinforcements entering the district (${this.reinforced}${Number.isFinite(this.reinforceCap) ? `/${this.reinforceCap}` : ''}).`;
-  }
 
   update(dt: number) {
     if (this.phase !== 'mission' || this.paused || !this.plan) return;
@@ -1357,7 +690,7 @@ export class Simulation {
     this.hitThisFrame.clear();
     this.casts.splice(0).forEach(c => this.resolveCast(c));
     const intruders = this.intruders();
-    for (const u of this.units) if (u.faction === 'hostile' && u.hp > 0 && this.phase === 'mission') this.updateHostile(u, dt, intruders);
+    for (const u of this.units) if (u.faction === 'hostile' && u.hp > 0 && this.phase === 'mission') updateHostile(this, u, dt, intruders);
     if (this.escaped.size) this.units = this.units.filter(u => !this.escaped.has(u.id));
     if (this.phase !== 'mission') return;
     const hostiles = this.units.filter(u => u.faction === 'hostile' && u.hp > 0);
@@ -1369,31 +702,31 @@ export class Simulation {
     for (const [u, hit] of this.hitThisFrame) {
       if (u.hp <= 0) continue;
       const jump = hit.rifle ? suppressedAlert(this.campaign) : 1;
-      if (this.alarm || u.detect + jump >= 1) { this.raiseAlarm(u, `${u.name} returned fire`, undefined, { trigger: 'gunfire', by: u, culprit: hit.by ?? undefined }); break; }
+      if (this.alarm || u.detect + jump >= 1) { raiseAlarm(this, u, `${u.name} returned fire`, undefined, { trigger: 'gunfire', by: u, culprit: hit.by ?? undefined }); break; }
       const was = u.detect;
       u.detect += jump;
-      if (was <= SUSPICIOUS && u.detect > SUSPICIOUS) { this.reach('suspicious'); this.suspicious(u); }
+      if (was <= SUSPICIOUS && u.detect > SUSPICIOUS) { this.reach('suspicious'); suspicious(this, u); }
       this.message = `${u.name} hit and suspicious.`;
     }
     for (const u of this.units) if (u.faction === 'hostile' && u.hp <= 0) { u.path = []; u.moving = false; }
     const squad = this.livingSquad();
     for (const f of this.units.filter(u => u.faction === 'vip')) {
       if (f.hp <= 0) { if (f.id === 'vip') return this.finish(false, 'The VIP was killed.'); continue; }
-      this.updateFollower(f, dt, squad);
+      updateFollower(this, f, dt, squad);
     }
     this.selected = this.selected.filter(id => squad.some(u => u.id === id));
     if (this.pending && !squad.some(u => u.id === this.pending!.unitId)) this.pending = null;
     if (!squad.length) return this.finish(false, 'The squad was wiped out.');
-    this.watchForTarget(dt, squad);
-    this.watchExecutives(dt, squad);
-    this.updateCargo(dt, squad);
-    this.updateObjectives(dt, squad);
+    watchForTarget(this, dt, squad);
+    watchExecutives(this, dt, squad);
+    updateCargo(this, dt, squad);
+    updateObjectives(this, dt, squad);
     if (this.phase !== 'mission') return;
     // Lockdown: once the first alarm sounds the exits seal after LOCKDOWN_SECONDS, stood down or not.
-    if (this.lockdownIn !== null && (this.lockdownIn -= dt) <= 0) return this.finish(false, this.plan.contract.type === 'smash' ? 'Lockdown. The squad was trapped.' : 'Lockdown. The exits sealed with the squad inside.');
-    this.reinforce(dt);
-    if (this.alarm && (this.calmIn -= dt) <= 0) this.standDown();
-    this.updateVisibility();
+    if (this.lockdownIn !== null && (this.lockdownIn -= dt) <= 0) return this.finish(false, mission(this).trapped ?? 'Lockdown. The exits sealed with the squad inside.');
+    reinforce(this, dt);
+    if (this.alarm && (this.calmIn -= dt) <= 0) standDown(this);
+    updateVisibility(this);
     if (this.pickup && this.pickup.in > 0 && (this.pickup.in -= dt) <= 0) { this.pickup.in = 0; this.message = 'Pickup on the ground. Everyone into the zone.'; this.emit(); }
     this.uiTimer += dt;
     if (this.uiTimer >= .1 || this.alarm !== wasAlarm || this.paused) { this.uiTimer = 0; this.emit(); }

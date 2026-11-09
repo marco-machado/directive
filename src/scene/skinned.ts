@@ -22,7 +22,7 @@ type Joint = { bone: Bone; q: Quaternion; p: Vector3; parent: Quaternion };
 // A carried model hung off the upper spine; `rest` takes model space into the spine's, and the markers are wrist targets.
 type Held = { pivot: Object3D; rest: Matrix4 };
 type Prop = { body: Mesh; glow: Mesh | null; map: Texture | null };
-export type ImportedRig = {
+type ImportedRig = {
   kind: UnitKind; root: Group; body: SkinnedMesh; skeleton: Skeleton; map: Texture | null; joints: Record<JointName, Joint>;
   // Which side (±x) the right hand is on, the shoulder height, and model up in the hips' parent space (for the bob).
   side: number; shoulder: number; up: Vector3;
@@ -62,7 +62,7 @@ function fitOf(gltf: GLTF) {
 
 // An imported prop, scaled to the procedural prop it replaces (by length or height, see PropFile), turned so its
 // long axis runs along +z when fitted by length, and moved so the point the hand holds is at the origin.
-export type ImportedProp = { gltf: GLTF; file: PropFile };
+type ImportedProp = { gltf: GLTF; file: PropFile };
 type FittedProp = { geometry: BufferGeometry; map: Texture | null; scale: number };
 const fittedProps = new WeakMap<GLTF, FittedProp>();
 function fitProp({ gltf, file }: ImportedProp, procedural: RigModel) {
@@ -210,7 +210,7 @@ export function animateImported(rig: ImportedRig, m: Motion) {
 // and the turret's laser to its muzzle. What has no imported part stays procedural: the laser line and the camera's
 // pole. With the barrels fused into the head, a shot kicks the whole head back.
 export type ImportedMachine = { machine: Machine; base: GLTF | null; head: GLTF };
-export type MachineRig = Rig & { root: Group; skins: SkinnedMesh[]; paints: { mesh: SkinnedMesh; map: Texture | null; glow: boolean }[] };
+type MachineRig = Rig & { root: Group; skins: SkinnedMesh[]; paints: { mesh: SkinnedMesh; map: Texture | null; glow: boolean }[] };
 
 const placedParts = new WeakMap<GLTF, BufferGeometry>(), leftovers = new Map<string, { lit: BufferGeometry | null; glow: BufferGeometry | null }>();
 // A part's geometry in model space, its `at` point on the bone at `to`, every vertex bound to `bone`.
@@ -255,7 +255,7 @@ export function importMachine(kind: UnitKind, { machine, base, head }: ImportedM
   if (base && machine.base) skins.push(skinned(placePart(base, machine.base, new Vector3(), 0), textureOf(base)));
   skins.push(skinned(placePart(head, machine.head, pivot, h), textureOf(head)));
   // The procedural parts left: those on bones no imported part covers, moved with their bone if it moved.
-  const covered = ['head', 'barrelL', 'barrelR', ...(base ? ['root'] : [])], keep = specs.map((b, i) => i).filter(i => !covered.includes(specs[i].name));
+  const covered = ['head', 'barrelL', 'barrelR', ...(base ? ['root'] : [])], keep = specs.map((_, i) => i).filter(i => !covered.includes(specs[i].name));
   const leftover = (geometry: BufferGeometry | null) => {
     const part = geometry && partsOn(geometry, keep);
     if (!part) return null;

@@ -1,60 +1,20 @@
 import { DurableObject } from 'cloudflare:workers';
-import { applyDismiss, applyLoadout, applyPurchase, applyRecruit, CAMPAIGN_VERSION, clampCampaign, completeMission, freshCampaign, resultsFit, startMission, upgradeLedger } from '../src/game/campaign.ts';
-import type { Campaign, Ledger, Loadout, MissionReport, Upgrade } from '../src/game/campaign.ts';
+import type { Loadout, MissionReport, Upgrade } from '../src/game/campaign.ts';
 import type { Rng } from '../src/game/rng.ts';
+import { CampaignStore } from './store.ts';
 
-export type Result = { ok: true; campaign: Campaign } | { ok: false; status: 400 | 404 | 409; error: string };
-const KEY = 'ledger';
 const random: Rng = () => crypto.getRandomValues(new Uint32Array(1))[0] / 2 ** 32;
-const unknown = { ok: false, status: 404, error: 'Unknown save code.' } as const;
 
-// One instance per save code. Every write goes through the pure rules in src/game/campaign.ts.
+// One instance per save code: a CampaignStore (worker/store.ts) over this object's storage.
 export class PlayerCampaign extends DurableObject<Env> {
-  // A ledger saved in an older campaign shape is upgraded on first read; a mission in flight keeps its payout claim.
-  private async load(): Promise<Ledger | undefined> {
-    const ledger = await this.ctx.storage.get<Ledger>(KEY);
-    if (!ledger || ledger.campaign.version === CAMPAIGN_VERSION) return ledger;
-    const upgraded = upgradeLedger(ledger, random);
-    await this.ctx.storage.put(KEY, upgraded);
-    return upgraded;
-  }
-  private async save(ledger: Ledger): Promise<Extract<Result, { ok: true }>> { await this.ctx.storage.put(KEY, ledger); return { ok: true, campaign: ledger.campaign }; }
-  private async update(change: (c: Campaign) => Campaign | null, error: string): Promise<Result> {
-    const ledger = await this.load(); if (!ledger) return unknown;
-    const campaign = change(ledger.campaign);
-    return campaign ? this.save({ ...ledger, campaign }) : { ok: false, status: 409, error };
-  }
-
-  // Creating a player that already exists returns it unchanged, so a retried create is harmless.
-  async init(legacy?: unknown): Promise<Extract<Result, { ok: true }>> {
-    const existing = await this.load();
-    if (existing) return { ok: true, campaign: existing.campaign };
-    // Browser saves predate rosters and contracts, so only their v1/v2 fields are imported.
-    const old = legacy && typeof legacy === 'object' ? legacy as Record<string, unknown> : null;
-    const imported = old ? clampCampaign({ cash: old.cash, weapon: old.weapon, armor: old.armor, completed: old.completed, mission: old.mission }, random) : null;
-    return this.save({ campaign: imported ?? freshCampaign(random), activeMission: null });
-  }
-  async get(): Promise<Result> {
-    const ledger = await this.load();
-    return ledger ? { ok: true, campaign: ledger.campaign } : unknown;
-  }
-  async startMission(contractId: string, squad: string[], countermeasures: number): Promise<{ ok: true; missionId: string; campaign: Campaign } | Extract<Result, { ok: false }>> {
-    const ledger = await this.load(); if (!ledger) return unknown;
-    const missionId = crypto.randomUUID();
-    const next = startMission(ledger, missionId, Date.now(), contractId, squad, countermeasures, random);
-    if (!next) return { ok: false, status: 409, error: 'That contract is not on offer, the squad is invalid, or that countermeasures level is locked.' };
-    await this.ctx.storage.put(KEY, next);
-    return { ok: true, missionId, campaign: next.campaign };
-  }
-  async completeMission(missionId: string, report: MissionReport): Promise<Result> {
-    const ledger = await this.load(); if (!ledger) return unknown;
-    // Results the active contract cannot hold (another type's field, or more than it has) are a bad request.
-    if (ledger.activeMission?.id === missionId && !resultsFit(ledger.activeMission.contract, report.results)) return { ok: false, status: 400, error: 'Those results do not fit the contract.' };
-    const next = completeMission(ledger, missionId, Date.now(), report, random);
-    return next ? this.save(next) : { ok: false, status: 409, error: 'Mission is not active or ended too soon.' };
-  }
-  buy(type: Upgrade) { return this.update(c => applyPurchase(c, type), 'Not enough credits or upgrade maxed.'); }
-  equip(loadout: Loadout) { return this.update(c => applyLoadout(c, loadout), 'Unknown loadout.'); }
-  recruit(id: string) { return this.update(c => applyRecruit(c, id), 'Recruit unavailable, roster full, or not enough credits.'); }
-  dismiss(id: string) { return this.update(c => applyDismiss(c, id), 'Unknown operative, or the last one on the roster.'); }
+  private readonly store = new CampaignStore(this.ctx.storage, random);
+  init(legacy?: unknown) { return this.store.init(legacy); }
+  get() { return this.store.get(); }
+  startMission(contractId: string, squad: string[], countermeasures: number) { return this.store.startMission(contractId, squad, countermeasures); }
+  completeMission(missionId: string, report: MissionReport) { return this.store.completeMission(missionId, report); }
+  buy(type: Upgrade) { return this.store.buy(type); }
+  equip(loadout: Loadout) { return this.store.equip(loadout); }
+  recruit(id: string) { return this.store.recruit(id); }
+  dismiss(id: string) { return this.store.dismiss(id); }
+  async alarm() { await this.store.expire(); }
 }
