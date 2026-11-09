@@ -13,8 +13,9 @@ import type { IconName } from './icons.tsx';
 import { sound } from './audio.ts';
 
 // `intro` is the first-time tip the briefing shows for a type that unlocks with clearance.
-export const CONTRACTS: Record<ContractType, { title: string; brief: string; intro?: string }> = {
-  assassination: { title: 'Assassination', brief: 'Neutralize the target, then extract. Once the alarm sounds, the target runs for an exit.' },
+// `bloodless` is that badge's goal where the type has someone the squad may, or may not, kill.
+export const CONTRACTS: Record<ContractType, { title: string; brief: string; intro?: string; bloodless?: string }> = {
+  assassination: { title: 'Assassination', bloodless: 'Kill no one but the target', brief: 'Neutralize the target, then extract. Once the alarm sounds, the target runs for an exit.' },
   heist: { title: 'Data heist', brief: `Hold the vault terminal for ${HACK_SECONDS} seconds to download the data, then extract.` },
   sabotage: { title: 'Sabotage', brief: 'Plant a charge at every site, then extract.' },
   elimination: {
@@ -22,7 +23,7 @@ export const CONTRACTS: Record<ContractType, { title: string; brief: string; int
     intro: 'Every hostile on the briefing has to go down; the tracker counts the ones left. Takedowns and volleys that kill keep it quiet. Purge and Bloodless are not on offer here.',
   },
   intercept: {
-    title: 'Intercept', brief: 'A courier and two escorts cross the district from one edge exit to another. Stop the courier before it leaves, then extract. Once the alarm sounds, it runs for its exit.',
+    title: 'Intercept', bloodless: 'Kill no one but the courier', brief: 'A courier and two escorts cross the district from one edge exit to another. Stop the courier before it leaves, then extract. Once the alarm sounds, it runs for its exit.',
     intro: `The courier sets off ${COURIER_DELAY} s after you deploy. Watch it reach a street corner and its whole route is drawn, like a patrol's. Pick the ground and the moment: a volley that kills drops an escort quietly.`,
   },
   smash: {
@@ -30,7 +31,7 @@ export const CONTRACTS: Record<ContractType, { title: string; brief: string; int
     intro: 'Plan everything before the first cache: takedowns, positions, the way out. The clock starts the moment one opens, and the tracker counts it down. Take another cache only if the time allows.',
   },
   surveillance: {
-    title: 'Surveillance', brief: `Tag ${EXECUTIVES_NEEDED} of ${EXECUTIVES} executives: keep one in sight within ${TAG_RANGE} m for ${TAG_SECONDS} s without being noticed, or mark it with Recon. Then extract. Once the alarm sounds, the untagged run for exits. Tag all ${EXECUTIVES} for intel on the next contract.`,
+    title: 'Surveillance', bloodless: 'Kill no one, executives included', brief: `Tag ${EXECUTIVES_NEEDED} of ${EXECUTIVES} executives: keep one in sight within ${TAG_RANGE} m for ${TAG_SECONDS} s without being noticed, or mark it with Recon. Then extract. Once the alarm sounds, the untagged run for exits. Tag all ${EXECUTIVES} for intel on the next contract.`,
     intro: 'Executives walk their own beats and carry no weapon. A killed executive is lost, not tagged; lose two and the contract is blown. Stay out of sight and let the watch fill.',
   },
   jailbreak: {
@@ -44,7 +45,7 @@ export const BADGE_COPY: Record<Badge, { title: string; icon: IconName; goal: (c
   ghost: { title: 'Ghost', icon: 'eye', goal: () => 'Never raise the alarm' },
   untouched: { title: 'Untouched', icon: 'cover', goal: () => 'No operative goes down' },
   swift: { title: 'Swift', icon: 'clock', goal: c => `Extract within ${clock(parSeconds(c.type, c.tier))}` },
-  bloodless: { title: 'Bloodless', icon: 'heal', goal: c => c.type === 'assassination' ? 'Kill no one but the target' : c.type === 'intercept' ? 'Kill no one but the courier' : c.type === 'surveillance' ? 'Kill no one, executives included' : 'Kill no one' },
+  bloodless: { title: 'Bloodless', icon: 'heal', goal: c => CONTRACTS[c.type].bloodless ?? 'Kill no one' },
   purge: { title: 'Purge', icon: 'kills', goal: (_, n) => `Down all ${n} hostile${n === 1 ? '' : 's'} in the district` },
 };
 // What a contract can pay beyond its credits, for the board and the briefing, and what a won one earned, for the report.

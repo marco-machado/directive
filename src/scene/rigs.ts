@@ -46,7 +46,8 @@ class Kit {
   readonly bones: BoneSpec[] = [];
   private readonly body: BufferGeometry[] = [];
   private readonly glows: BufferGeometry[] = [];
-  constructor(readonly kind: UnitKind) {}
+  readonly kind: UnitKind;
+  constructor(kind: UnitKind) { this.kind = kind; }
   bone(name: string, parent: string | null, at: V3) { this.bones.push({ name, parent: parent ? this.index(parent) : -1, at }); return this; }
   private index(name: string) {
     const i = this.bones.findIndex(b => b.name === name);

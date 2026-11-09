@@ -138,7 +138,7 @@ const signRect = (signs: Texture): Step => m => {
   m.colorNode = texture(signs, uv().mul(instanceData.zw).add(instanceData.xy));
 };
 
-export type DistrictMaterials = ReturnType<typeof districtMaterials>;
+type DistrictMaterials = ReturnType<typeof districtMaterials>;
 export function districtMaterials(atlas: Texture, signs: Texture, pool: Texture, puddle: Texture, environment: Texture) {
   const bounds = uniform(new Vector4());
   const materials = {

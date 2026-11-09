@@ -2,7 +2,7 @@
 // alarm rate, median time and HP lost, then how each bot does against the balance targets.
 // - no-tactics: select all, click the objective, then extraction (scripts/bots.ts).
 // - tactical: routes around vision cones and clears blockers quietly, going loud only when it must (scripts/tactical.ts).
-// Run: node --experimental-transform-types scripts/balance.ts [--seeds 12] [--bot both|no-tactics|tactical]
+// Run: node scripts/balance.ts [--seeds 12] [--bot both|no-tactics|tactical]
 //      [--roster starters|four|four+max] [--tiers 1,3] [--types heist,escort] [--quiet-only] [--loadout suppressed/light]
 // With --loadouts it instead plays the fully upgraded four with every loadout (tiers 4 and 5 unless --tiers says), and with
 // --cm 0,1,2,3 it plays the fully upgraded four at those Countermeasures levels (tier 5 unless --tiers says).

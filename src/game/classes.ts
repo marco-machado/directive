@@ -4,7 +4,7 @@ export const CLASSES: readonly ClassId[] = ['assault', 'support', 'recon', 'tech
 export const isClass = (v: unknown): v is ClassId => CLASSES.includes(v as ClassId);
 export const SQUAD_SPEED = 3.4; // m/s, every class alike
 
-export type ClassStats = { title: string; hp: number; damage: number; range: number; fireCooldown: number; ability: AbilityId };
+type ClassStats = { title: string; hp: number; damage: number; range: number; fireCooldown: number; ability: AbilityId };
 export const CLASS_STATS: Record<ClassId, ClassStats> = {
   assault: { title: 'ASSAULT', hp: 140, damage: 28, range: 6.2, fireCooldown: .65, ability: 'grenade' },
   support: { title: 'SUPPORT', hp: 120, damage: 20, range: 6.2, fireCooldown: .65, ability: 'heal' },
@@ -13,7 +13,7 @@ export const CLASS_STATS: Record<ClassId, ClassStats> = {
 };
 
 // `power` is damage, healing, or stun seconds; `reach` is how far from the operative it can be aimed.
-export type AbilityStats = { name: string; cooldown: number; power: number; radius: number; reach: number; targeted: boolean };
+type AbilityStats = { name: string; cooldown: number; power: number; radius: number; reach: number; targeted: boolean };
 export const ABILITY_STATS: Record<AbilityId, AbilityStats> = {
   grenade: { name: 'Breach grenade', cooldown: 18, power: 90, radius: 2.2, reach: 8, targeted: true },
   heal: { name: 'Field heal', cooldown: 20, power: 60, radius: 3, reach: 0, targeted: false },

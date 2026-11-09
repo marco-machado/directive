@@ -2,8 +2,8 @@ import type { Milestone } from '../game/simulation.ts';
 
 // First-time tips, remembered on this device: whether they show at all, and which ones were dismissed.
 // A seen id is a mission milestone, or `contract:<type>` for a contract type's first briefing.
-export type TipId = Milestone | `contract:${string}`;
-export type Tips = { enabled: boolean; seen: TipId[] };
+type TipId = Milestone | `contract:${string}`;
+type Tips = { enabled: boolean; seen: TipId[] };
 const KEY = 'ndTips';
 let tips: Tips = (() => {
   try {

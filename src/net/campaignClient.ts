@@ -16,7 +16,10 @@ const storage = {
   remove(key: string) { try { localStorage.removeItem(key); } catch { /* nothing to clean */ } },
 };
 
-export class ApiError extends Error { constructor(readonly status: number, message: string) { super(message); } }
+export class ApiError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) { super(message); this.status = status; }
+}
 
 async function api<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
   const res = await fetch(`/api/${path}`, {

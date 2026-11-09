@@ -16,17 +16,8 @@ export type Contract = { id: string; type: ContractType; tier: number; seed: num
 // open at its tier (MODIFIER_UNLOCK, from MODIFIER_TIER); each raises the fee by MODIFIER_PAY.
 export type Modifier = 'lockdown' | 'nokill' | 'unknown' | 'carry' | 'through' | 'called';
 export const MODIFIERS: readonly Modifier[] = ['lockdown', 'nokill', 'unknown', 'carry', 'through', 'called'];
-export const MODIFIER_FITS: Record<Modifier, readonly ContractType[]> = {
-  lockdown: ['assassination', 'heist', 'sabotage', 'escort', 'elimination', 'intercept', 'surveillance', 'jailbreak'],
-  // Smash and grab runs a lockdown clock of its own.
-  nokill: ['assassination', 'heist', 'sabotage', 'escort', 'intercept', 'smash', 'jailbreak'], // Elimination is all kills
-  unknown: ['assassination'],
-  carry: ['heist'],
-  // Two endings: a through-run extracts at the corner opposite the start (an intercept's courier route is planned
-  // around the start); a called extraction has none until the squad calls a pickup, PICKUP_SECONDS out.
-  through: ['assassination', 'heist', 'sabotage', 'escort', 'elimination', 'smash', 'surveillance', 'jailbreak'],
-  called: ['assassination', 'heist', 'sabotage', 'escort', 'elimination', 'intercept', 'smash', 'surveillance', 'jailbreak'],
-};
+// Two of them are endings: a through-run extracts at the corner opposite the start; a called extraction has none until
+// the squad calls a pickup, PICKUP_SECONDS out. Which types a modifier fits is in CONTRACT_RULES.
 export const MODIFIER_UNLOCK: Record<Modifier, number> = { lockdown: 2, nokill: 2, unknown: 3, carry: 2, through: 2, called: 2 };
 export const IDENTIFY_RANGE = 5, IDENTIFY_SECONDS = 2;
 // Carry: the carrier's share of a walk; a squadmate sent on its own to stand within HANDOVER_REACH of a standing carrier
@@ -38,7 +29,7 @@ export const LOCKDOWN_SECONDS = 45;
 export const NO_KILL_CUT = .15, NO_KILL_FLOOR = .25;
 export const isModifier = (v: unknown): v is Modifier => MODIFIERS.includes(v as Modifier);
 export const hasModifier = (c: Pick<Contract, 'modifiers'> | null | undefined, m: Modifier) => !!c?.modifiers?.includes(m);
-export type Gear = 'weapon' | 'armor';
+type Gear = 'weapon' | 'armor';
 export type Upgrade = Gear | ClassId;
 // How the squad's gear levels are spent, switched freely at headquarters: weapons that pierce (damage), are suppressed
 // (a hostile that survives a hit turns suspicious instead of raising the alarm) or extended (range); plating that is
@@ -54,12 +45,12 @@ export const DEFAULT_LOADOUT: Loadout = { weapon: 'piercing', armor: 'heavy' };
 // downing every hostile the district started with (purge).
 export type Badge = 'ghost' | 'untouched' | 'swift' | 'bloodless' | 'purge';
 export const BADGES: readonly Badge[] = ['ghost', 'untouched', 'swift', 'bloodless', 'purge'];
-export const isBadge = (v: unknown): v is Badge => BADGES.includes(v as Badge);
-// The badges a contract type can earn. Elimination's goal is Purge, and it can never be Bloodless, so it has neither.
-export const badgesFor = (type: ContractType): readonly Badge[] => type === 'elimination' ? BADGES.filter(b => b !== 'bloodless' && b !== 'purge') : BADGES;
+const isBadge = (v: unknown): v is Badge => BADGES.includes(v as Badge);
+// The badges a contract type can earn: all but its CONTRACT_RULES entry's `noBadges`.
+export const badgesFor = (type: ContractType): readonly Badge[] => BADGES.filter(b => !CONTRACT_RULES[type].noBadges?.includes(b));
 // Per-contract results a won contract can report beyond the badges: caches taken, prisoners rescued, executives tagged.
 export type ResultField = 'caches' | 'prisoners' | 'tagged';
-export const RESULT_FIELDS: readonly ResultField[] = ['caches', 'prisoners', 'tagged'];
+const RESULT_FIELDS: readonly ResultField[] = ['caches', 'prisoners', 'tagged'];
 export type MissionResults = Partial<Record<ResultField, number>>;
 // What the client reports when a contract is won.
 // `kills` counts hostiles killed but a target, for a no-kill clause (an older client reports none).
@@ -68,12 +59,11 @@ export type MissionReport = { stealth: boolean; badges: Badge[]; results: Missio
 // `bonus` credits for each count past `free`, an operative who joins the roster once the count reaches `operative`
 // (RECRUIT_COST credits instead when the roster is full), and intel on the next contract once it reaches `intel`.
 // A threshold is a count, or one that depends on the contract (Jailbreak's operative waits in its last cell).
-export type Threshold = number | ((c: Contract) => number);
-export type RewardSpec = { field: ResultField; max: (c: Contract) => number; free?: number; bonus?: number; operative?: Threshold; intel?: Threshold };
+type Threshold = number | ((c: Contract) => number);
+type RewardSpec = { field: ResultField; max: (c: Contract) => number; free?: number; bonus?: number; operative?: Threshold; intel?: Threshold };
 export const thresholdFor = (t: Threshold, c: Contract) => typeof t === 'function' ? t(c) : t;
 export type RewardTable = Partial<Record<ContractType, RewardSpec>>;
-// Filled in by the contract types that report results. Smash and grab: one of its CACHES is the contract, and each
-// one past it pays CACHE_BONUS.
+// Smash and grab: one of its CACHES is the contract, and each one past it pays CACHE_BONUS.
 export const CACHES = 3, CACHE_BONUS = 200;
 // Surveillance: tag two of its EXECUTIVES (keep one, unaware, in sight within TAG_RANGE for TAG_SECONDS, or let Recon
 // mark it); tagging all of them earns intel on the next contract.
@@ -82,11 +72,34 @@ export const EXECUTIVES = 3, EXECUTIVES_NEEDED = 2, TAG_RANGE = 8, TAG_SECONDS =
 // pays PRISONER_BONUS, and the last cell holds an operative, who joins the roster when every prisoner gets out.
 export const PRISONER_BONUS = 250;
 export const prisonerCount = (tier: number) => tier >= 5 ? 3 : 2;
-export const REWARDS: RewardTable = {
-  jailbreak: { field: 'prisoners', max: c => prisonerCount(c.tier), free: 1, bonus: PRISONER_BONUS, operative: c => prisonerCount(c.tier) },
-  smash: { field: 'caches', max: () => CACHES, free: 1, bonus: CACHE_BONUS },
-  surveillance: { field: 'tagged', max: () => EXECUTIVES, intel: EXECUTIVES },
+// What the campaign knows about each contract type, one entry per type, in the order the board lists them:
+// - `unlock`: the base tier at which the board starts dealing it (the first board dealt after that always includes it);
+// - `par`: Swift's time at tier 1, in seconds of mission time (PAR_PER_TIER more for each tier above);
+// - `modifiers`: the modifiers that fit it;
+// - `noBadges`: badges it can never earn;
+// - `reward`: what it pays beyond credits, for the types that report results.
+// A new type also needs its entry in mapgen.ts (LAYOUTS), missions.ts (MISSIONS) and ui/common.tsx (CONTRACTS); the
+// compiler asks for each.
+type ContractRules = { unlock: number; par: number; modifiers: readonly Modifier[]; noBadges?: readonly Badge[]; reward?: RewardSpec };
+const CONTRACT_RULES: Record<ContractType, ContractRules> = {
+  assassination: { unlock: 1, par: 18, modifiers: ['lockdown', 'nokill', 'unknown', 'through', 'called'] },
+  heist: { unlock: 1, par: 28, modifiers: ['lockdown', 'nokill', 'carry', 'through', 'called'] },
+  sabotage: { unlock: 1, par: 32, modifiers: ['lockdown', 'nokill', 'through', 'called'] },
+  escort: { unlock: 1, par: 28, modifiers: ['lockdown', 'nokill', 'through', 'called'] },
+  // Elimination's goal is Purge and it is all kills, so it has neither badge and no no-kill clause.
+  elimination: { unlock: 2, par: 45, modifiers: ['lockdown', 'through', 'called'], noBadges: ['bloodless', 'purge'] },
+  // The courier's route is planned around the start, so there is no through-run.
+  intercept: { unlock: 2, par: 20, modifiers: ['lockdown', 'nokill', 'called'] },
+  // Smash and grab runs a lockdown clock of its own.
+  smash: { unlock: 3, par: 30, modifiers: ['nokill', 'through', 'called'], reward: { field: 'caches', max: () => CACHES, free: 1, bonus: CACHE_BONUS } },
+  surveillance: { unlock: 3, par: 30, modifiers: ['lockdown', 'through', 'called'], reward: { field: 'tagged', max: () => EXECUTIVES, intel: EXECUTIVES } },
+  jailbreak: { unlock: 4, par: 40, modifiers: ['lockdown', 'nokill', 'through', 'called'], reward: { field: 'prisoners', max: c => prisonerCount(c.tier), free: 1, bonus: PRISONER_BONUS, operative: c => prisonerCount(c.tier) } },
 };
+export const CONTRACT_TYPES = Object.keys(CONTRACT_RULES) as readonly ContractType[];
+const byType = <T>(value: (r: ContractRules) => T) => Object.fromEntries(CONTRACT_TYPES.map(t => [t, value(CONTRACT_RULES[t])])) as Record<ContractType, T>;
+const fits = (m: Modifier) => CONTRACT_TYPES.filter(t => CONTRACT_RULES[t].modifiers.includes(m));
+export const MODIFIER_FITS: Record<Modifier, readonly ContractType[]> = { lockdown: fits('lockdown'), nokill: fits('nokill'), unknown: fits('unknown'), carry: fits('carry'), through: fits('through'), called: fits('called') };
+export const REWARDS: RewardTable = Object.fromEntries(CONTRACT_TYPES.flatMap(t => CONTRACT_RULES[t].reward ? [[t, CONTRACT_RULES[t].reward]] : []));
 // Smash and grab's clock: opening the first cache seals the exits this many seconds later.
 export const smashSeconds = (tier: number) => 30 + 5 * tier;
 // What a won contract earned beyond its payout.
@@ -102,14 +115,11 @@ export type Campaign = {
   intel: boolean; // a reward waiting for the next deployment: its district's patrol routes are known from the start
 };
 // `intel`: the deployment spent an intel reward, so a restart keeps the routes known.
-export type ActiveMission = { id: string; startedAt: number; contract: Contract; countermeasures: number; intel?: boolean } | null;
+type ActiveMission = { id: string; startedAt: number; contract: Contract; countermeasures: number; intel?: boolean } | null;
 export type Ledger = { campaign: Campaign; activeMission: ActiveMission };
 
-export const CONTRACT_TYPES: readonly ContractType[] = ['assassination', 'heist', 'sabotage', 'escort', 'elimination', 'intercept', 'smash', 'surveillance', 'jailbreak'];
-// The base tier at which the board starts dealing each contract type. The first board dealt after a type unlocks always
-// includes it.
 export type UnlockTiers = Record<ContractType, number>;
-export const UNLOCK_TIER: UnlockTiers = { assassination: 1, heist: 1, sabotage: 1, escort: 1, elimination: 2, intercept: 2, smash: 3, surveillance: 3, jailbreak: 4 };
+export const UNLOCK_TIER: UnlockTiers = byType(r => r.unlock);
 export const GEAR_COST: Record<Gear, number> = { weapon: 300, armor: 250 };
 export const ABILITY_UPGRADE_COST = 200;
 export const RECRUIT_COST = 400;
@@ -117,24 +127,33 @@ export const MAX_LEVEL = 3;
 export const MAX_TIER = 5;
 export const ROSTER_CAP = 6;
 export const SQUAD_MAX = 4;
-export const OFFER_COUNT = 3;
-export const RECRUIT_OFFERS = 2;
+const OFFER_COUNT = 3;
+const RECRUIT_OFFERS = 2;
 export const STEALTH_BONUS = .25;
 // A contract cannot be cleared faster than this; blocks instant or replayed payout claims.
 export const MIN_MISSION_MS = 15_000;
 
-export const upgradeCost = (type: Upgrade) => type === 'weapon' || type === 'armor' ? GEAR_COST[type] : ABILITY_UPGRADE_COST;
-export const upgradeLevel = (c: Campaign, type: Upgrade) => type === 'weapon' || type === 'armor' ? c[type] : c.abilities[type];
+const upgradeCost = (type: Upgrade) => type === 'weapon' || type === 'armor' ? GEAR_COST[type] : ABILITY_UPGRADE_COST;
+const upgradeLevel = (c: Campaign, type: Upgrade) => type === 'weapon' || type === 'armor' ? c[type] : c.abilities[type];
 export const isUpgrade = (v: unknown): v is Upgrade => v === 'weapon' || v === 'armor' || isClass(v);
 export const isLoadout = (v: unknown): v is Loadout => {
   const l = v as Partial<Loadout> | null;
   return !!l && typeof l === 'object' && WEAPON_MODES.includes(l.weapon!) && ARMOR_MODES.includes(l.armor!);
 };
-export const isContractType = (v: unknown): v is ContractType => CONTRACT_TYPES.includes(v as ContractType);
+const isContractType = (v: unknown): v is ContractType => CONTRACT_TYPES.includes(v as ContractType);
 // Whether a report's results fit the contract: only its type's field, and never more than the contract holds.
 export function resultsFit(contract: Contract, results: MissionResults, rewards: RewardTable = REWARDS) {
   const spec = rewards[contract.type];
   return RESULT_FIELDS.every(f => results[f] === undefined || (spec?.field === f && results[f]! <= spec.max(contract)));
+}
+// Whether the simulation could have produced this report. Bloodless means no kill was counted, and Purge means every
+// hostile the district started with is down, which always includes a guard, so Purge never comes with Bloodless. Under a
+// no-kill clause every client reports its kills, so Purge with none is false too (an older client reports no kills,
+// and it predates the clause).
+export function reportConsistent(contract: Contract, report: MissionReport) {
+  const has = (b: Badge) => report.badges.includes(b), kills = report.kills ?? 0;
+  if (has('bloodless') && (kills > 0 || has('purge'))) return false;
+  return !(has('purge') && hasModifier(contract, 'nokill') && kills === 0);
 }
 // What the results earn (nothing for a type without rewards, or an older client that sends none).
 export function rewardFor(contract: Contract, results: MissionResults, rewards: RewardTable = REWARDS): Reward {
@@ -150,11 +169,11 @@ export const contractPayout = (tier: number, modifiers = 0) => Math.round((500 +
 // Clearance: each completed contract earns CONTRACT_POINTS and each badge BADGE_POINTS (half a contract); the base
 // tier rises every TIER_POINTS, so every two contracts without badges.
 export const CONTRACT_POINTS = 2, BADGE_POINTS = 1, TIER_POINTS = 4;
-export type Progress = Pick<Campaign, 'completed' | 'badges'>;
+type Progress = Pick<Campaign, 'completed' | 'badges'>;
 export const clearancePoints = (p: Progress) => CONTRACT_POINTS * p.completed + BADGE_POINTS * BADGES.reduce((sum, b) => sum + p.badges[b], 0);
 export const baseTier = (points: number) => Math.min(MAX_TIER, 1 + Math.floor(points / TIER_POINTS));
 // Swift: extract within this many seconds of mission time, by contract type, plus PAR_PER_TIER for each tier above the first.
-export const PAR_SECONDS: Record<ContractType, number> = { assassination: 18, heist: 28, sabotage: 32, escort: 28, elimination: 45, intercept: 20, smash: 30, surveillance: 30, jailbreak: 40 };
+export const PAR_SECONDS: Record<ContractType, number> = byType(r => r.par);
 export const PAR_PER_TIER = 12;
 export const parSeconds = (type: ContractType, tier: number) => PAR_SECONDS[type] + PAR_PER_TIER * (tier - 1);
 // A client's report of a won contract, checked: only known badges, and Ghost exactly when the alarm never sounded (so an
@@ -186,7 +205,7 @@ export function threatFor(c: Campaign, tier: number): Threat {
 // Countermeasures: an opt-in difficulty ladder for a squad with nothing left to buy. Level 1 opens once every upgrade is
 // maxed; clearing the highest open level with at least one badge opens the next. It pays no credits.
 export const MAX_COUNTERMEASURES = 3;
-export const fullyUpgraded = (c: Campaign) => c.weapon >= MAX_LEVEL && c.armor >= MAX_LEVEL && CLASSES.every(k => c.abilities[k] >= MAX_LEVEL);
+const fullyUpgraded = (c: Campaign) => c.weapon >= MAX_LEVEL && c.armor >= MAX_LEVEL && CLASSES.every(k => c.abilities[k] >= MAX_LEVEL);
 export const unlockedCountermeasures = (c: Campaign) => fullyUpgraded(c) ? Math.min(MAX_COUNTERMEASURES, c.countermeasures + 1) : 0;
 export const noKillShare = (contract: Contract, kills = 0) => hasModifier(contract, 'nokill') ? Math.max(NO_KILL_FLOOR, 1 - NO_KILL_CUT * kills) : 1;
 export const missionPayout = (contract: Contract, stealth: boolean, kills = 0) => Math.round(contract.payout * noKillShare(contract, kills) * (stealth ? 1 + STEALTH_BONUS : 1));
@@ -327,6 +346,21 @@ export function clampCampaign(data: any, rng: Rng = Math.random): Campaign {
   return offers.length ? campaign : dealBoard(campaign, rng);
 }
 
+// A browser save from before the server is the client's word, so an import is held to what its own contract count could
+// have paid: at most LEGACY_MAX_COMPLETED contracts at the richest payout, spent first on its gear levels, the rest
+// its cash. Those saves predate rosters and contracts, so only their v1/v2 fields are read. Null when there is none.
+export const LEGACY_MAX_COMPLETED = 500;
+export const LEGACY_PAYOUT = Math.round(contractPayout(MAX_TIER) * (1 + STEALTH_BONUS));
+export function importLegacy(data: unknown, rng: Rng): Campaign | null {
+  if (!data || typeof data !== 'object') return null;
+  const old = data as Record<string, unknown>;
+  const completed = n(old.completed ?? ((Number(old.mission) || 1) - 1), LEGACY_MAX_COMPLETED);
+  let budget = completed * LEGACY_PAYOUT;
+  const afford = (gear: Gear) => { const level = Math.min(n(old[gear], MAX_LEVEL), Math.floor(budget / GEAR_COST[gear])); budget -= level * GEAR_COST[gear]; return level; };
+  const weapon = afford('weapon'), armor = afford('armor');
+  return clampCampaign({ cash: Math.min(n(old.cash, 1e8), budget), weapon, armor, completed }, rng);
+}
+
 // A ledger saved in an older campaign shape, brought up to date. A mission in flight keeps its claim on the payout.
 export function upgradeLedger(ledger: Ledger, rng: Rng): Ledger {
   const m = ledger.activeMission as any, contract = m && clampContract(m.contract);
@@ -370,7 +404,7 @@ export function applyPayout(c: Campaign, contract: Contract, countermeasures: nu
   return c.offers.some(isFirstContract) ? withDealt(paid, dealOffers(paid, rng)) : paid;
 }
 
-export const validSquad = (c: Campaign, squad: readonly string[]) =>
+const validSquad = (c: Campaign, squad: readonly string[]) =>
   squad.length >= 1 && squad.length <= SQUAD_MAX && new Set(squad).size === squad.length && squad.every(id => c.roster.some(o => o.id === id));
 
 // Deploying an offer deals a new board, so offers reroll whether the mission is won or lost.
@@ -386,6 +420,6 @@ export function startMission(state: Ledger, id: string, now: number, contractId:
 }
 export function completeMission(state: Ledger, id: string, now: number, report: MissionReport, rng: Rng, rewards: RewardTable = REWARDS): Ledger | null {
   const m = state.activeMission;
-  if (!m || m.id !== id || now - m.startedAt < MIN_MISSION_MS || !resultsFit(m.contract, report.results, rewards)) return null;
+  if (!m || m.id !== id || now - m.startedAt < MIN_MISSION_MS || !resultsFit(m.contract, report.results, rewards) || !reportConsistent(m.contract, report)) return null;
   return { campaign: applyPayout(state.campaign, m.contract, m.countermeasures, report, rng, rewards), activeMission: null };
 }

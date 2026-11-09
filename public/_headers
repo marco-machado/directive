@@ -1,3 +1,13 @@
+# Every page and asset. The policy allows only what the game loads: its own scripts, styles and files, Google Fonts,
+# the WebAssembly mesh decoder ('wasm-unsafe-eval'), the blob: and data: URLs three's glTF loader makes for the textures
+# inside a model, and React's inline style attributes ('unsafe-inline' for styles only). Nothing may frame the game.
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' data: blob:; media-src 'self' blob:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()
+
 # Vite fingerprints everything under /assets/, so a browser can keep it for good.
 # Models and audio keep Cloudflare's default (revalidate with an ETag): their names don't change with their content.
 /assets/*

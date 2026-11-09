@@ -100,7 +100,9 @@ class Quads {
   readonly data: Record<string, Float32Array> = {};
   private attributes: InstancedBufferAttribute[] = [];
   n = 0;
-  constructor(readonly capacity: number, attrs: Record<string, number>) {
+  readonly capacity: number;
+  constructor(capacity: number, attrs: Record<string, number>) {
+    this.capacity = capacity;
     this.geometry.setAttribute('position', new BufferAttribute(new Float32Array([-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0]), 3));
     this.geometry.setIndex([0, 1, 2, 0, 2, 3]);
     this.geometry.instanceCount = 0;

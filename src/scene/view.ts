@@ -2,7 +2,7 @@ import type { Bounds, Building, Point, Rect } from '../game/world.ts';
 
 // What the orthographic camera can see, reduced to the ground plane: every view ray runs along
 // (ux, uz) toward the camera and climbs `rise` meters per meter of ground it crosses.
-export type View = { ux: number; uz: number; rise: number };
+type View = { ux: number; uz: number; rise: number };
 export const viewAlong = (dx: number, dy: number, dz: number): View => {
   const ground = Math.hypot(dx, dz) || 1e-6;
   return { ux: -dx / ground, uz: -dz / ground, rise: -dy / ground };
@@ -11,7 +11,7 @@ export const viewAlong = (dx: number, dy: number, dz: number): View => {
 // Rooftop parts (thin antennas aside) stay within this far above Building.h, and a building's dressing within this far past its footprint
 // (district.ts; tests/district.test.ts holds it to both).
 export const ROOF = .85, PLINTH = .25;
-export const COVER_TOP = .62;
+const COVER_TOP = .62;
 export const buildingTop = (b: Building) => b.h + ROOF;
 
 // True when the ray from `p` at height `y` toward the camera passes through the box over `r`

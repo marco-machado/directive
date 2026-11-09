@@ -1,5 +1,5 @@
-import { EXECUTIVES, hasModifier, prisonerCount } from './campaign.ts';
-import type { Contract } from './campaign.ts';
+import { CACHES, EXECUTIVES, hasModifier, prisonerCount } from './campaign.ts';
+import type { Contract, ContractType } from './campaign.ts';
 import { SQUAD_SPEED } from './classes.ts';
 import { between, mulberry32, pick, shuffle } from './rng.ts';
 import type { Rng } from './rng.ts';
@@ -8,8 +8,8 @@ import type { Bounds, Building, Point, Rect } from './world.ts';
 
 export type EnemyKind = 'guard' | 'heavy' | 'camera' | 'turret' | 'target';
 // `escort` marks a guard that walks beside an Intercept courier (the plan's target) instead of keeping a patrol or a post.
-export type EnemySpawn = Point & { kind: EnemyKind; heading: number; patrol: Point[]; escort?: true };
-export type ObjectiveSite = Point & { kind: 'terminal' | 'charge' | 'cache' | 'cell' };
+type EnemySpawn = Point & { kind: EnemyKind; heading: number; patrol: Point[]; escort?: true };
+type ObjectiveSite = Point & { kind: 'terminal' | 'charge' | 'cache' | 'cell' };
 export type Area = Point & { r: number };
 export type MissionPlan = {
   contract: Contract; world: World; label: string;
@@ -30,9 +30,9 @@ export const COURIER_DELAY = 6;
 export const COURIER_SPEED = 1.5;
 export const COURIER_PAUSE = 1.2;
 export const COURIER_MIN_RUN = 16;
-export const INTERCEPT_MARGIN = 5;
+const INTERCEPT_MARGIN = 5;
 // m the route keeps from extraction, so the ambush is a walk out across the district, not a step off the start.
-export const COURIER_BERTH = 15;
+const COURIER_BERTH = 15;
 export const TARGET_AREA_RADIUS = 6;
 export const TARGET_AREA_OFFSET = 3; // the area's center lies within this of the target, so the area always contains it
 const ACCENTS = ['#b9d6cc', '#ffb17d', '#73dfca', '#bad3c8', '#e2a078'];
@@ -142,6 +142,78 @@ export function interceptable(world: World, from: Point, route: Point[]) {
   });
 }
 
+// The ground a contract type places its objectives on: the street lattice and its nodes, the bare world (no cover yet),
+// the squad's start and line-up, candidate points far from the start (`far`, farthest first, and its far end
+// `farthest`), one of those already picked (`primary`), and `reach`, a point's distance from where the squad comes and goes.
+type Ground = {
+  contract: Contract; rng: Rng; lattice: Lattice; nodes: { p: Point; i: number; j: number }[]; bare: World; start: Point; spawn: Point[]; width: number;
+  far: Point[]; farthest: Point[]; primary: Point; reach: (p: Point) => number;
+};
+// What a type places before the guards: objective sites, targets (and their routes), the escort VIP, an Intercept
+// courier's escorts, and `primary`, the point its posts, turrets and cover gather around.
+type Placed = { primary: Point; sites: ObjectiveSite[]; enemies: EnemySpawn[]; vip: Point | null; escorts: Point[] };
+// How a contract type lays out its district, one entry per type:
+// - `place`: what it places; null when this layout has no room for it, and the next one is tried;
+// - `posts`: how many of its sites (its primary point without any) posted guards hold, 0 for none;
+// - `held`: every one of those must get its post, or the layout is tried again;
+// - `fewerPatrols`: walking guards taken off the usual count;
+// - `courier`: its target walks a route the squad must be able to cut off (checked again on the finished streets);
+// - `intel`: the briefing's target area: where the target was last 'reported', or the courier's 'entry' exit.
+type Layout = { place: (g: Ground) => Placed | null; posts: number; held?: true; fewerPatrols?: number; courier?: true; intel?: 'reported' | 'entry' };
+const placed = (g: Ground, more: Partial<Placed> = {}): Placed => ({ primary: g.primary, sites: [], enemies: [], vip: null, escorts: [], ...more });
+// Sites spread over the far side, each at least 8 m from the others.
+function spread(g: Ground, n: number, kind: ObjectiveSite['kind']): Placed | null {
+  const spots = [g.primary];
+  for (const pool of [shuffle(g.rng, g.farthest), g.far]) for (const p of pool) if (spots.length < n && spots.every(c => distance(c, p) >= 8)) spots.push(p);
+  return spots.length < n ? null : placed(g, { sites: spots.map(p => ({ ...p, kind })) });
+}
+const LAYOUTS: Record<ContractType, Layout> = {
+  assassination: { posts: 2, intel: 'reported', place: g => placed(g, { enemies: [{ ...g.primary, kind: 'target', heading: headingTo(g.primary, g.start), patrol: [] }] }) },
+  heist: { posts: 2, place: g => placed(g, { sites: [{ ...g.primary, kind: 'terminal' }] }) },
+  sabotage: {
+    posts: 2,
+    place: g => {
+      const second = shuffle(g.rng, g.farthest).find(p => distance(p, g.primary) >= 8) ?? g.far.find(p => distance(p, g.primary) >= 8);
+      return second ? placed(g, { sites: [{ ...g.primary, kind: 'charge' }, { ...second, kind: 'charge' }] }) : null;
+    },
+  },
+  escort: { posts: 2, place: g => { const vip = pick(g.rng, g.far.slice(0, Math.ceil(g.far.length * .5))); return placed(g, { primary: vip, vip }); } },
+  elimination: { posts: 2, place: g => placed(g) },
+  // The courier starts at its entry exit with two escorts beside it, which stand in for posted guards; the posts'
+  // point is the middle of its route.
+  intercept: {
+    posts: 0, fewerPatrols: 2, courier: true, intel: 'entry',
+    place: g => {
+      const route = courierRoute(g.rng, g.lattice, g.bare, g.spawn[0], g.start, g.width);
+      if (!route) return null;
+      const entry = route[0], ahead = headingTo(entry, route[1]);
+      // The entry is on the map edge, so they stand at its shoulders a step in, or in file ahead where a shoulder is off the map.
+      const at = ([along, side]: number[]) => ({ x: entry.x + Math.sin(ahead) * along + Math.cos(ahead) * side, z: entry.z + Math.cos(ahead) * along - Math.sin(ahead) * side });
+      const escorts = [[.5, .9], [.5, -.9], [1.2, .7], [1.2, -.7], [1.4, 0], [2.4, 0]].map(at).filter(p => g.bare.walkable(p, .4)).slice(0, 2);
+      if (escorts.length < 2) return null;
+      return placed(g, { primary: route[Math.floor(route.length / 2)], enemies: [{ ...entry, kind: 'target', heading: ahead, patrol: route }], escorts });
+    },
+  },
+  // Every Smash and grab cache and Jailbreak cell is held.
+  smash: { posts: 3, held: true, place: g => spread(g, CACHES, 'cache') },
+  // Three executives walk their own beats on the far side, each starting at least 8 m from the others. They are seen
+  // walking from the start, so no post holds them and there is no single target to search for.
+  surveillance: {
+    posts: 0,
+    place: g => {
+      const starts: Ground['nodes'] = [];
+      for (const n of shuffle(g.rng, g.nodes)) if (starts.length < EXECUTIVES && g.reach(n.p) > SAFE_RADIUS + 4 && starts.every(s => distance(s.p, n.p) >= 8)) starts.push(n);
+      if (starts.length < EXECUTIVES) return null;
+      const enemies = starts.map((n): EnemySpawn => {
+        const route = patrolRoute(g.rng, g.lattice, n.i, n.j, 2 + Math.floor(g.rng() * 2), g.start);
+        return { ...n.p, kind: 'target', heading: headingTo(route[0], route[1] ?? g.start), patrol: route };
+      });
+      return placed(g, { primary: starts[0].p, enemies });
+    },
+  },
+  jailbreak: { posts: 3, held: true, place: g => spread(g, prisonerCount(g.contract.tier), 'cell') },
+};
+
 function attempt(contract: Contract, rng: Rng, withCover: boolean): MissionPlan | null {
   const { bounds, buildings, lattice } = layout(contract, rng);
   const bare = new World(bounds, buildings, []);
@@ -161,49 +233,10 @@ function attempt(contract: Contract, rng: Rng, withCover: boolean): MissionPlan 
   const farthest = far.slice(0, Math.max(3, Math.ceil(far.length * .4)));
   if (farthest.length < 2) return null;
 
-  const sites: ObjectiveSite[] = [];
-  let primary = pick(rng, farthest), vip: Point | null = null;
-  const enemies: EnemySpawn[] = [];
-  const type = contract.type;
-  if (type === 'heist') sites.push({ ...primary, kind: 'terminal' });
-  if (type === 'sabotage') {
-    const second = shuffle(rng, farthest).find(p => distance(p, primary) >= 8) ?? far.find(p => distance(p, primary) >= 8);
-    if (!second) return null;
-    sites.push({ ...primary, kind: 'charge' }, { ...second, kind: 'charge' });
-  }
-  // Smash and grab: three caches spread over the far side, each at least 8 m from the others; Jailbreak's cells likewise.
-  if (type === 'smash' || type === 'jailbreak') {
-    const n = type === 'smash' ? 3 : prisonerCount(contract.tier), spots = [primary];
-    for (const pool of [shuffle(rng, farthest), far]) for (const p of pool) if (spots.length < n && spots.every(c => distance(c, p) >= 8)) spots.push(p);
-    if (spots.length < n) return null;
-    sites.push(...spots.map(p => ({ ...p, kind: type === 'smash' ? 'cache' as const : 'cell' as const })));
-  }
-  // Surveillance: three executives walk their own beats on the far side, each starting at least 8 m from the others.
-  if (type === 'surveillance') {
-    const starts: typeof nodes = [];
-    for (const n of shuffle(rng, nodes)) if (starts.length < EXECUTIVES && reach(n.p) > SAFE_RADIUS + 4 && starts.every(s => distance(s.p, n.p) >= 8)) starts.push(n);
-    if (starts.length < EXECUTIVES) return null;
-    for (const n of starts) {
-      const route = patrolRoute(rng, lattice, n.i, n.j, 2 + Math.floor(rng() * 2), start);
-      enemies.push({ ...n.p, kind: 'target', heading: headingTo(route[0], route[1] ?? start), patrol: route });
-    }
-    primary = starts[0].p;
-  }
-  if (type === 'escort') { primary = pick(rng, far.slice(0, Math.ceil(far.length * .5))); vip = primary; }
-  if (type === 'assassination') enemies.push({ ...primary, kind: 'target', heading: headingTo(primary, start), patrol: [] });
-  // Intercept: the courier starts at its entry exit with two escorts beside it; the posted guards hold the route's middle.
-  let escorts: Point[] = [];
-  if (type === 'intercept') {
-    const route = courierRoute(rng, lattice, bare, spawn[0], start, bounds.maxX - bounds.minX);
-    if (!route) return null;
-    const entry = route[0], ahead = headingTo(entry, route[1]);
-    // The entry is on the map edge, so they stand at its shoulders a step in, or in file ahead where a shoulder is off the map.
-    const at = ([along, side]: number[]) => ({ x: entry.x + Math.sin(ahead) * along + Math.cos(ahead) * side, z: entry.z + Math.cos(ahead) * along - Math.sin(ahead) * side });
-    escorts = [[.5, .9], [.5, -.9], [1.2, .7], [1.2, -.7], [1.4, 0], [2.4, 0]].map(at).filter(p => bare.walkable(p, .4)).slice(0, 2);
-    if (escorts.length < 2) return null;
-    enemies.push({ ...entry, kind: 'target', heading: ahead, patrol: route });
-    primary = route[Math.floor(route.length / 2)];
-  }
+  const rules = LAYOUTS[contract.type];
+  const put = rules.place({ contract, rng, lattice, nodes, bare, start, spawn, width: bounds.maxX - bounds.minX, far, farthest, primary: pick(rng, farthest), reach });
+  if (!put) return null;
+  const { primary, sites, enemies, vip, escorts } = put;
 
   const used: Point[] = [primary, ...sites, ...enemies.flatMap(e => [e, ...e.patrol]), ...escorts];
   const free = (p: Point, gap = 1.5) => distance(p, start) > SAFE_RADIUS && used.every(u => distance(u, p) >= gap);
@@ -217,17 +250,15 @@ function attempt(contract: Contract, rng: Rng, withCover: boolean): MissionPlan 
   const post = (site: Point) => near(site, 4, backRoom) ?? near(site, 6, backRoom) ?? near(site, 8, backRoom);
 
   for (const p of escorts) enemies.push({ ...p, kind: 'guard', heading: enemies[0].heading, patrol: enemies[0].patrol, escort: true });
-  // Two posted guards hold every objective; the rest walk the streets. The courier's escorts stand in for Intercept's;
-  // Surveillance's executives walk, so no post holds them.
-  if (type !== 'intercept' && type !== 'surveillance') for (const site of (sites.length ? sites : [primary]).slice(0, type === 'smash' || type === 'jailbreak' ? 3 : 2)) {
+  // Posted guards hold the objectives (two at a lone one, one at each of several); the rest walk the streets.
+  for (const site of (sites.length ? sites : [primary]).slice(0, rules.posts)) {
     for (let k = 0; k < (sites.length > 1 ? 1 : 2); k++) {
       const p = post(site);
-      // Every Smash and grab cache and Jailbreak cell is held; a layout with no post by one is tried again.
-      if (p) add('guard', p, []); else if (type === 'smash' || type === 'jailbreak') return null;
+      if (p) add('guard', p, []); else if (rules.held) return null;
     }
   }
   const guarding = () => enemies.filter(e => e.kind === 'guard' && !e.escort).length;
-  const guards = contract.patrols === undefined ? 3 + contract.tier - (type === 'intercept' ? 2 : 0) : guarding() + contract.patrols;
+  const guards = contract.patrols === undefined ? 3 + contract.tier - (rules.fewerPatrols ?? 0) : guarding() + contract.patrols;
   const nodeStarts = shuffle(rng, nodes).filter(n => free(n.p, 3));
   while (guarding() < guards && nodeStarts.length) {
     const n = nodeStarts.pop()!, route = patrolRoute(rng, lattice, n.i, n.j, 2 + Math.floor(rng() * 2), start);
@@ -272,7 +303,7 @@ function attempt(contract: Contract, rng: Rng, withCover: boolean): MissionPlan 
   if (!needed.every(p => world.findPath(spawn[0], p).length)) return null;
   const label = `SECTOR ${String(contract.sector).padStart(2, '0')} / ${contract.district}`;
   // Barriers can lengthen the squad's way to the route, so the margin is checked again on the finished streets.
-  const courier = type === 'intercept' ? enemies.find(e => e.kind === 'target') : undefined;
+  const courier = rules.courier ? enemies.find(e => e.kind === 'target') : undefined;
   if (courier && !interceptable(world, spawn[0], courier.patrol)) return null;
   return { contract, world, label, spawn, start, extract, enemies, sites, vip, exits, targetArea: null };
 }
@@ -286,11 +317,9 @@ function lastKnownArea(seed: number, target: Point): Area {
 export function planMission(contract: Contract): MissionPlan {
   const rng = mulberry32(contract.seed);
   for (let k = 0; k < 12; k++) {
-    const plan = attempt(contract, rng, k < 8), target = plan?.enemies.find(e => e.kind === 'target');
-    // An Intercept courier's area is centered on its entry exit; its route is given away as a patrol's is.
-    if (plan && target && contract.type === 'intercept') return { ...plan, targetArea: { x: target.x, z: target.z, r: TARGET_AREA_RADIUS } };
-    // Surveillance's executives are seen walking from the start; there is no single target to search for.
-    if (plan) return target && contract.type !== 'surveillance' ? { ...plan, targetArea: lastKnownArea(contract.seed, target) } : plan;
+    const plan = attempt(contract, rng, k < 8), target = plan?.enemies.find(e => e.kind === 'target'), intel = LAYOUTS[contract.type].intel;
+    if (plan && target && intel === 'entry') return { ...plan, targetArea: { x: target.x, z: target.z, r: TARGET_AREA_RADIUS } };
+    if (plan) return target && intel === 'reported' ? { ...plan, targetArea: lastKnownArea(contract.seed, target) } : plan;
   }
   throw new Error(`No playable layout for contract seed ${contract.seed}.`);
 }

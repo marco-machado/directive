@@ -4,6 +4,7 @@
 // Knowledge holds and acts only through Orders.
 import { abilityPower, ABILITY_STATS, CLASS_STATS } from '../src/game/classes.ts';
 import { hasModifier } from '../src/game/campaign.ts';
+import { MISSIONS } from '../src/game/missions.ts';
 import { COVER_FACTOR, gearRange, HOSTILE_STATS, objectivesMet, posted, ROUTE_MAX, TAKEDOWN_REACH, watchedBy } from '../src/game/simulation.ts';
 import type { AttackPreview, Objective } from '../src/game/simulation.ts';
 import { distance } from '../src/game/world.ts';
@@ -70,7 +71,9 @@ class Tactician {
   private fightTarget = ''; private fightGoal = '';
   private retreat: Point | null = null; private retreatAt = -Infinity;
 
-  constructor(private readonly o: Orders, private readonly quietOnly: boolean) {}
+  private readonly o: Orders;
+  private readonly quietOnly: boolean;
+  constructor(o: Orders, quietOnly: boolean) { this.o = o; this.quietOnly = quietOnly; }
 
   think(k: Knowledge) {
     this.k = k;
@@ -94,7 +97,7 @@ class Tactician {
     }
     if (!k.alarm) this.retreat = null;
     // An Intercept courier about to leave is worth the alarm: once its route is known, the bot goes loud within 10 m of its exit.
-    const exit = goal.target?.patrol.length && k.contract.type === 'intercept' ? goal.target.patrol.at(-1)! : null;
+    const exit = goal.target?.patrol.length && MISSIONS[k.contract.type].target === 'courier' ? goal.target.patrol.at(-1)! : null;
     if (exit && goal.target!.visible && distance(goal.target!, exit) < 10) this.loud = true;
     if (k.alarm || this.loud) this.fight(goal); else this.sneak(goal);
   }
@@ -125,7 +128,7 @@ class Tactician {
     return { key: `tag:${o.label}`, kind: 'tag', point: { x: Math.round(point.x * 2) / 2, z: Math.round(point.z * 2) / 2 } };
   }
   // Surveillance's executives are to be watched, never shot or taken down.
-  private spared(h: Seen) { return this.k.contract.type === 'surveillance' && h.kind === 'target'; }
+  private spared(h: Seen) { return MISSIONS[this.k.contract.type].target === 'executive' && h.kind === 'target'; }
   // An unknown target passes as a posted guard in its area: the squad goes for the nearest such guard it knows of, which
   // either identifies the target on the approach or takes down a guard, and tries the next.
   private suspect(): Seen | undefined {
@@ -155,7 +158,7 @@ class Tactician {
     }
     this.scouted = this.scouted.filter(p => this.living.every(op => distance(op, p) > SCOUTED));
     // A courier's route keeps well clear of extraction, so a search for one starts out past that.
-    const far = k.contract.type === 'intercept' ? this.scouted.filter(p => distance(p, k.extract) > 12) : [];
+    const far = MISSIONS[k.contract.type].target === 'courier' ? this.scouted.filter(p => distance(p, k.extract) > 12) : [];
     const next = [...(far.length ? far : this.scouted)].sort((a, b) => distance(a, lead) - distance(b, lead))[0] ?? k.extract;
     return { key: `scout:${next.x},${next.z}`, kind: 'search', point: next };
   }

@@ -156,10 +156,10 @@ const HUMAN = (kind: UnitKind) => kind !== 'camera' && kind !== 'turret';
 
 // Unit hitboxes by mesh, for the canvas cursor; a unit is clickable when unitClick would act on it.
 export type Hitboxes = Map<Mesh, string>;
-export const clickable = (sim: Simulation, u: Unit | undefined) => !!u && (u.faction === 'squad' && u.hp > 0 || sim.phase === 'mission' && (u.faction !== 'hostile' || u.hp > 0 && u.visible));
+const clickable = (sim: Simulation, u: Unit | undefined) => !!u && (u.faction === 'squad' && u.hp > 0 || sim.phase === 'mission' && (u.faction !== 'hostile' || u.hp > 0 && u.visible));
 
 // A click or tap that misses every hitbox still picks a clickable unit drawn this close to it (CSS pixels).
-export const PICK_SLOP = 12;
+const PICK_SLOP = 12;
 const corner = new Vector3();
 // The clickable unit whose on-screen hitbox lies nearest a canvas point, within PICK_SLOP. While an ability
 // is aimed only hostiles count: a click on a teammate cancels the aim, so a near miss must not.
