@@ -1,6 +1,7 @@
 import { CACHES, EXECUTIVES, hasModifier, prisonerCount } from './campaign.ts';
 import type { Contract, ContractType } from './campaign.ts';
 import { SQUAD_SPEED } from './classes.ts';
+import { alley, fillBlock, pickBlock } from './lots.ts';
 import { between, mulberry32, pick, shuffle } from './rng.ts';
 import type { Rng } from './rng.ts';
 import { distance, World } from './world.ts';
@@ -19,7 +20,7 @@ export type MissionPlan = {
   targetArea: Area | null; // assassination intel: where the target was last reported; Intercept: where the courier enters
 };
 
-const STREET = 1.5; // clearance between a block's edge and its building
+export const STREET = 1.5; // clearance between a block's edge and its room, where its buildings stand
 const EDGE = .9;    // lattice inset from the map edge
 const SAFE_RADIUS = 9; // no hostile starts this close to the squad
 const BACK_ROOM = 1.5; // map left behind a posted guard, so a takedown has ground to end on
@@ -35,8 +36,6 @@ const INTERCEPT_MARGIN = 5;
 const COURIER_BERTH = 15;
 export const TARGET_AREA_RADIUS = 6;
 export const TARGET_AREA_OFFSET = 3; // the area's center lies within this of the target, so the area always contains it
-const ACCENTS = ['#b9d6cc', '#ffb17d', '#73dfca', '#bad3c8', '#e2a078'];
-const NAMES = ['KESSLER', 'DATA / 04', 'NEXUS', 'RELAY', '07', 'METRO', 'LOGISTICS', 'ARCOLOGY', 'VAULT', 'HYDRO', 'PRISM', 'SPIRE', 'DEPOT', 'ATLAS', 'GRID 9', 'KIOSK'];
 
 export const mapSize = (tier: number) => ({ w: 32 + 3 * (tier - 1), d: 24 + 2 * (tier - 1) });
 const headingTo = (a: Point, b: Point) => Math.atan2(b.x - a.x, b.z - a.z);
@@ -56,19 +55,16 @@ function layout(contract: Contract, rng: Rng) {
     cols, rows,
     node: (i, j) => ({ x: Math.min(bounds.maxX - EDGE, Math.max(bounds.minX + EDGE, bounds.minX + i * cw)), z: Math.min(bounds.maxZ - EDGE, Math.max(bounds.minZ + EDGE, bounds.minZ + j * cd)) }),
   };
-  const names = shuffle(rng, NAMES);
-  const buildings: Building[] = [];
+  // Each block of the grid holds what its kind puts in its room (lots.ts); every footprint gets a height of its own.
+  // `alleys` is the ground between a twin's buildings, out to the streets: cover keeps off it, so an alley is always a way through.
+  const buildings: Building[] = [], alleys: Rect[] = [];
   for (let i = 0; i < cols; i++) for (let j = 0; j < rows; j++) {
-    if (rng() < .2) continue; // open plaza
-    const room = { w: cw - 2 * STREET, d: cd - 2 * STREET };
-    const bw = between(rng, room.w * .55, room.w), bd = between(rng, room.d * .55, room.d);
-    buildings.push({
-      x: bounds.minX + (i + .5) * cw + between(rng, -(room.w - bw) / 2, (room.w - bw) / 2),
-      z: bounds.minZ + (j + .5) * cd + between(rng, -(room.d - bd) / 2, (room.d - bd) / 2),
-      w: bw, d: bd, h: between(rng, 1.4, 2.4 + contract.tier * .9), name: names[buildings.length % names.length], accent: pick(rng, ACCENTS),
-    });
+    const room = { x: bounds.minX + (i + .5) * cw, z: bounds.minZ + (j + .5) * cd, w: cw - 2 * STREET, d: cd - 2 * STREET };
+    const kind = pickBlock(rng), lots = fillBlock(kind, room, rng);
+    if (kind === 'twin' && lots.length === 2) alleys.push(alley(lots, room, STREET));
+    for (const lot of lots) buildings.push({ ...lot, h: between(rng, 1.4, 2.4 + contract.tier * .9) });
   }
-  return { bounds, buildings, lattice };
+  return { bounds, buildings, lattice, alleys };
 }
 
 // Street points: intersections plus the midpoint of every street segment between them.
@@ -215,7 +211,7 @@ const LAYOUTS: Record<ContractType, Layout> = {
 };
 
 function attempt(contract: Contract, rng: Rng, withCover: boolean): MissionPlan | null {
-  const { bounds, buildings, lattice } = layout(contract, rng);
+  const { bounds, buildings, lattice, alleys } = layout(contract, rng);
   const bare = new World(bounds, buildings, []);
   const { nodes, mids } = streetPoints(lattice);
   const candidates = [...nodes.map(n => n.p), ...mids].filter(p => bare.walkable(p, .6));
@@ -281,7 +277,8 @@ function attempt(contract: Contract, rng: Rng, withCover: boolean): MissionPlan 
   if (withCover) {
     const keyPoints = [start, extract, ...spawn, ...used, ...enemies.flatMap(e => e.patrol)];
     const clear = (r: Rect) => keyPoints.every(p => Math.abs(p.x - r.x) > r.w / 2 + .9 || Math.abs(p.z - r.z) > r.d / 2 + .9) &&
-      nodes.every(n => distance(n.p, r) > 1.6) && cover.every(c => distance(c, r) > 2) && bare.walkable(r, .5);
+      nodes.every(n => distance(n.p, r) > 1.6) && cover.every(c => distance(c, r) > 2) && bare.walkable(r, .5) &&
+      alleys.every(a => Math.abs(a.x - r.x) >= (a.w + r.w) / 2 || Math.abs(a.z - r.z) >= (a.d + r.d) / 2);
     const segments = nodes.flatMap(a => [[1, 0], [0, 1]].filter(([di, dj]) => a.i + di <= lattice.cols && a.j + dj <= lattice.rows).map(([di, dj]) => [a.p, lattice.node(a.i + di, a.j + dj)] as const));
     const wanted = 5 + 2 * contract.tier;
     // Barriers sit to one side of a street so the other side stays open.

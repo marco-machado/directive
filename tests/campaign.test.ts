@@ -169,6 +169,17 @@ test('contract 01 is the same hand-checked heist until a contract is completed',
     assert.deepEqual(paid.recruits, ledger.campaign.recruits);
     assert.ok(paid.offers.every(o => o.seed !== FIRST_CONTRACT.seed && o.patrols === undefined));
   }
+  // A save dealt before contract 01's seed changed (with the lot stage) still deploys its old offer and is
+  // paid for it, and the first payout deals a board without any contract 01.
+  const fresh = freshCampaign(mulberry32(3)), old = { ...fresh, offers: [{ ...fresh.offers[0], seed: 10492675 }, ...fresh.offers.slice(1)] };
+  const run = startMission({ campaign: old, activeMission: null }, 'm', 0, old.offers[0].id, ['vex'], 0, mulberry32(3))!;
+  assert.equal(run.activeMission!.contract.seed, 10492675);
+  const done = completeMission(run, 'm', MIN_MISSION_MS, QUIET, rng)!.campaign;
+  assert.ok(done.cash > old.cash && done.completed === 1 && done.offers.every(o => o.patrols === undefined));
+  // A mission already in flight on the old seed when the change landed: its board still holds the old offer, and the
+  // first payout deals past it all the same.
+  const flying = { campaign: { ...run.campaign, offers: [{ ...run.campaign.offers[0], seed: 10492675 }, ...run.campaign.offers.slice(1)] }, activeMission: run.activeMission };
+  assert.ok(completeMission(flying, 'm', MIN_MISSION_MS, QUIET, rng)!.campaign.offers.every(o => o.patrols === undefined));
   // Saved boards keep the patrol cap through the clamp, within bounds.
   assert.equal(clampCampaign({ offers: [{ ...FIRST_CONTRACT, id: 'a' }] }, rng).offers[0].patrols, 1);
   assert.equal(clampCampaign({ offers: [{ ...FIRST_CONTRACT, id: 'a', patrols: 99 }] }, rng).offers[0].patrols, 8);

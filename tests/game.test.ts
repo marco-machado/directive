@@ -60,7 +60,7 @@ test('hostiles scale gently up to tier 3 and turrets guard objectives only from 
 });
 
 test('buildings block movement and sight; cover blocks movement but not sight', () => {
-  const world = new World({ minX: -10, maxX: 10, minZ: -10, maxZ: 10 }, [{ x: 0, z: 0, w: 4, d: 4, h: 3, name: 'B', accent: '#fff' }], [{ x: 0, z: 6, w: 1.6, d: .45 }]);
+  const world = new World({ minX: -10, maxX: 10, minZ: -10, maxZ: 10 }, [{ x: 0, z: 0, w: 4, d: 4, h: 3 }], [{ x: 0, z: 6, w: 1.6, d: .45 }]);
   const path = world.findPath({ x: -6, z: 0 }, { x: 6, z: 0 });
   assert.ok(path.length > 1);
   let prev = { x: -6, z: 0 };
@@ -499,7 +499,7 @@ test('ability upgrades shorten cooldowns and strengthen heals', () => {
 
 test('fog of war hides hostiles behind buildings until marked', () => {
   const { sim, hostile } = arena('heist');
-  sim.plan = { ...sim.plan!, world: new World(sim.plan!.world.bounds, [{ x: 3, z: 0, w: 2, d: 6, h: 3, name: 'B', accent: '#fff' }], []) };
+  sim.plan = { ...sim.plan!, world: new World(sim.plan!.world.bounds, [{ x: 3, z: 0, w: 2, d: 6, h: 3 }], []) };
   const guard = hostile('guard', 6, 0, 0);
   sim.update(1 / 60); assert.equal(guard.visible, false);
   sim.attack(guard.id); assert.equal(guard.targetId, null);
@@ -507,7 +507,7 @@ test('fog of war hides hostiles behind buildings until marked', () => {
 });
 
 test('sight rays stop at the first building footprint', () => {
-  const world = new World({ minX: -10, maxX: 10, minZ: -10, maxZ: 10 }, [{ x: 3, z: 0, w: 2, d: 2, h: 3, name: 'A', accent: '#fff' }, { x: 6, z: 0, w: 2, d: 2, h: 3, name: 'B', accent: '#fff' }], []);
+  const world = new World({ minX: -10, maxX: 10, minZ: -10, maxZ: 10 }, [{ x: 3, z: 0, w: 2, d: 2, h: 3 }, { x: 6, z: 0, w: 2, d: 2, h: 3 }], []);
   assert.ok(Math.abs(world.sightDistance({ x: 0, z: 0 }, 1, 0, 9) - 1.95) < 1e-9);
   assert.equal(world.sightDistance({ x: 0, z: 0 }, 0, 1, 9), 9);
   assert.equal(world.sightDistance({ x: 0, z: 0 }, 1, 0, 1.5), 1.5);

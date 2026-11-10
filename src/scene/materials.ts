@@ -61,6 +61,18 @@ const surface: Step<MeshStandardNodeMaterial> = m => {
   m.metalnessNode = instanceData.y;
 };
 
+// Modeled props (propGeometry.ts) carry their look per vertex: a color and a surface of roughness, metalness, glow
+// and tint. Where tint is 1 the instance's paint (InstancedProps, props.tsx) replaces the vertex's white; glow turns
+// the vertex color into light. The bloom pass thresholds on luminance, so a lamp's lens blooms and a car's red
+// tail lights only glow, as the boxes they replace did.
+const vertexColor = attribute('color', 'vec3'), vertexSurface = attribute('surface', 'vec4'), instancePaint = attribute('instancePaint', 'vec3');
+const prop: Step<MeshStandardNodeMaterial> = m => {
+  m.colorNode = mix(vertexColor, vertexColor.mul(instancePaint), vertexSurface.w);
+  m.roughnessNode = vertexSurface.x;
+  m.metalnessNode = vertexSurface.y;
+  m.emissiveNode = vertexColor.mul(vertexSurface.z);
+};
+
 const N = ATLAS_CELLS;
 // Cell (x, y) of the atlas counts from the canvas's top left; f runs 0-1 across the cell, y up.
 const atlasCell = (atlas: Texture, cell: Node<'vec2'>, f: Node<'vec2'>, dx: Node<'vec2'>, dy: Node<'vec2'>) =>
@@ -144,6 +156,7 @@ export function districtMaterials(atlas: Texture, signs: Texture, pool: Texture,
   const materials = {
     bounds,
     solid: build(new LitMaterial({ envMap: environment, envMapIntensity: .35 }), fade, surface, zone(bounds)),
+    prop: build(new LitMaterial({ envMap: environment, envMapIntensity: .35 }), prop, zone(bounds)),
     facade: build(new LitMaterial({ roughness: .82, metalness: .05, envMap: environment, envMapIntensity: .3 }), fade, zone(bounds), facade(atlas, { window: 1.7, store: 1.7 })),
     neon: build(new MeshBasicNodeMaterial(), fade, zone(bounds)),
     signs: build(new MeshBasicNodeMaterial(), fade, zone(bounds), signRect(signs)),

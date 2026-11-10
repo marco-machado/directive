@@ -1,12 +1,23 @@
 export type Point = { x: number; z: number };
 export type Rect = Point & { w: number; d: number };
-export type Building = Rect & { h: number; name: string; accent: string };
+export type Building = Rect & { h: number };
 export type Bounds = { minX: number; maxX: number; minZ: number; maxZ: number };
 
 export const distance = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.z - b.z);
 const inside = (p: Point, r: Rect, padding: number) => Math.abs(p.x - r.x) < r.w / 2 + padding && Math.abs(p.z - r.z) < r.d / 2 + padding;
 const edgeDistance = (p: Point, r: Rect) => Math.hypot(Math.max(0, Math.abs(p.x - r.x) - r.w / 2), Math.max(0, Math.abs(p.z - r.z) - r.d / 2));
 const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), Math.max(lo, hi));
+// True when the straight line from a to b enters `r` grown by `padding`. Exact: the segment is clipped to the
+// rectangle, so a corner is never missed between two samples.
+function crosses(a: Point, b: Point, r: Rect, padding: number) {
+  let near = 0, far = 1;
+  for (const [from, step, center, half] of [[a.x, b.x - a.x, r.x, r.w / 2 + padding], [a.z, b.z - a.z, r.z, r.d / 2 + padding]]) {
+    if (step === 0) { if (Math.abs(from - center) >= half) return false; continue; }
+    const t1 = (center - half - from) / step, t2 = (center + half - from) / step;
+    near = Math.max(near, Math.min(t1, t2)); far = Math.min(far, Math.max(t1, t2));
+  }
+  return near < far;
+}
 const COVER_GAP = .45; // m between a barrier's face and an operative crouched behind it
 const SIGHT_PAD = .05; // m around a building's footprint that already blocks sight
 const DIRS =[[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]] as const;
@@ -17,6 +28,7 @@ export class World {
   private readonly rows: number;
   private readonly open: Uint8Array;
   private readonly edges: Uint8Array;
+  private readonly streets: Uint8Array;
 
   readonly bounds: Bounds;
   readonly buildings: Building[];
@@ -38,6 +50,7 @@ export class World {
         if (j >= 0 && this.open[j] && this.passable(p, this.point(j), .4)) this.edges[i] |= 1 << d;
       });
     }
+    this.streets = this.largestNetwork();
   }
 
   private point(i: number): Point { return { x: Math.ceil(this.bounds.minX) + (i % this.cols), z: Math.ceil(this.bounds.minZ) + Math.floor(i / this.cols) }; }
@@ -131,16 +144,43 @@ export class World {
     return { ...face, span: { lo, hi } };
   }
 
-  private nearestNode(p: Point): number {
-    let best = -1, bestD = Infinity;
-    const cx = Math.round(p.x), cz = Math.round(p.z);
-    for (let dz = -2; dz <= 2; dz++) for (let dx = -2; dx <= 2; dx++) {
-      const q = { x: cx + dx, z: cz + dz }, i = this.index(q);
-      if (i < 0 || !this.open[i]) continue;
-      const d = distance(p, q);
-      if (d < bestD && this.passable(p, q, .2)) { best = i; bestD = d; }
+  // Marks the nodes of the largest connected part of the graph: the streets. A walkable point squeezed between a wall
+  // and a barrier can be a node with no edge out, and a route must never start or end on one.
+  private largestNetwork(): Uint8Array {
+    const part = new Int32Array(this.open.length).fill(-1), sizes: number[] = [];
+    for (let i = 0; i < part.length; i++) {
+      if (!this.open[i] || part[i] >= 0) continue;
+      const id = sizes.length, queue = [i];
+      part[i] = id;
+      for (let n = 0; n < queue.length; n++) {
+        const p = this.point(queue[n]);
+        DIRS.forEach(([dx, dz], d) => {
+          const j = this.edges[queue[n]] & 1 << d ? this.index({ x: p.x + dx, z: p.z + dz }) : -1;
+          if (j >= 0 && part[j] < 0) { part[j] = id; queue.push(j); }
+        });
+      }
+      sizes.push(queue.length);
     }
-    return best;
+    const largest = sizes.indexOf(Math.max(...sizes));
+    return Uint8Array.from(part, id => id === largest ? 1 : 0);
+  }
+
+  // The nearest street node `p` has a straight line to that keeps `clearance` from every building and barrier. A
+  // tight spot may only reach one with less room to spare, so the clearance drops before the search gives up; even
+  // at none, the line never enters anything solid.
+  private nearestNode(p: Point): number {
+    const cx = Math.round(p.x), cz = Math.round(p.z);
+    for (const clearance of [.2, .1, 0]) {
+      let best = -1, bestD = Infinity;
+      for (let dz = -3; dz <= 3; dz++) for (let dx = -3; dx <= 3; dx++) {
+        const q = { x: cx + dx, z: cz + dz }, i = this.index(q);
+        if (i < 0 || !this.streets[i]) continue;
+        const d = distance(p, q);
+        if (d < bestD && !this.buildings.some(r => crosses(p, q, r, clearance)) && !this.cover.some(r => crosses(p, q, r, clearance))) { best = i; bestD = d; }
+      }
+      if (best >= 0) return best;
+    }
+    return -1;
   }
 
   // `avoid` marks ground the route must keep off (a hostile's vision cone); the goal's own node is exempt.
