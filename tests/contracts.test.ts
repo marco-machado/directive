@@ -105,7 +105,7 @@ test('Lockdown seals the exits a set time after the first alarm, even once it st
 });
 
 // An unknown target (#54): deployed with the squad out of the way and every other hostile stunned, so only the target acts.
-function unknownTarget(seed = 77) {
+function unknownTarget(seed = 78) {
   const c = { ...contract('assassination', 3, seed), payout: contractPayout(3, 1), modifiers: ['unknown' as const] };
   const sim = new Simulation(campaignWith('assassination', { offers: [c] }));
   sim.deploy();

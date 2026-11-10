@@ -226,7 +226,7 @@ export function offerTiers(p: Progress): number[] {
 }
 // Contract 01 is the same hand-checked district for every campaign: one patrol to read and a quiet way round it.
 // It stays first on the board until a contract is completed, so a failed first run can try it again.
-export const FIRST_CONTRACT = { type: 'heist', tier: 1, seed: 10492675, district: 'GLASS DISTRICT', sector: 1, patrols: 1 } as const satisfies Omit<Contract, 'id' | 'payout'>;
+export const FIRST_CONTRACT = { type: 'heist', tier: 1, seed: 2447, district: 'GLASS DISTRICT', sector: 1, patrols: 1 } as const satisfies Omit<Contract, 'id' | 'payout'>;
 // The highest tier on a board dealt with this progress. Boards are dealt at each deployment.
 export const topTier = (p: Progress) => Math.max(...offerTiers(p));
 // The next tier a board will add: during the opening, once the contracts left in it are done; after it, once the
@@ -386,7 +386,8 @@ export function applyDismiss(c: Campaign, id: string): Campaign | null {
   if (c.roster.length <= 1 || !c.roster.some(o => o.id === id)) return null;
   return { ...c, roster: c.roster.filter(o => o.id !== id) };
 }
-const isFirstContract = (o: Contract) => o.seed === FIRST_CONTRACT.seed && o.patrols === FIRST_CONTRACT.patrols;
+// Contract 01 is the only contract with a patrol cap, whatever seed it was dealt with: its seed has changed before.
+const isFirstContract = (o: Contract) => o.patrols === FIRST_CONTRACT.patrols;
 // The board was dealt at deploy, before this payout counted, so the first payout deals new offers in place of one that
 // still holds contract 01. Recruits stay: they are what the first payout can buy.
 // Clearing the highest open Countermeasures level (`countermeasures`, 0 for none) with a badge opens the next.

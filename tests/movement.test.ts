@@ -5,7 +5,9 @@ import type { Unit } from '../src/game/simulation.ts';
 import type { ContractType } from '../src/game/campaign.ts';
 import { distance, World } from '../src/game/world.ts';
 import type { Point } from '../src/game/world.ts';
-import { step, arena, FOUR } from './arena.ts';
+import { CONTRACT_TYPES, MAX_TIER } from '../src/game/campaign.ts';
+import { planMission } from '../src/game/mapgen.ts';
+import { step, arena, contract, FOUR } from './arena.ts';
 
 // Steps frame by frame until `u` stands exactly on `p` (walk() lands on each path point), returning the mission time.
 const reach = (sim: Simulation, u: Unit, p: Point, seconds = 30) => {
@@ -14,7 +16,7 @@ const reach = (sim: Simulation, u: Unit, p: Point, seconds = 30) => {
   return sim.time;
 };
 
-const block = (x0: number, x1: number, z0: number, z1: number) => ({ x: (x0 + x1) / 2, z: (z0 + z1) / 2, w: x1 - x0, d: z1 - z0, h: 3, name: 'B', accent: '#fff' });
+const block = (x0: number, x1: number, z0: number, z1: number) => ({ x: (x0 + x1) / 2, z: (z0 + z1) / 2, w: x1 - x0, d: z1 - z0, h: 3 });
 
 // A 1.4 m alley along z at x = 0, too narrow for the side-by-side spread.
 const ALLEY = [block(-6, -.7, -2, 10), block(.7, 6, -2, 10)];
@@ -279,4 +281,67 @@ test('a downed operative drops its route', () => {
   sim.select(vex.id); sim.move({ x: 5, z: -5 }); sim.move({ x: 5, z: 5 }, true); sim.addWait();
   (sim as unknown as { damage(u: Unit, n: number, from: Point | null): void }).damage(vex, vex.hp, null);
   assert.deepEqual(vex.route, []); assert.deepEqual(stops(sim, vex), []);
+});
+
+// A barrier 1.07 m from a wall: the strip between them is wide enough to stand in, and the navigation points along
+// the wall (x = 1) are walkable but too tight to walk between, so none of them connects to the streets.
+const SQUEEZE = { wall: block(1.39, 6, -6, 6), barrier: { x: .1, z: 0, w: .45, d: 1.6 } };
+
+test('an operative in cover between a barrier and a wall can still be ordered away', () => {
+  const a = arena('heist'), world = new World(a.world.bounds, [SQUEEZE.wall], [SQUEEZE.barrier]);
+  a.sim.plan = { ...a.sim.plan!, world };
+  const spot = world.coverSpot({ x: .8, z: 0 }, { x: -8, z: 0 })!;
+  assert.ok(spot.covered && world.walkable(spot.point) && spot.point.x > .325);
+  assert.ok(world.findPath(spot.point, { x: -8, z: 0 }).length > 0, 'no route out of cover');
+  const [u] = a.squad;
+  u.x = spot.point.x; u.z = spot.point.z;
+  a.sim.select(u.id); a.sim.move({ x: -8, z: 5 });
+  assert.doesNotMatch(a.sim.message, /Route blocked/);
+  reach(a.sim, u, { x: -8, z: 5 });
+});
+
+test('every cover spot on a generated map can start a route to extraction', () => {
+  let spots = 0;
+  for (const type of CONTRACT_TYPES) for (let tier = 1; tier <= MAX_TIER; tier++) for (const seed of [3, 7, 10]) {
+    const plan = planMission(contract(type, tier, seed)), w = plan.world;
+    for (const c of w.cover) for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) for (const k of [-.6, 0, .6]) {
+      const p = { x: c.x + dx * (c.w / 2 + .6) + (dx ? 0 : k), z: c.z + dz * (c.d / 2 + .6) + (dz ? 0 : k) };
+      const spot = w.coverSpot(p, { x: c.x - dx * 6, z: c.z - dz * 6 });
+      if (!spot) continue;
+      spots++;
+      assert.ok(w.findPath(spot.point, plan.extract).length > 0, `${type} tier ${tier} seed ${seed}: no route from cover at (${spot.point.x.toFixed(2)}, ${spot.point.z.toFixed(2)})`);
+    }
+  }
+  assert.ok(spots > 1000);
+});
+
+// Whether the straight line from a to b enters a rectangle: exact, by clipping the segment to it.
+const enters = (a: Point, b: Point, r: { x: number; z: number; w: number; d: number }) => {
+  let near = 0, far = 1;
+  for (const [p, d, c, h] of [[a.x, b.x - a.x, r.x, r.w / 2], [a.z, b.z - a.z, r.z, r.d / 2]]) {
+    if (d === 0) { if (Math.abs(p - c) >= h) return false; continue; }
+    const t1 = (c - h - p) / d, t2 = (c + h - p) / d;
+    near = Math.max(near, Math.min(t1, t2)); far = Math.min(far, Math.max(t1, t2));
+  }
+  return far - near > 1e-9;
+};
+const throughSolid = (world: World, from: Point, path: Point[]) => [from, ...path].some((p, n, all) => n > 0 && [...world.buildings, ...world.cover].some(r => enters(all[n - 1], p, r)));
+
+test('a route never cuts through the corner of a building or a barrier to reach the streets', () => {
+  // A walkable spot whose only straight lines to a street point pass a building's corner.
+  const plan = planMission(contract('surveillance', 3, 84)), start = { x: -7.205, z: -11.645 };
+  assert.ok(plan.world.walkable(start));
+  assert.ok(!throughSolid(plan.world, start, plan.world.findPath(start, plan.extract)), 'the route crosses a building or a barrier');
+  let legs = 0;
+  for (const type of CONTRACT_TYPES) for (let tier = 1; tier <= MAX_TIER; tier++) for (const seed of [3, 7, 10, 84]) {
+    const p = planMission(contract(type, tier, seed)), w = p.world;
+    for (const c of w.cover) for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) for (const k of [-.6, 0, .6]) {
+      const spot = w.coverSpot({ x: c.x + dx * (c.w / 2 + .6) + (dx ? 0 : k), z: c.z + dz * (c.d / 2 + .6) + (dz ? 0 : k) }, { x: c.x - dx * 6, z: c.z - dz * 6 });
+      if (!spot) continue;
+      const path = w.findPath(spot.point, p.extract);
+      legs += path.length;
+      assert.ok(path.length > 0 && !throughSolid(w, spot.point, path), `${type} tier ${tier} seed ${seed}: the route from cover at (${spot.point.x.toFixed(2)}, ${spot.point.z.toFixed(2)}) crosses something solid`);
+    }
+  }
+  assert.ok(legs > 5000);
 });

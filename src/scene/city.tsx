@@ -9,6 +9,8 @@ import { dressDistrict, GRID_Y } from './district.ts';
 import type { Part } from './district.ts';
 import { disposeMaterials, districtMaterials } from './materials.ts';
 import { BOX, InstancedParts, PLANE, ROUND } from './parts.tsx';
+import { carGeometry, lampGeometry } from './propGeometry.ts';
+import { InstancedProps } from './props.tsx';
 import { useRenderer } from './renderer.ts';
 import type { Fades } from './parts.tsx';
 import { facadeAtlas, nightEnvironment, poolTexture, puddleTexture, signAtlas } from './textures.ts';
@@ -26,6 +28,9 @@ function edgeGeometry(b: Bounds) {
   const points = [b.minX, 0, b.minZ, b.maxX, 0, b.minZ, b.maxX, 0, b.minZ, b.maxX, 0, b.maxZ, b.maxX, 0, b.maxZ, b.minX, 0, b.maxZ, b.minX, 0, b.maxZ, b.minX, 0, b.minZ];
   const g = new BufferGeometry(); g.setAttribute('position', new Float32BufferAttribute(points, 3)); return g;
 }
+
+// The modeled street props, shared by every district.
+const CAR = carGeometry(), LAMP = lampGeometry();
 
 const FADE = .8;          // share of a faded building's pixels that are dropped
 const FADE_SECONDS = .25;
@@ -107,6 +112,8 @@ export const City = memo(function City({ plan, sim }: { plan: MissionPlan; sim: 
     <InstancedParts parts={district.facade} geometry={BOX} material={m.facade} fades={fades} castShadow receiveShadow />
     <InstancedParts parts={parts.neon} geometry={BOX} material={m.neon} fades={fades} />
     <InstancedParts parts={district.signs} geometry={PLANE} material={m.signs} fades={fades} />
+    <InstancedProps placements={district.cars} geometry={CAR} material={m.prop} castShadow />
+    <InstancedProps placements={district.lamps} geometry={LAMP} material={m.prop} castShadow />
     <InstancedParts parts={district.puddles} geometry={PLANE} material={m.puddles} receiveShadow renderOrder={-2} />
     <InstancedParts parts={parts.pools} geometry={PLANE} material={m.pools} renderOrder={-1} />
   </group>;

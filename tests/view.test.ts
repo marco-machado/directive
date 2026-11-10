@@ -8,7 +8,7 @@ import { CAMERA_OFFSET, cameraOffset, hides, markHiding, mayBeHidden, viewAlong 
 
 // The default view: the camera sits at +CAMERA_OFFSET and looks at the origin.
 const view = viewAlong(-CAMERA_OFFSET.x, -CAMERA_OFFSET.y, -CAMERA_OFFSET.z);
-const tower: Building = { x: 0, z: 0, w: 2, d: 2, h: 5, name: 'TOWER', accent: '#fff' };
+const tower: Building = { x: 0, z: 0, w: 2, d: 2, h: 5 };
 const contract = (type: ContractType, tier: number, seed: number) => ({ id: `c-${seed}`, type, tier, seed, payout: contractPayout(tier), district: 'GLASS DISTRICT', sector: 4 });
 
 test('a building hides a unit behind it from the camera, not one in front of it', () => {
